@@ -18,7 +18,7 @@ pub trait ObjectStore: Send + Sync {
     async fn get_object(&self, key: &str) -> Result<Vec<u8>, StorageError>;
     async fn put_object(&self, key: &str, data: Vec<u8>) -> Result<(), StorageError>;
     async fn delete_object(&self, key: &str) -> Result<(), StorageError>;
-    async fn list_objects(&self, prefix: &str) -> Result<Vec<String>, StorageError>;
+    async fn list_objects<'a>(&'a self, prefix: &'a str) -> Result<Box<dyn Iterator<Item = String> + 'a>, StorageError>;
 }
 
 pub struct LocalObjectStore {
@@ -75,29 +75,46 @@ impl ObjectStore for LocalObjectStore {
         Ok(())
     }
     
-    async fn list_objects(&self, prefix: &str) -> Result<Vec<String>, StorageError> {
-        let prefix_path = self.root_dir.join(prefix);
-        let prefix_str = prefix_path.to_string_lossy().to_string();
+    async fn list_objects<'a>(&'a self, prefix: &'a str) -> Result<Box<dyn Iterator<Item = String> + 'a>, StorageError> {
+        let mut results = Vec::new();
         let root_str = self.root_dir.to_string_lossy().to_string();
         
-        let mut results = Vec::new();
-        let mut entries = tokio::fs::read_dir(&self.root_dir).await?;
-        
-        while let Some(entry) = entries.next_entry().await? {
-            let path = entry.path();
-            if path.is_file() {
+        // Recursive function to list files
+        async fn list_dir_recursive<'b>(
+            dir: &'b std::path::Path,
+            prefix: &'b str,
+            root_str: &'b str,
+            results: &'b mut Vec<String>,
+        ) -> Result<(), StorageError> {
+            let mut entries = tokio::fs::read_dir(dir).await?;
+            
+            while let Some(entry) = entries.next_entry().await? {
+                let path = entry.path();
                 let path_str = path.to_string_lossy().to_string();
-                if path_str.starts_with(&prefix_str) {
-                    // Convert absolute path to relative key
-                    if let Some(key) = path_str.strip_prefix(&root_str) {
-                        let key = key.trim_start_matches('/');
-                        results.push(key.to_string());
+                
+                // Convert absolute path to relative key
+                if let Some(key) = path_str.strip_prefix(root_str) {
+                    let key = key.trim_start_matches('/');
+                    
+                    if key.starts_with(prefix) {
+                        if path.is_file() {
+                            results.push(key.to_string());
+                        } else if path.is_dir() {
+                            // Recursively process subdirectories with Box::pin
+                            let fut = Box::pin(list_dir_recursive(&path, prefix, root_str, results));
+                            fut.await?;
+                        }
                     }
                 }
             }
+            
+            Ok(())
         }
         
-        Ok(results)
+        // Start the recursive listing from the root directory
+        list_dir_recursive(&self.root_dir, prefix, &root_str, &mut results).await?;
+        
+        Ok(Box::new(results.into_iter()))
     }
 }
 
@@ -118,9 +135,15 @@ mod tests {
         store.put_object(key, data.clone()).await.unwrap();
         let retrieved = store.get_object(key).await.unwrap();
         assert_eq!(retrieved, data);
-        
+
+        // Show the whole temp_dir content
+        let mut entries = tokio::fs::read_dir(temp_dir.path()).await.unwrap();
+        while let Some(entry) = entries.next_entry().await.unwrap() {
+            println!("Entry: {:?}", entry.path());
+        }
+
         // Test list_objects
-        let keys = store.list_objects("test").await.unwrap();
+        let keys: Vec<String> = store.list_objects("test").await.unwrap().collect();
         assert_eq!(keys.len(), 1);
         assert_eq!(keys[0], key);
         
@@ -130,7 +153,7 @@ mod tests {
         assert!(result.is_err());
         
         // Test list after delete
-        let keys = store.list_objects("test").await.unwrap();
+        let keys: Vec<String> = store.list_objects("test").await.unwrap().collect();
         assert_eq!(keys.len(), 0);
     }
 }
