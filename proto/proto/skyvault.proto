@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package skyvault;
+
+service Batcher {
+  rpc BatchProcess (BatchRequest) returns (BatchResponse);
+}
+
+service Index {
+  rpc IndexDocument (IndexRequest) returns (IndexResponse);
+}
+
+service Orchestrator {
+  rpc Orchestrate (OrchestrateRequest) returns (OrchestrateResponse);
+}
+
+message BatchRequest {}
+message BatchResponse {}
+message IndexRequest {}
+message IndexResponse {}
+message OrchestrateRequest {}
+message OrchestrateResponse {}
