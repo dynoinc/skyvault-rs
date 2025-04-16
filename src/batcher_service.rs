@@ -1,11 +1,21 @@
+use std::sync::Arc;
+
 use slog::{debug, info};
 use slog_scope;
 use tonic::{Request, Response, Status};
 
-use crate::{Batcher, skyvault};
+use crate::{metadata, skyvault, storage, Batcher};
 
-#[derive(Default)]
-pub struct MyBatcher;
+pub struct MyBatcher {
+    _metadata: Arc<dyn metadata::MetadataStore>,
+    _storage: Arc<dyn storage::ObjectStore>,
+}
+
+impl MyBatcher {
+    pub fn new(metadata: Arc<dyn metadata::MetadataStore>, storage: Arc<dyn storage::ObjectStore>) -> Self {
+        Self { _metadata: metadata, _storage: storage }
+    }
+}
 
 #[tonic::async_trait]
 impl Batcher for MyBatcher {

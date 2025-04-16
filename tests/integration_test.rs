@@ -1,7 +1,9 @@
 // Integration test for skyvault2 gRPC services
 
-use std::net::SocketAddr;
+use std::{net::SocketAddr, sync::Arc};
 
+use anyhow::Context;
+use skyvault::{metadata, storage};
 use tokio::sync::OnceCell;
 use tokio_retry::Retry;
 use tokio_retry::strategy::FixedInterval;
@@ -17,10 +19,14 @@ async fn start_test_server() {
         .get_or_init(|| async {
             let addr: SocketAddr = "127.0.0.1:50551".parse().unwrap();
 
+            let temp_dir = tempfile::TempDir::new().with_context(|| "Failed to create temporary directory").unwrap();
+            let metadata = Arc::new(metadata::SqliteMetadataStore::new(temp_dir.path().join("metadata.db").to_str().unwrap()).with_context(|| "Failed to create metadata store").unwrap());
+            let storage = Arc::new(storage::LocalObjectStore::new(temp_dir.path().join("storage").to_str().unwrap()).with_context(|| "Failed to create storage").unwrap());
+            
             // Start the server using the lib.rs server function
             tokio::spawn(async move {
                 println!("Starting test server on {}", addr);
-                if let Err(e) = skyvault::server(addr).await {
+                if let Err(e) = skyvault::server(addr, metadata, storage).await {
                     panic!("Failed to start server: {}", e);
                 }
             });

@@ -1,11 +1,20 @@
+use std::sync::Arc;
+
 use slog::{debug, info};
 use slog_scope;
 use tonic::{Request, Response, Status};
 
-use crate::{Orchestrator, skyvault};
+use crate::{Orchestrator, skyvault, metadata};
 
-#[derive(Default)]
-pub struct MyOrchestrator;
+pub struct MyOrchestrator {
+    _metadata: Arc<dyn metadata::MetadataStore>,
+}
+
+impl MyOrchestrator {
+    pub fn new(metadata: Arc<dyn metadata::MetadataStore>) -> Self {
+        Self { _metadata: metadata }
+    }
+}
 
 #[tonic::async_trait]
 impl Orchestrator for MyOrchestrator {

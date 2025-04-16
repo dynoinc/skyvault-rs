@@ -57,25 +57,23 @@ impl<T: 'static + Send> Stream for KeyValueStream<T> {
 
 #[async_trait]
 pub trait MetadataStore: Send + Sync {
-    type Value: Send + Sync;
-    
     /// Get a single value by key
-    async fn get(&self, key: &CompositeKey) -> Result<Option<Self::Value>, MetadataError>;
+    async fn get(&self, key: &CompositeKey) -> Result<Option<Vec<u8>>, MetadataError>;
     
     /// Get multiple values by keys
-    async fn multi_get(&self, keys: &[CompositeKey]) -> Result<HashMap<CompositeKey, Self::Value>, MetadataError>;
+    async fn multi_get(&self, keys: &[CompositeKey]) -> Result<HashMap<CompositeKey, Vec<u8>>, MetadataError>;
     
     /// Put a single value
-    async fn put(&self, key: &CompositeKey, value: Self::Value) -> Result<(), MetadataError>;
+    async fn put(&self, key: &CompositeKey, value: Vec<u8>) -> Result<(), MetadataError>;
     
     /// Delete a single key
     async fn delete(&self, key: &CompositeKey) -> Result<(), MetadataError>;
     
     /// Batch write operations (puts and deletes)
-    async fn batch_write(&self, operations: Vec<BatchOp<Self::Value>>) -> Result<(), MetadataError>;
+    async fn batch_write(&self, operations: Vec<BatchOp<Vec<u8>>>) -> Result<(), MetadataError>;
     
     /// List keys as a stream
-    fn list(&self, partition_key: String, batch_size: usize, start_after: Option<String>) -> KeyValueStream<Self::Value>;
+    fn list(&self, partition_key: String, batch_size: usize, start_after: Option<String>) -> KeyValueStream<Vec<u8>>;
 }
 
 pub struct SqliteMetadataStore {
@@ -108,9 +106,7 @@ impl SqliteMetadataStore {
 
 #[async_trait]
 impl MetadataStore for SqliteMetadataStore {
-    type Value = Vec<u8>;
-    
-    async fn get(&self, key: &CompositeKey) -> Result<Option<Self::Value>, MetadataError> {
+    async fn get(&self, key: &CompositeKey) -> Result<Option<Vec<u8>>, MetadataError> {
         let conn = self.get_connection()?;
         let mut stmt = conn.prepare("SELECT value FROM metadata WHERE partition_key = ?1 AND sort_key = ?2")?;
         let mut rows = stmt.query(params![key.partition_key, key.sort_key])?;
@@ -122,7 +118,7 @@ impl MetadataStore for SqliteMetadataStore {
         }
     }
     
-    async fn multi_get(&self, keys: &[CompositeKey]) -> Result<HashMap<CompositeKey, Self::Value>, MetadataError> {
+    async fn multi_get(&self, keys: &[CompositeKey]) -> Result<HashMap<CompositeKey, Vec<u8>>, MetadataError> {
         let conn = self.get_connection()?;
         let mut result = HashMap::new();
         
@@ -138,7 +134,7 @@ impl MetadataStore for SqliteMetadataStore {
         Ok(result)
     }
     
-    async fn put(&self, key: &CompositeKey, value: Self::Value) -> Result<(), MetadataError> {
+    async fn put(&self, key: &CompositeKey, value: Vec<u8>) -> Result<(), MetadataError> {
         let conn = self.get_connection()?;
         conn.execute(
             "INSERT OR REPLACE INTO metadata (partition_key, sort_key, value) VALUES (?1, ?2, ?3)",
@@ -158,7 +154,7 @@ impl MetadataStore for SqliteMetadataStore {
         Ok(())
     }
     
-    async fn batch_write(&self, operations: Vec<BatchOp<Self::Value>>) -> Result<(), MetadataError> {
+    async fn batch_write(&self, operations: Vec<BatchOp<Vec<u8>>>) -> Result<(), MetadataError> {
         let mut conn = self.get_connection()?;
         let tx = conn.transaction()?;
         
@@ -183,7 +179,7 @@ impl MetadataStore for SqliteMetadataStore {
         Ok(())
     }
     
-    fn list(&self, partition_key: String, batch_size: usize, start_after: Option<String>) -> KeyValueStream<Self::Value> {
+    fn list(&self, partition_key: String, batch_size: usize, start_after: Option<String>) -> KeyValueStream<Vec<u8>> {
         let (mut sender, receiver) = channel(batch_size);
         let db_path = self.db_path.clone();
         
