@@ -20,6 +20,7 @@ pub mod orchestrator_service;
 
 pub mod metadata;
 pub mod storage;
+pub mod runs;
 
 pub async fn server(
     addr: SocketAddr,
