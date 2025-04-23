@@ -223,7 +223,7 @@ impl MetadataStore for SqliteMetadataStore {
                         let last_key = batch.last().map(|(key, _)| key.sort_key.clone());
 
                         for item in batch {
-                            if let Err(_) = sender.send(Ok(item)).await {
+                            if sender.send(Ok(item)).await.is_err() {
                                 return; // Receiver was dropped
                             }
                         }

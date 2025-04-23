@@ -6,9 +6,9 @@ use std::sync::Arc;
 use proto::batcher_server::{self, Batcher, BatcherServer};
 use proto::index_server::{self, IndexServer};
 use proto::orchestrator_server::{self, OrchestratorServer};
-use tracing::info;
 use tonic::transport::Server;
 use tonic_health::ServingStatus;
+use tracing::info;
 
 pub mod proto {
     tonic::include_proto!("skyvault");

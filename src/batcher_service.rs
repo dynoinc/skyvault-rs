@@ -3,7 +3,7 @@ use std::sync::Arc;
 use thiserror::Error;
 use tonic::{Request, Response, Status};
 
-use crate::{Batcher, metadata, storage, proto};
+use crate::{Batcher, metadata, proto, storage};
 
 #[derive(Error, Debug)]
 pub enum BatchError {
@@ -51,20 +51,20 @@ impl MyBatcher {
 
             let timeout = tokio::time::sleep(std::time::Duration::from_millis(250));
             tokio::pin!(timeout);
-            
+
             loop {
                 tokio::select! {
                     biased;
-                    
+
                     maybe_item = rx.recv() => {
                         match maybe_item {
                             Some(item) => {
                                 key_value_count += item.req.tables.iter().map(|t| t.items.len()).sum::<usize>();
                                 buffer.push(item);
-                                
+
                                 // If we've collected enough items, process the batch immediately
                                 if key_value_count >= 50_000 {
-                                    
+
                                     break;
                                 }
                             },
@@ -73,13 +73,13 @@ impl MyBatcher {
                             }
                         }
                     },
-                    
+
                     _ = &mut timeout => {
                         break;
                     }
                 }
             }
-            
+
             let result = Self::process_batch(&metadata, &storage, &buffer).await;
             let result = result.map_err(|e| Status::internal(e.to_string()));
             for item in buffer.drain(..) {
@@ -120,8 +120,7 @@ impl Batcher for MyBatcher {
             .map_err(|e| Status::internal(format!("Failed to send batch: {}", e)))?;
 
         rx.await
-            .map_err(|e| Status::internal(format!("Failed to receive batch result: {}", e)))?
-            .map_err(|e| e)?;
+            .map_err(|e| Status::internal(format!("Failed to receive batch result: {}", e)))??;
 
         Ok(Response::new(proto::WriteBatchResponse {}))
     }

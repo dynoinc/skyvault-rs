@@ -1,7 +1,8 @@
-use crate::metadata::MetadataStore;
 use std::sync::Arc;
+
 use tonic::{Request, Response, Status};
 
+use crate::metadata::MetadataStore;
 use crate::proto::orchestrator_server::Orchestrator;
 use crate::proto::{OrchestrateRequest, OrchestrateResponse};
 

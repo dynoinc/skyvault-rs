@@ -1,9 +1,11 @@
-use crate::{metadata::MetadataStore, storage::ObjectStore};
 use std::sync::Arc;
+
 use tonic::{Request, Response, Status};
 
+use crate::metadata::MetadataStore;
 use crate::proto::index_server::Index;
 use crate::proto::{IndexRequest, IndexResponse};
+use crate::storage::ObjectStore;
 
 pub struct MyIndex {
     #[allow(dead_code)]
