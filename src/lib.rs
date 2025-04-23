@@ -3,29 +3,29 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-pub use skyvault::batcher_client::BatcherClient;
-pub use skyvault::batcher_server::{self, Batcher, BatcherServer};
-pub use skyvault::index_client::IndexClient;
-pub use skyvault::index_server::{self, Index, IndexServer};
-pub use skyvault::orchestrator_client::OrchestratorClient;
-pub use skyvault::orchestrator_server::{self, Orchestrator, OrchestratorServer};
-pub use skyvault::{BatchRequest, IndexRequest, OrchestrateRequest};
-use slog::info;
+use proto::batcher_server::{self, Batcher, BatcherServer};
+use proto::index_server::{self, IndexServer};
+use proto::orchestrator_server::{self, OrchestratorServer};
+use tracing::info;
 use tonic::transport::Server;
 use tonic_health::ServingStatus;
 
-pub mod skyvault {
+pub mod proto {
     tonic::include_proto!("skyvault");
 }
 
 pub mod batcher_service;
 pub mod index_service;
 pub mod orchestrator_service;
-pub mod storage;
-pub mod metadata;
 
-pub async fn server(addr: SocketAddr, metadata: Arc<dyn metadata::MetadataStore>, storage: Arc<dyn storage::ObjectStore>) -> Result<(), tonic::transport::Error> {
-    let log = slog_scope::logger();
+pub mod metadata;
+pub mod storage;
+
+pub async fn server(
+    addr: SocketAddr,
+    metadata: Arc<dyn metadata::MetadataStore>,
+    storage: Arc<dyn storage::ObjectStore>,
+) -> Result<(), tonic::transport::Error> {
     let (health_reporter, health_service) = tonic_health::server::health_reporter();
 
     let batcher = batcher_service::MyBatcher::new(metadata.clone(), storage.clone());
@@ -43,7 +43,7 @@ pub async fn server(addr: SocketAddr, metadata: Arc<dyn metadata::MetadataStore>
         .set_service_status(orchestrator_server::SERVICE_NAME, ServingStatus::Serving)
         .await;
 
-    info!(log, "Building gRPC server"; "services" => "batcher,index,orchestrator");
+    info!(address = %addr, services = "batcher,index,orchestrator", "Building gRPC server");
     Server::builder()
         .add_service(BatcherServer::new(batcher))
         .add_service(IndexServer::new(index))

@@ -1,9 +1,11 @@
-use std::{net::SocketAddr, sync::Arc};
+use std::net::SocketAddr;
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use skyvault::{metadata, storage};
-use slog::{Drain, Logger, info, o};
 use structopt::StructOpt;
+use tracing::info;
+use tracing_subscriber::{EnvFilter, FmtSubscriber};
 
 #[derive(Debug, StructOpt)]
 #[structopt(name = "skyvault", about = "A gRPC server for skyvault.")]
@@ -11,7 +13,11 @@ pub struct Config {
     #[structopt(long, env = "SKYVAULT_GRPC_ADDR", default_value = "0.0.0.0:50051")]
     pub grpc_addr: String,
 
-    #[structopt(long, env = "SKYVAULT_METADATA_DB_PATH", default_value = "target/metadata.db")]
+    #[structopt(
+        long,
+        env = "SKYVAULT_METADATA_DB_PATH",
+        default_value = "target/metadata.db"
+    )]
     pub metadata_db_path: String,
 
     #[structopt(long, env = "SKYVAULT_STORAGE_DIR", default_value = "target/storage")]
@@ -20,33 +26,38 @@ pub struct Config {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Setup slog logger
-    let decorator = slog_term::TermDecorator::new().build();
-    let drain = slog_term::FullFormat::new(decorator).build().fuse();
-    let drain = slog_async::Async::new(drain).build().fuse();
+    // Setup tracing subscriber
+    let subscriber = FmtSubscriber::builder()
+        // Use EnvFilter to allow RUST_LOG environment variable to control level
+        .with_env_filter(EnvFilter::from_default_env().add_directive("skyvault=info".parse()?))
+        // Use pretty formatting for console output
+        .pretty()
+        .finish();
 
-    let root_logger = Logger::root(drain, o!("version" => env!("CARGO_PKG_VERSION")));
-
-    // Set the global logger
-    let _guard = slog_scope::set_global_logger(root_logger.clone());
-    // Also redirect standard log crate to slog
-    slog_stdlog::init().unwrap();
+    tracing::subscriber::set_global_default(subscriber)
+        .expect("Setting default tracing subscriber failed");
 
     let config = Config::from_args();
-    info!(root_logger, "Starting skyvault"; "config" => ?config);
+    info!(config = ?config, "Starting skyvault");
 
     let addr: SocketAddr = config
         .grpc_addr
         .parse()
         .with_context(|| format!("Failed to parse gRPC address: {}", config.grpc_addr))?;
 
-    let metadata = Arc::new(metadata::SqliteMetadataStore::new(config.metadata_db_path).with_context(|| "Failed to create metadata store")?);
-    let storage = Arc::new(storage::LocalObjectStore::new(config.storage_dir).with_context(|| "Failed to create storage")?);
+    let metadata = Arc::new(
+        metadata::SqliteMetadataStore::new(config.metadata_db_path)
+            .with_context(|| "Failed to create metadata store")?,
+    );
+    let storage = Arc::new(
+        storage::LocalObjectStore::new(config.storage_dir)
+            .with_context(|| "Failed to create storage")?,
+    );
 
-    info!(root_logger, "Starting gRPC server"; "address" => %addr);
+    info!(address = %addr, "Starting gRPC server");
     skyvault::server(addr, metadata, storage)
         .await
         .with_context(|| "Failed to start gRPC server")?;
-    info!(root_logger, "gRPC server stopped");
+    info!("gRPC server stopped");
     Ok(())
 }

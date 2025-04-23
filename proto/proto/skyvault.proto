@@ -3,7 +3,7 @@ syntax = "proto3";
 package skyvault;
 
 service Batcher {
-  rpc BatchProcess (BatchRequest) returns (BatchResponse);
+  rpc WriteBatch (WriteBatchRequest) returns (WriteBatchResponse);
 }
 
 service Index {
@@ -14,8 +14,25 @@ service Orchestrator {
   rpc Orchestrate (OrchestrateRequest) returns (OrchestrateResponse);
 }
 
-message BatchRequest {}
-message BatchResponse {}
+message WriteBatchRequest {
+  repeated TableBatch tables = 1;
+}
+
+message TableBatch {
+  string table_name = 1;
+  repeated WriteBatchItem items = 2;
+}
+
+message WriteBatchItem {
+  string key = 1;
+  oneof operation {
+    bytes value = 2;
+    bool delete = 3;
+  }
+}
+
+message WriteBatchResponse {}
+
 message IndexRequest {}
 message IndexResponse {}
 message OrchestrateRequest {}

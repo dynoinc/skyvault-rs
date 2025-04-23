@@ -1,19 +1,20 @@
+use crate::{metadata::MetadataStore, storage::ObjectStore};
 use std::sync::Arc;
-
-use slog::{debug, info};
-use slog_scope;
 use tonic::{Request, Response, Status};
 
-use crate::{Index, skyvault, metadata, storage};
+use crate::proto::index_server::Index;
+use crate::proto::{IndexRequest, IndexResponse};
 
 pub struct MyIndex {
-    _metadata: Arc<dyn metadata::MetadataStore>,
-    _storage: Arc<dyn storage::ObjectStore>, 
+    #[allow(dead_code)]
+    metadata: Arc<dyn MetadataStore>,
+    #[allow(dead_code)]
+    storage: Arc<dyn ObjectStore>,
 }
 
 impl MyIndex {
-    pub fn new(metadata: Arc<dyn metadata::MetadataStore>, storage: Arc<dyn storage::ObjectStore>) -> Self {
-        Self { _metadata: metadata, _storage: storage }
+    pub fn new(metadata: Arc<dyn MetadataStore>, storage: Arc<dyn ObjectStore>) -> Self {
+        Self { metadata, storage }
     }
 }
 
@@ -21,23 +22,8 @@ impl MyIndex {
 impl Index for MyIndex {
     async fn index_document(
         &self,
-        req: Request<skyvault::IndexRequest>,
-    ) -> Result<Response<skyvault::IndexResponse>, Status> {
-        let log = slog_scope::logger();
-        let request_id = req
-            .metadata()
-            .get("x-request-id")
-            .map(|v| v.to_str().unwrap_or("unknown"))
-            .unwrap_or("unknown");
-
-        info!(log, "Received index request"; "request_id" => request_id);
-        debug!(log, "Processing index request"; "request" => ?req.get_ref());
-
-        // Process the index request here
-
-        let response = skyvault::IndexResponse {};
-        info!(log, "Index request processed successfully"; "request_id" => request_id);
-
-        Ok(Response::new(response))
+        _request: Request<IndexRequest>,
+    ) -> Result<Response<IndexResponse>, Status> {
+        Ok(Response::new(IndexResponse {}))
     }
 }
