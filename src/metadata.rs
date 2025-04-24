@@ -1,14 +1,19 @@
+use std::collections::HashMap;
 use std::sync::OnceLock;
+use std::time::Duration;
 
+use async_stream::stream;
 use aws_sdk_dynamodb::Client as DynamoDbClient;
 use aws_sdk_dynamodb::error::SdkError;
 use aws_sdk_dynamodb::operation::create_table::CreateTableError;
 use aws_sdk_dynamodb::operation::get_item::GetItemError;
+use aws_sdk_dynamodb::operation::query::QueryError;
 use aws_sdk_dynamodb::operation::transact_write_items::TransactWriteItemsError;
 use aws_sdk_dynamodb::types::{
     AttributeDefinition, AttributeValue, KeySchemaElement, Put, TransactWriteItem, Update,
 };
 use aws_smithy_runtime_api::client::orchestrator::HttpResponse;
+use futures::Stream;
 use thiserror::Error;
 
 use crate::proto;
@@ -77,8 +82,60 @@ pub enum MetadataError {
     #[error("Get item error: {0}")]
     GetItemError(#[from] SdkError<GetItemError, HttpResponse>),
 
+    #[error("Query error: {0}")]
+    QueryError(#[from] SdkError<QueryError, HttpResponse>),
+
     #[error("Counter initialization error: {0}")]
     CounterInitError(String),
+
+    #[error("Parse error: {0}")]
+    ParseError(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChangelogEntry {
+    pub sequence_number: i64,
+    pub runs_added: Vec<String>,
+    pub runs_removed: Vec<String>,
+}
+
+impl TryFrom<HashMap<String, AttributeValue>> for ChangelogEntry {
+    type Error = MetadataError;
+
+    fn try_from(item: HashMap<String, AttributeValue>) -> Result<Self, Self::Error> {
+        let sequence_number = item
+            .get("sk")
+            .and_then(|av| av.as_n().ok())
+            .ok_or_else(|| MetadataError::ParseError("Missing or invalid 'sk'".to_string()))?
+            .parse::<i64>()
+            .map_err(|e| MetadataError::ParseError(format!("Failed to parse 'sk': {}", e)))?;
+
+        let runs_added = item
+            .get("runs_added")
+            .and_then(|av| av.as_l().ok())
+            .map(|l| {
+                l.iter()
+                    .filter_map(|av| av.as_s().ok().cloned())
+                    .collect::<Vec<String>>()
+            })
+            .unwrap_or_default();
+
+        let runs_removed = item
+            .get("runs_removed")
+            .and_then(|av| av.as_l().ok())
+            .map(|l| {
+                l.iter()
+                    .filter_map(|av| av.as_s().ok().cloned())
+                    .collect::<Vec<String>>()
+            })
+            .unwrap_or_default();
+
+        Ok(ChangelogEntry {
+            sequence_number,
+            runs_added,
+            runs_removed,
+        })
+    }
 }
 
 #[derive(Clone)]
@@ -142,9 +199,74 @@ impl MetadataStore {
             Err(err) => Err(MetadataError::CounterInitError(err.to_string())),
         }
     }
-}
 
-impl MetadataStore {
+    /// Returns a stream of changelog entries, starting from the beginning.
+    /// The stream continuously polls for new entries after reaching the end.
+    pub fn stream_changelog(
+        &self,
+    ) -> impl Stream<Item = Result<ChangelogEntry, MetadataError>> + '_ {
+        stream! {
+            let mut last_seen_sk: i64 = 0;
+            let poll_interval = Duration::from_secs(1);
+
+            loop {
+                let mut query_builder = self
+                    .client
+                    .query()
+                    .table_name(CHANGELOG_TABLE_NAME)
+                    .key_condition_expression("pk = :pkVal AND sk > :skVal")
+                    .expression_attribute_values(":pkVal", AttributeValue::S("changelog".to_string()))
+                    .expression_attribute_values(":skVal", AttributeValue::N(last_seen_sk.to_string()));
+
+                let mut has_new_items = false;
+                loop {
+                    let response = match query_builder.clone().send().await {
+                        Ok(resp) => resp,
+                        Err(e) => {
+                            yield Err(MetadataError::QueryError(e));
+                            // Consider adding a backoff strategy here instead of breaking immediately
+                            break;
+                        }
+                    };
+
+                    if let Some(items) = response.items {
+                        if items.is_empty() {
+                            break; // No more items in this query page
+                        }
+                        has_new_items = true;
+                        for item in items {
+                           match ChangelogEntry::try_from(item) {
+                                Ok(entry) => {
+                                    last_seen_sk = entry.sequence_number;
+                                    yield Ok(entry);
+                                },
+                                Err(e) => {
+                                    yield Err(e);
+                                    // Decide if we should stop the stream on parse error
+                                    // For now, we continue to the next item
+                                }
+                            }
+                        }
+                    }
+
+                    // Check if there are more pages
+                    if let Some(last_evaluated_key) = response.last_evaluated_key {
+                        query_builder = query_builder.set_exclusive_start_key(Some(last_evaluated_key));
+                    } else {
+                        break; // No more pages
+                    }
+                }
+
+                // If no new items were found in the last query cycle, wait before polling again
+                if !has_new_items {
+                    tokio::time::sleep(poll_interval).await;
+                }
+                // If there was an error in the inner loop, we might want to add a delay here too
+                // before retrying the outer loop.
+            }
+        }
+    }
+
     pub async fn append_changelog(
         &self,
         runs_added: Vec<proto::RunMetadata>,
@@ -310,13 +432,15 @@ async fn create_table(
 #[cfg(test)]
 mod tests {
     use aws_sdk_dynamodb::config::{Credentials, Region};
+    use futures::StreamExt;
     use testcontainers_modules::dynamodb_local::DynamoDb;
+    use testcontainers_modules::testcontainers::ContainerAsync;
     use testcontainers_modules::testcontainers::runners::AsyncRunner;
+    use tokio::time::timeout;
 
     use super::*;
 
-    #[tokio::test]
-    async fn test_append_changelog() {
+    async fn setup_test_db() -> (MetadataStore, ContainerAsync<DynamoDb>) {
         let container = DynamoDb::default()
             .start()
             .await
@@ -327,7 +451,6 @@ mod tests {
             .expect("Failed to get port");
         let endpoint_url = format!("http://localhost:{}", port);
 
-        // Configure DynamoDB client to use local container
         let config = aws_sdk_dynamodb::Config::builder()
             .behavior_version_latest()
             .region(Region::new("us-east-1"))
@@ -337,10 +460,16 @@ mod tests {
 
         let client = DynamoDbClient::from_conf(config);
 
-        // Create metadata store
         let metadata_store = MetadataStore::new(client)
             .await
             .expect("Failed to create metadata store");
+
+        (metadata_store, container)
+    }
+
+    #[tokio::test]
+    async fn test_append_changelog() {
+        let (metadata_store, _container) = setup_test_db().await;
 
         // Create test run metadata
         let run1 = proto::RunMetadata {
@@ -427,5 +556,90 @@ mod tests {
             result1.is_ok() || result2.is_ok(),
             "Both concurrent appends failed"
         );
+    }
+
+    #[tokio::test]
+    async fn test_stream_changelog() {
+        let (metadata_store, _container) = setup_test_db().await;
+
+        // Add initial entries
+        let run1 = proto::RunMetadata {
+            id: "run1".to_string(),
+            stats: None,
+        };
+        let run2 = proto::RunMetadata {
+            id: "run2".to_string(),
+            stats: None,
+        };
+        metadata_store
+            .append_changelog(vec![run1.clone()], vec![])
+            .await
+            .unwrap();
+        metadata_store
+            .append_changelog(vec![run2.clone()], vec!["run1".to_string()])
+            .await
+            .unwrap();
+
+        // Pin the stream
+        let mut stream = Box::pin(metadata_store.stream_changelog());
+
+        // Check initial entries
+        let entry1 = timeout(Duration::from_secs(5), stream.next())
+            .await
+            .expect("Timeout waiting for entry 1")
+            .unwrap()
+            .unwrap();
+        assert_eq!(entry1.sequence_number, 1);
+        assert_eq!(entry1.runs_added, vec!["run1"]);
+        assert_eq!(entry1.runs_removed, Vec::<String>::new());
+
+        let entry2 = timeout(Duration::from_secs(5), stream.next())
+            .await
+            .expect("Timeout waiting for entry 2")
+            .unwrap()
+            .unwrap();
+        assert_eq!(entry2.sequence_number, 2);
+        assert_eq!(entry2.runs_added, vec!["run2"]);
+        assert_eq!(entry2.runs_removed, vec!["run1"]);
+
+        // Add more entries while streaming
+        let run3 = proto::RunMetadata {
+            id: "run3".to_string(),
+            stats: None,
+        };
+        metadata_store
+            .append_changelog(vec![run3.clone()], vec![])
+            .await
+            .unwrap();
+
+        // Check the newly added entry (polling might take a second)
+        let entry3 = timeout(Duration::from_secs(5), stream.next())
+            .await
+            .expect("Timeout waiting for entry 3")
+            .unwrap()
+            .unwrap();
+        assert_eq!(entry3.sequence_number, 3);
+        assert_eq!(entry3.runs_added, vec!["run3"]);
+        assert_eq!(entry3.runs_removed, Vec::<String>::new());
+
+        // Add another entry
+        let run4 = proto::RunMetadata {
+            id: "run4".to_string(),
+            stats: None,
+        };
+        metadata_store
+            .append_changelog(vec![run4.clone()], vec!["run2".to_string()])
+            .await
+            .unwrap();
+
+        // Check the next entry
+        let entry4 = timeout(Duration::from_secs(5), stream.next())
+            .await
+            .expect("Timeout waiting for entry 4")
+            .unwrap()
+            .unwrap();
+        assert_eq!(entry4.sequence_number, 4);
+        assert_eq!(entry4.runs_added, vec!["run4"]);
+        assert_eq!(entry4.runs_removed, vec!["run2"]);
     }
 }

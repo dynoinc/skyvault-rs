@@ -33,6 +33,7 @@ aws-sdk-dynamodb = "1.71"
 aws-sdk-s3 = "1.82"
 aws-smithy-runtime-api = "1.8.0"
 ulid = "1.2.1"
+async-stream = "0.3"
 
 [build-dependencies]
 tonic-build = "0.13"
