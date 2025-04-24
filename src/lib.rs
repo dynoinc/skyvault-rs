@@ -1,7 +1,6 @@
 //! Library entry for skyvault2. Re-exports generated proto and service stubs.
 
 use std::net::SocketAddr;
-use std::sync::Arc;
 
 use proto::batcher_server::{self, Batcher, BatcherServer};
 use proto::index_server::{self, IndexServer};
@@ -19,13 +18,13 @@ pub mod index_service;
 pub mod orchestrator_service;
 
 pub mod metadata;
-pub mod storage;
 pub mod runs;
+pub mod storage;
 
 pub async fn server(
     addr: SocketAddr,
-    metadata: Arc<dyn metadata::MetadataStore>,
-    storage: Arc<dyn storage::ObjectStore>,
+    metadata: metadata::MetadataStore,
+    storage: storage::ObjectStore,
 ) -> Result<(), tonic::transport::Error> {
     let (health_reporter, health_service) = tonic_health::server::health_reporter();
 

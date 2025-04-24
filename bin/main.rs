@@ -1,7 +1,8 @@
 use std::net::SocketAddr;
-use std::sync::Arc;
 
 use anyhow::{Context, Result};
+use aws_sdk_dynamodb::Client as DynamoDbClient;
+use aws_sdk_s3::Client as S3Client;
 use skyvault::{metadata, storage};
 use structopt::StructOpt;
 use tracing::info;
@@ -16,11 +17,11 @@ pub struct Config {
     #[structopt(
         long,
         env = "SKYVAULT_METADATA_DB_PATH",
-        default_value = "target/metadata.db"
+        default_value = "./metadata.db"
     )]
     pub metadata_db_path: String,
 
-    #[structopt(long, env = "SKYVAULT_STORAGE_DIR", default_value = "target/storage")]
+    #[structopt(long, env = "SKYVAULT_STORAGE_DIR", default_value = "./storage")]
     pub storage_dir: String,
 }
 
@@ -45,14 +46,16 @@ async fn main() -> Result<()> {
         .parse()
         .with_context(|| format!("Failed to parse gRPC address: {}", config.grpc_addr))?;
 
-    let metadata = Arc::new(
-        metadata::SqliteMetadataStore::new(config.metadata_db_path)
-            .with_context(|| "Failed to create metadata store")?,
-    );
-    let storage = Arc::new(
-        storage::LocalObjectStore::new(config.storage_dir)
-            .with_context(|| "Failed to create storage")?,
-    );
+    // Initialize AWS SDK
+    let aws_config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
+
+    // Create DynamoDB client
+    let dynamodb_client = DynamoDbClient::new(&aws_config);
+    let metadata = metadata::MetadataStore::new(dynamodb_client);
+
+    // Create S3 client
+    let s3_client = S3Client::new(&aws_config);
+    let storage = storage::ObjectStore::new(s3_client);
 
     info!(address = %addr, "Starting gRPC server");
     skyvault::server(addr, metadata, storage)

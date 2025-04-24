@@ -1,4 +1,5 @@
-# Format, lint, and test the codebase
+default: check
+
 check:
     cargo fmt --all
     cargo clippy -- -D warnings

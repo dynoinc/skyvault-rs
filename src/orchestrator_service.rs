@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use tonic::{Request, Response, Status};
 
 use crate::metadata::MetadataStore;
@@ -8,11 +6,11 @@ use crate::proto::{OrchestrateRequest, OrchestrateResponse};
 
 pub struct MyOrchestrator {
     #[allow(dead_code)]
-    metadata: Arc<dyn MetadataStore>,
+    metadata: MetadataStore,
 }
 
 impl MyOrchestrator {
-    pub fn new(metadata: Arc<dyn MetadataStore>) -> Self {
+    pub fn new(metadata: MetadataStore) -> Self {
         Self { metadata }
     }
 }

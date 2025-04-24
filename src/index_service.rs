@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use tonic::{Request, Response, Status};
 
 use crate::metadata::MetadataStore;
@@ -9,13 +7,13 @@ use crate::storage::ObjectStore;
 
 pub struct MyIndex {
     #[allow(dead_code)]
-    metadata: Arc<dyn MetadataStore>,
+    metadata: MetadataStore,
     #[allow(dead_code)]
-    storage: Arc<dyn ObjectStore>,
+    storage: ObjectStore,
 }
 
 impl MyIndex {
-    pub fn new(metadata: Arc<dyn MetadataStore>, storage: Arc<dyn ObjectStore>) -> Self {
+    pub fn new(metadata: MetadataStore, storage: ObjectStore) -> Self {
         Self { metadata, storage }
     }
 }

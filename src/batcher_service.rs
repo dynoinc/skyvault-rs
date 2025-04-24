@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use thiserror::Error;
 use tonic::{Request, Response, Status};
 
@@ -27,10 +25,7 @@ pub struct MyBatcher {
 }
 
 impl MyBatcher {
-    pub fn new(
-        metadata: Arc<dyn metadata::MetadataStore>,
-        storage: Arc<dyn storage::ObjectStore>,
-    ) -> Self {
+    pub fn new(metadata: metadata::MetadataStore, storage: storage::ObjectStore) -> Self {
         let (tx, rx) = tokio::sync::mpsc::channel(100);
 
         tokio::spawn(async move {
@@ -41,8 +36,8 @@ impl MyBatcher {
     }
 
     async fn process_batch_queue(
-        metadata: Arc<dyn metadata::MetadataStore>,
-        storage: Arc<dyn storage::ObjectStore>,
+        metadata: metadata::MetadataStore,
+        storage: storage::ObjectStore,
         mut rx: tokio::sync::mpsc::Receiver<Item>,
     ) {
         while let Some(item) = rx.recv().await {
@@ -91,8 +86,8 @@ impl MyBatcher {
     }
 
     async fn process_batch(
-        _metadata: &Arc<dyn metadata::MetadataStore>,
-        _storage: &Arc<dyn storage::ObjectStore>,
+        _metadata: &metadata::MetadataStore,
+        _storage: &storage::ObjectStore,
         _batch: &[Item],
     ) -> Result<(), BatchError> {
         Ok(())
