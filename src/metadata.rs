@@ -11,6 +11,7 @@ pub struct MetadataStore {
 }
 
 impl MetadataStore {
+    #[must_use]
     pub fn new(client: DynamoDbClient) -> Self {
         Self { client }
     }

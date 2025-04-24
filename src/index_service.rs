@@ -13,6 +13,7 @@ pub struct MyIndex {
 }
 
 impl MyIndex {
+    #[must_use]
     pub fn new(metadata: MetadataStore, storage: ObjectStore) -> Self {
         Self { metadata, storage }
     }

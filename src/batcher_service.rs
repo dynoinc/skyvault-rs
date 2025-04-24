@@ -25,6 +25,7 @@ pub struct MyBatcher {
 }
 
 impl MyBatcher {
+    #[must_use]
     pub fn new(metadata: metadata::MetadataStore, storage: storage::ObjectStore) -> Self {
         let (tx, rx) = tokio::sync::mpsc::channel(100);
 
@@ -69,7 +70,7 @@ impl MyBatcher {
                         }
                     },
 
-                    _ = &mut timeout => {
+                    () = &mut timeout => {
                         break;
                     }
                 }
@@ -112,10 +113,10 @@ impl Batcher for MyBatcher {
         self.tx
             .send(item)
             .await
-            .map_err(|e| Status::internal(format!("Failed to send batch: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Failed to send batch: {e}")))?;
 
         rx.await
-            .map_err(|e| Status::internal(format!("Failed to receive batch result: {}", e)))??;
+            .map_err(|e| Status::internal(format!("Failed to receive batch result: {e}")))??;
 
         Ok(Response::new(proto::WriteBatchResponse {}))
     }

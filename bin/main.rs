@@ -5,41 +5,23 @@ use aws_sdk_dynamodb::Client as DynamoDbClient;
 use aws_sdk_s3::Client as S3Client;
 use skyvault::{metadata, storage};
 use structopt::StructOpt;
-use tracing::info;
-use tracing_subscriber::{EnvFilter, FmtSubscriber};
-
+use tracing::{info, level_filters::LevelFilter};
 #[derive(Debug, StructOpt)]
 #[structopt(name = "skyvault", about = "A gRPC server for skyvault.")]
 pub struct Config {
     #[structopt(long, env = "SKYVAULT_GRPC_ADDR", default_value = "0.0.0.0:50051")]
     pub grpc_addr: String,
-
-    #[structopt(
-        long,
-        env = "SKYVAULT_METADATA_DB_PATH",
-        default_value = "./metadata.db"
-    )]
-    pub metadata_db_path: String,
-
-    #[structopt(long, env = "SKYVAULT_STORAGE_DIR", default_value = "./storage")]
-    pub storage_dir: String,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Setup tracing subscriber
-    let subscriber = FmtSubscriber::builder()
-        // Use EnvFilter to allow RUST_LOG environment variable to control level
-        .with_env_filter(EnvFilter::from_default_env().add_directive("skyvault=info".parse()?))
-        // Use pretty formatting for console output
-        .pretty()
-        .finish();
-
-    tracing::subscriber::set_global_default(subscriber)
-        .expect("Setting default tracing subscriber failed");
+    tracing_subscriber::fmt()
+        .with_max_level(LevelFilter::INFO)
+        .init();
 
     let config = Config::from_args();
-    info!(config = ?config, "Starting skyvault");
+    let version = env!("CARGO_PKG_VERSION");
+    info!(config = ?config, version = version, "Starting skyvault");
 
     let addr: SocketAddr = config
         .grpc_addr

@@ -7,9 +7,9 @@ use proto::index_server::{self, IndexServer};
 use proto::orchestrator_server::{self, OrchestratorServer};
 use tonic::transport::Server;
 use tonic_health::ServingStatus;
-use tracing::info;
 
 pub mod proto {
+    #![allow(clippy::all, clippy::pedantic, clippy::nursery)]
     tonic::include_proto!("skyvault");
 }
 
@@ -43,12 +43,13 @@ pub async fn server(
         .set_service_status(orchestrator_server::SERVICE_NAME, ServingStatus::Serving)
         .await;
 
-    info!(address = %addr, services = "batcher,index,orchestrator", "Building gRPC server");
     Server::builder()
         .add_service(BatcherServer::new(batcher))
         .add_service(IndexServer::new(index))
         .add_service(OrchestratorServer::new(orchestrator))
         .add_service(health_service)
-        .serve(addr)
+        .serve_with_shutdown(addr, async {
+            tokio::signal::ctrl_c().await.ok();
+        })
         .await
 }

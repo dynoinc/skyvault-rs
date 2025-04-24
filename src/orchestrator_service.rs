@@ -10,6 +10,7 @@ pub struct MyOrchestrator {
 }
 
 impl MyOrchestrator {
+    #[must_use]
     pub fn new(metadata: MetadataStore) -> Self {
         Self { metadata }
     }

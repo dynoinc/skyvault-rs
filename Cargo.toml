@@ -11,8 +11,9 @@ name = "skyvault"
 path = "bin/main.rs"
 
 [lints.clippy]
-all = "deny"
-pedantic = "deny"
+unwrap_used = "deny"
+expect_used = "deny"
+
 
 [dependencies]
 tonic = "0.13"

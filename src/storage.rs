@@ -11,6 +11,7 @@ pub struct ObjectStore {
 }
 
 impl ObjectStore {
+    #[must_use]
     pub fn new(client: S3Client) -> Self {
         Self { client }
     }

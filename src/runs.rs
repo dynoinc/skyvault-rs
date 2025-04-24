@@ -17,8 +17,7 @@ pub enum WriteOperation {
 impl WriteOperation {
     fn key(&self) -> &str {
         match self {
-            WriteOperation::Put(k, _) => k,
-            WriteOperation::Delete(k) => k,
+            WriteOperation::Put(k, _) | WriteOperation::Delete(k) => k,
         }
     }
 }
@@ -51,6 +50,8 @@ pub enum RunError {
     UnsupportedVersion(u8),
     #[error("Input list of operations cannot be empty")]
     EmptyInput,
+    #[error("No valid operations after deduplication")]
+    NoValidOperations,
 }
 
 const CURRENT_VERSION: u8 = 1;
@@ -75,10 +76,20 @@ pub fn create_run(operations: Vec<WriteOperation>) -> Result<(Vec<u8>, RunMetada
     // Extract sorted, unique operations
     let sorted_ops: Vec<WriteOperation> = unique_ops.into_values().collect();
 
-    // Determine min and max keys
-    // We already checked that sorted_ops is not empty due to the initial check
-    let min_key = sorted_ops.first().unwrap().key().to_string();
-    let max_key = sorted_ops.last().unwrap().key().to_string();
+    // Check if we have any operations after deduplication
+    if sorted_ops.is_empty() {
+        return Err(RunError::NoValidOperations);
+    }
+
+    // Determine min and max keys - safe now that we've checked for emptiness
+    let min_key = sorted_ops
+        .first()
+        .map(|op| op.key().to_string())
+        .ok_or_else(|| RunError::Format("Failed to get minimum key".to_string()))?;
+    let max_key = sorted_ops
+        .last()
+        .map(|op| op.key().to_string())
+        .ok_or_else(|| RunError::Format("Failed to get maximum key".to_string()))?;
 
     let mut buffer = Vec::new();
     let mut cursor = Cursor::new(&mut buffer);
@@ -123,6 +134,11 @@ pub fn create_run(operations: Vec<WriteOperation>) -> Result<(Vec<u8>, RunMetada
 pub fn search_run(run_data: &[u8], search_key: &str) -> Result<SearchResult, RunError> {
     let mut cursor = Cursor::new(run_data);
 
+    // Check if data is empty
+    if run_data.is_empty() {
+        return Err(RunError::Format("Empty run data".to_string()));
+    }
+
     // Read and check version
     let version = cursor.read_u8()?;
     if version != CURRENT_VERSION {
@@ -131,18 +147,34 @@ pub fn search_run(run_data: &[u8], search_key: &str) -> Result<SearchResult, Run
 
     // Iterate through entries
     while cursor.position() < run_data.len() as u64 {
+        // Check if we have enough data to read the marker
+        if cursor.position() >= run_data.len() as u64 {
+            return Err(RunError::Format("Unexpected end of data".to_string()));
+        }
+
         let marker = cursor.read_u8()?;
+        if marker != MARKER_PUT && marker != MARKER_DELETE {
+            return Err(RunError::Format(format!("Invalid marker byte: {marker}")));
+        }
+
+        // Check if we have enough data to read the key length
+        if cursor.position() + 4 > run_data.len() as u64 {
+            return Err(RunError::Format("Incomplete key length data".to_string()));
+        }
 
         // Read key
         let key_len = cursor.read_u32::<BigEndian>()? as usize;
         let current_pos = cursor.position() as usize;
+
         // Check for potential overflow or incomplete data before allocation
-        if current_pos
-            .checked_add(key_len)
-            .is_none_or(|end| end > run_data.len())
-        {
+        if current_pos.checked_add(key_len).is_none() {
+            return Err(RunError::Format("Key length overflow".to_string()));
+        }
+
+        if current_pos + key_len > run_data.len() {
             return Err(RunError::Format("Incomplete key data".to_string()));
         }
+
         let key_slice = &run_data[current_pos..current_pos + key_len];
 
         match key_slice.cmp(search_key.as_bytes()) {
@@ -150,16 +182,24 @@ pub fn search_run(run_data: &[u8], search_key: &str) -> Result<SearchResult, Run
                 // Key is smaller, skip this entry and continue
                 cursor.set_position((current_pos + key_len) as u64); // Move cursor past the key
                 if marker == MARKER_PUT {
+                    // Check if we have enough data to read the value length
+                    if cursor.position() + 4 > run_data.len() as u64 {
+                        return Err(RunError::Format("Incomplete value length data".to_string()));
+                    }
+
                     // Skip value if it was a Put operation
                     let value_len = cursor.read_u32::<BigEndian>()? as usize;
                     let val_pos = cursor.position() as usize;
+
                     // Check for potential overflow or incomplete data
-                    if val_pos
-                        .checked_add(value_len)
-                        .is_none_or(|end| end > run_data.len())
-                    {
+                    if val_pos.checked_add(value_len).is_none() {
+                        return Err(RunError::Format("Value length overflow".to_string()));
+                    }
+
+                    if val_pos + value_len > run_data.len() {
                         return Err(RunError::Format("Incomplete value data".to_string()));
                     }
+
                     cursor.set_position((val_pos + value_len) as u64); // Move cursor past the value
                 }
                 // If marker was Delete, we've already skipped the key, nothing more to skip.
@@ -169,22 +209,34 @@ pub fn search_run(run_data: &[u8], search_key: &str) -> Result<SearchResult, Run
                 cursor.set_position((current_pos + key_len) as u64); // Move cursor past the key
                 return match marker {
                     MARKER_PUT => {
+                        // Check if we have enough data to read the value length
+                        if cursor.position() + 4 > run_data.len() as u64 {
+                            return Err(RunError::Format(
+                                "Incomplete value length data for found key".to_string(),
+                            ));
+                        }
+
                         let value_len = cursor.read_u32::<BigEndian>()? as usize;
                         let val_pos = cursor.position() as usize;
+
                         // Check for potential overflow or incomplete data
-                        if val_pos
-                            .checked_add(value_len)
-                            .is_none_or(|end| end > run_data.len())
-                        {
+                        if val_pos.checked_add(value_len).is_none() {
+                            return Err(RunError::Format(
+                                "Value length overflow for found key".to_string(),
+                            ));
+                        }
+
+                        if val_pos + value_len > run_data.len() {
                             return Err(RunError::Format(
                                 "Incomplete value data for found key".to_string(),
                             ));
                         }
+
                         let value = run_data[val_pos..val_pos + value_len].to_vec();
                         Ok(SearchResult::Found(value))
                     },
                     MARKER_DELETE => Ok(SearchResult::Tombstone),
-                    _ => Err(RunError::Format(format!("Invalid marker byte: {}", marker))),
+                    _ => Err(RunError::Format(format!("Invalid marker byte: {marker}"))),
                 };
             },
             std::cmp::Ordering::Greater => {
@@ -318,8 +370,7 @@ mod tests {
     fn test_search_run_empty_data() {
         let data = vec![];
         let result = search_run(&data, "any");
-        // Expecting an I/O error because it can't even read the version byte
-        assert!(matches!(result, Err(RunError::Io(_))));
+        assert!(matches!(result, Err(RunError::Format(_))));
     }
 
     #[test]
