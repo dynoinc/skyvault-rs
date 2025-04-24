@@ -115,45 +115,31 @@ impl MetadataStore {
 
     // Initialize the changelog counter if it doesn't exist
     async fn init_changelog_counter(&self) -> Result<(), MetadataError> {
-        // Check if counter exists
-        let result = self
+        // Initialize counter with a condition to only insert if it doesn't exist
+        match self
             .client
-            .get_item()
+            .put_item()
             .table_name(CHANGELOG_TABLE_NAME)
-            .key("pk", AttributeValue::S("placeholder".to_string()))
-            .key("sk", AttributeValue::N(i64::MAX.to_string()))
+            .item("pk", AttributeValue::S("placeholder".to_string()))
+            .item("sk", AttributeValue::N(i64::MAX.to_string()))
+            .item("next_changelog_num", AttributeValue::N("1".to_string()))
+            .condition_expression("attribute_not_exists(pk)")
             .send()
-            .await?;
-
-        // If counter doesn't exist, initialize it
-        if result.item().is_none() {
-            match self
-                .client
-                .put_item()
-                .table_name(CHANGELOG_TABLE_NAME)
-                .item("pk", AttributeValue::S("placeholder".to_string()))
-                .item("sk", AttributeValue::N(i64::MAX.to_string()))
-                .item("next_changelog_num", AttributeValue::N("1".to_string()))
-                .condition_expression("attribute_not_exists(pk)")
-                .send()
-                .await
+            .await
+        {
+            Ok(_) => {
+                tracing::info!("Initialized changelog counter");
+                Ok(())
+            },
+            Err(SdkError::ServiceError(err))
+                if err.err().is_conditional_check_failed_exception() =>
             {
-                Ok(_) => {
-                    tracing::info!("Initialized changelog counter");
-                    Ok(())
-                },
-                Err(SdkError::ServiceError(err))
-                    if err.err().is_conditional_check_failed_exception() =>
-                {
-                    // Another process initialized the counter concurrently
-                    tracing::info!("Changelog counter already initialized by another process");
-                    Ok(())
-                },
-                Err(err) => Err(MetadataError::CounterInitError(err.to_string())),
-            }
-        } else {
-            tracing::info!("Changelog counter already exists");
-            Ok(())
+                // Another process initialized the counter concurrently
+                // or it already exists
+                tracing::info!("Changelog counter already exists");
+                Ok(())
+            },
+            Err(err) => Err(MetadataError::CounterInitError(err.to_string())),
         }
     }
 }

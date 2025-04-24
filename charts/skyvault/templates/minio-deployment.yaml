@@ -1,0 +1,42 @@
+# MinIO Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "skyvault.fullname" . }}-minio
+  labels:
+    {{- include "skyvault.labels" . | nindent 4 }}
+    app.kubernetes.io/component: minio
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "skyvault.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: minio
+  template:
+    metadata:
+      labels:
+        {{- include "skyvault.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: minio
+    spec:
+      containers:
+        - name: minio
+          image: "{{ .Values.minio.image.repository }}:{{ .Values.minio.image.tag }}"
+          imagePullPolicy: {{ .Values.minio.image.pullPolicy }}
+          ports:
+            - name: minio-api
+              containerPort: {{ .Values.minio.service.port }}
+              protocol: TCP
+            # MinIO Console port
+            - name: minio-console
+              containerPort: 9001
+              protocol: TCP
+          env:
+            - name: MINIO_ROOT_USER
+              value: {{ .Values.minio.env.MINIO_ROOT_USER | quote }}
+            - name: MINIO_ROOT_PASSWORD
+              value: {{ .Values.minio.env.MINIO_ROOT_PASSWORD | quote }}
+          args:
+            - server
+            - /data # MinIO still needs a path, even without PVC
+            - --console-address
+            - :9001 

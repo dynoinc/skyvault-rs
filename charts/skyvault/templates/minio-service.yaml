@@ -1,0 +1,23 @@
+# MinIO Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "skyvault.fullname" . }}-minio
+  labels:
+    {{- include "skyvault.labels" . | nindent 4 }}
+    app.kubernetes.io/component: minio
+spec:
+  type: ClusterIP # Keep dependencies internal
+  ports:
+    - port: {{ .Values.minio.service.port }}
+      targetPort: minio-api
+      protocol: TCP
+      name: minio-api
+    # Expose MinIO Console port if needed, otherwise remove
+    - port: 9001
+      targetPort: minio-console
+      protocol: TCP
+      name: minio-console
+  selector:
+    {{- include "skyvault.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: minio 

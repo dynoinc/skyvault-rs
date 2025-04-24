@@ -1,0 +1,16 @@
+# SkyVault Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "skyvault.fullname" . }}
+  labels:
+    {{- include "skyvault.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: grpc
+      protocol: TCP
+      name: grpc
+  selector:
+    {{- include "skyvault.selectorLabels" . | nindent 4 }} 

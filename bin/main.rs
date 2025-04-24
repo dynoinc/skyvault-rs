@@ -39,8 +39,11 @@ async fn main() -> Result<()> {
     let dynamodb_client = DynamoDbClient::new(&aws_config);
     let metadata = metadata::MetadataStore::new(dynamodb_client).await?;
 
-    // Create S3 client
-    let s3_client = S3Client::new(&aws_config);
+    // Create S3 client with path style URLs
+    let s3_config = aws_sdk_s3::config::Builder::from(&aws_config)
+        .force_path_style(true)
+        .build();
+    let s3_client = S3Client::from_conf(s3_config);
     let storage = storage::ObjectStore::new(s3_client, &config.bucket_name).await?;
 
     info!(address = %addr, "Starting gRPC server");
