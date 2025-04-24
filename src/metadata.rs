@@ -359,7 +359,7 @@ impl MetadataStore {
                                 .item("id", AttributeValue::S(run.id.clone()))
                                 .item("stats", match &run.stats {
                                     Some(proto::run_metadata::Stats::StatsV1(stats)) => {
-                                        let mut map = std::collections::HashMap::new();
+                                        let mut map = HashMap::new();
                                         map.insert(
                                             "min_key".to_string(),
                                             AttributeValue::S(stats.min_key.clone()),

@@ -398,7 +398,7 @@ mod tests {
 
         // Using into_iter()
         let ops_copy = ops.clone();
-        let (data2, _) = create_run(ops_copy.into_iter()).unwrap();
+        let (data2, _) = create_run(ops_copy).unwrap();
 
         // Using an array
         let array_ops = [
