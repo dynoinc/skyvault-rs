@@ -37,3 +37,17 @@ message IndexRequest {}
 message IndexResponse {}
 message OrchestrateRequest {}
 message OrchestrateResponse {}
+
+message RunMetadata {
+  string id = 1;
+
+  oneof stats {
+    StatsV1 stats_v1 = 1001;
+  }
+}
+
+message StatsV1 {
+  string min_key = 1;
+  string max_key = 2;
+  uint64 size_bytes = 3;
+}

@@ -5,12 +5,16 @@ use aws_sdk_dynamodb::Client as DynamoDbClient;
 use aws_sdk_s3::Client as S3Client;
 use skyvault::{metadata, storage};
 use structopt::StructOpt;
-use tracing::{info, level_filters::LevelFilter};
+use tracing::info;
+use tracing::level_filters::LevelFilter;
 #[derive(Debug, StructOpt)]
 #[structopt(name = "skyvault", about = "A gRPC server for skyvault.")]
 pub struct Config {
     #[structopt(long, env = "SKYVAULT_GRPC_ADDR", default_value = "0.0.0.0:50051")]
     pub grpc_addr: String,
+
+    #[structopt(long, env = "SKYVAULT_BUCKET_NAME", default_value = "skyvault-bucket")]
+    pub bucket_name: String,
 }
 
 #[tokio::main]
@@ -33,11 +37,11 @@ async fn main() -> Result<()> {
 
     // Create DynamoDB client
     let dynamodb_client = DynamoDbClient::new(&aws_config);
-    let metadata = metadata::MetadataStore::new(dynamodb_client);
+    let metadata = metadata::MetadataStore::new(dynamodb_client).await?;
 
     // Create S3 client
     let s3_client = S3Client::new(&aws_config);
-    let storage = storage::ObjectStore::new(s3_client);
+    let storage = storage::ObjectStore::new(s3_client, &config.bucket_name).await?;
 
     info!(address = %addr, "Starting gRPC server");
     skyvault::server(addr, metadata, storage)

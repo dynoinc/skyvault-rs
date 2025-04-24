@@ -12,8 +12,6 @@ path = "bin/main.rs"
 
 [lints.clippy]
 unwrap_used = "deny"
-expect_used = "deny"
-
 
 [dependencies]
 tonic = "0.13"
@@ -29,11 +27,12 @@ thiserror = "2.0"
 anyhow = "1.0"
 structopt = "0.3"
 futures = "0.3"
-uuid = { version = "1.16", features = ["v4"] }
 byteorder = "1.5"
 aws-config = "1.6"
 aws-sdk-dynamodb = "1.71"
 aws-sdk-s3 = "1.82"
+aws-smithy-runtime-api = "1.8.0"
+ulid = "1.2.1"
 
 [build-dependencies]
 tonic-build = "0.13"

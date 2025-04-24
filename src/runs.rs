@@ -3,6 +3,8 @@ use std::io::{Cursor, Write};
 
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 
+use crate::proto;
+
 // Type aliases for clarity
 pub type Key = String;
 pub type Value = Vec<u8>;
@@ -20,15 +22,6 @@ impl WriteOperation {
             WriteOperation::Put(k, _) | WriteOperation::Delete(k) => k,
         }
     }
-}
-
-// Metadata about a created run
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RunMetadata {
-    pub version: u8,
-    pub min_key: Key,
-    pub max_key: Key,
-    pub size_bytes: usize,
 }
 
 // Result of searching within a run
@@ -58,19 +51,26 @@ const CURRENT_VERSION: u8 = 1;
 const MARKER_PUT: u8 = 0x01;
 const MARKER_DELETE: u8 = 0x00;
 
-/// Creates a serialized run file (v1) from a list of write operations.
+/// Creates a serialized run file (v1) from an iterator of write operations.
 ///
 /// Operations are deduplicated (last write wins) and sorted by key.
 /// Returns the serialized byte vector and metadata.
-pub fn create_run(operations: Vec<WriteOperation>) -> Result<(Vec<u8>, RunMetadata), RunError> {
-    if operations.is_empty() {
-        return Err(RunError::EmptyInput);
-    }
-
+pub fn create_run<I>(operations: I) -> Result<(Vec<u8>, proto::run_metadata::Stats), RunError>
+where
+    I: IntoIterator<Item = WriteOperation>,
+{
     // Deduplicate operations, keeping the last one for each key
     let mut unique_ops = BTreeMap::new();
+    let mut has_ops = false;
+
     for op in operations {
+        has_ops = true;
         unique_ops.insert(op.key().to_string(), op);
+    }
+
+    // Check if we received any operations
+    if !has_ops {
+        return Err(RunError::EmptyInput);
     }
 
     // Extract sorted, unique operations
@@ -118,16 +118,15 @@ pub fn create_run(operations: Vec<WriteOperation>) -> Result<(Vec<u8>, RunMetada
         }
     }
 
-    let size_bytes = cursor.position() as usize;
+    let size_bytes = cursor.position();
 
-    let metadata = RunMetadata {
-        version: CURRENT_VERSION,
+    let stats = proto::StatsV1 {
         min_key,
         max_key,
         size_bytes,
     };
 
-    Ok((buffer, metadata))
+    Ok((buffer, proto::run_metadata::Stats::StatsV1(stats)))
 }
 
 /// Searches for a key within a serialized run (v1).
@@ -265,16 +264,18 @@ mod tests {
             WriteOperation::Put("apple".to_string(), value("red")),
             WriteOperation::Put("banana".to_string(), value("yellow")),
         ];
-        let (data, metadata) = create_run(ops).unwrap();
-
-        assert_eq!(metadata.version, 1);
-        assert_eq!(metadata.min_key, "apple");
-        assert_eq!(metadata.max_key, "banana");
-        // Expected size: version(1) +
-        // apple: marker(1) + keylen(4) + key(5) + vallen(4) + val(3) = 17
-        // banana: marker(1) + keylen(4) + key(6) + vallen(4) + val(6) = 21
-        // total = 1 + 17 + 21 = 39
-        assert_eq!(metadata.size_bytes, 39);
+        let (data, stats) = create_run(ops).unwrap();
+        match stats {
+            proto::run_metadata::Stats::StatsV1(stats) => {
+                assert_eq!(stats.min_key, "apple");
+                assert_eq!(stats.max_key, "banana");
+                // Expected size: version(1) +
+                // apple: marker(1) + keylen(4) + key(5) + vallen(4) + val(3) = 17
+                // banana: marker(1) + keylen(4) + key(6) + vallen(4) + val(6) = 21
+                // total = 1 + 17 + 21 = 39
+                assert_eq!(stats.size_bytes, 39);
+            },
+        }
 
         // Basic check of the first byte (version)
         assert_eq!(data[0], 1);
@@ -289,18 +290,20 @@ mod tests {
             WriteOperation::Delete("banana".to_string()),           // Kept
             WriteOperation::Put("banana".to_string(), value("yellow")), // Overwritten by delete
         ];
-        let (data, metadata) = create_run(ops).unwrap();
-
-        assert_eq!(metadata.version, 1);
-        assert_eq!(metadata.min_key, "apple");
-        assert_eq!(metadata.max_key, "cherry");
-        assert_eq!(metadata.size_bytes, 57);
+        let (data, stats) = create_run(ops).unwrap();
+        match stats {
+            proto::run_metadata::Stats::StatsV1(stats) => {
+                assert_eq!(stats.min_key, "apple");
+                assert_eq!(stats.max_key, "cherry");
+                assert_eq!(stats.size_bytes, 57);
+            },
+        }
         assert_eq!(data[0], 1); // Version
     }
 
     #[test]
     fn test_create_run_empty_input() {
-        let ops = vec![];
+        let ops: Vec<WriteOperation> = vec![];
         let result = create_run(ops);
         assert!(matches!(result, Err(RunError::EmptyInput)));
     }
@@ -378,5 +381,34 @@ mod tests {
         let data = vec![2, 0]; // Version 2, dummy data
         let result = search_run(&data, "any");
         assert!(matches!(result, Err(RunError::UnsupportedVersion(2))));
+    }
+
+    #[test]
+    fn test_create_run_with_iterator() {
+        let ops = vec![
+            WriteOperation::Put("apple".to_string(), value("red")),
+            WriteOperation::Put("banana".to_string(), value("yellow")),
+        ];
+
+        // Test with various iterator types
+
+        // Using iter().cloned()
+        let ops_iter = ops.iter().cloned();
+        let (data1, _) = create_run(ops_iter).unwrap();
+
+        // Using into_iter()
+        let ops_copy = ops.clone();
+        let (data2, _) = create_run(ops_copy.into_iter()).unwrap();
+
+        // Using an array
+        let array_ops = [
+            WriteOperation::Put("apple".to_string(), value("red")),
+            WriteOperation::Put("banana".to_string(), value("yellow")),
+        ];
+        let (data3, _) = create_run(array_ops).unwrap();
+
+        // All should produce the same serialized data
+        assert_eq!(data1, data2);
+        assert_eq!(data1, data3);
     }
 }

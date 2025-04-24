@@ -11,17 +11,20 @@ pub enum BatchError {
     #[error("Storage error: {0}")]
     StorageError(#[from] storage::StorageError),
 
+    #[error("Run error: {0}")]
+    RunError(#[from] crate::runs::RunError),
+
     #[error("Internal error: {0}")]
     Internal(String),
 }
 
-struct Item {
-    req: proto::WriteBatchRequest,
+struct WriteReq {
+    ops: Vec<crate::runs::WriteOperation>,
     tx: tokio::sync::oneshot::Sender<Result<(), Status>>,
 }
 
 pub struct MyBatcher {
-    tx: tokio::sync::mpsc::Sender<Item>,
+    tx: tokio::sync::mpsc::Sender<WriteReq>,
 }
 
 impl MyBatcher {
@@ -39,10 +42,10 @@ impl MyBatcher {
     async fn process_batch_queue(
         metadata: metadata::MetadataStore,
         storage: storage::ObjectStore,
-        mut rx: tokio::sync::mpsc::Receiver<Item>,
+        mut rx: tokio::sync::mpsc::Receiver<WriteReq>,
     ) {
         while let Some(item) = rx.recv().await {
-            let mut key_value_count = item.req.tables.iter().map(|t| t.items.len()).sum::<usize>();
+            let mut ops_count = item.ops.len();
             let mut buffer = vec![item];
 
             let timeout = tokio::time::sleep(std::time::Duration::from_millis(250));
@@ -55,12 +58,11 @@ impl MyBatcher {
                     maybe_item = rx.recv() => {
                         match maybe_item {
                             Some(item) => {
-                                key_value_count += item.req.tables.iter().map(|t| t.items.len()).sum::<usize>();
+                                ops_count += item.ops.len();
                                 buffer.push(item);
 
                                 // If we've collected enough items, process the batch immediately
-                                if key_value_count >= 50_000 {
-
+                                if ops_count >= 50_000 {
                                     break;
                                 }
                             },
@@ -76,7 +78,7 @@ impl MyBatcher {
                 }
             }
 
-            let result = Self::process_batch(&metadata, &storage, &buffer).await;
+            let result = Self::process_batch(&metadata, &storage, &mut buffer).await;
             let result = result.map_err(|e| Status::internal(e.to_string()));
             for item in buffer.drain(..) {
                 let _ = item.tx.send(result.clone());
@@ -87,10 +89,25 @@ impl MyBatcher {
     }
 
     async fn process_batch(
-        _metadata: &metadata::MetadataStore,
-        _storage: &storage::ObjectStore,
-        _batch: &[Item],
+        metadata: &metadata::MetadataStore,
+        storage: &storage::ObjectStore,
+        batch: &mut [WriteReq],
     ) -> Result<(), BatchError> {
+        let (run, stats) =
+            crate::runs::create_run(batch.iter_mut().flat_map(|req| req.ops.drain(..)))?;
+
+        let run_id = ulid::Ulid::new().to_string();
+        let run_path = format!("runs/{}", run_id);
+        storage.put(&run_path, run).await?;
+
+        let run_metadata = proto::RunMetadata {
+            id: run_id,
+            stats: Some(stats),
+        };
+        metadata
+            .append_changelog(vec![run_metadata], vec![])
+            .await?;
+
         Ok(())
     }
 }
@@ -105,13 +122,31 @@ impl Batcher for MyBatcher {
             return Err(Status::invalid_argument("No writes provided"));
         }
 
+        let mut ops: Vec<crate::runs::WriteOperation> = Vec::new();
+        for mut table in req.into_inner().tables.drain(..) {
+            if table.table_name.is_empty() {
+                return Err(Status::invalid_argument("Table name cannot be empty"));
+            }
+
+            for item in table.items.drain(..) {
+                let key = format!("{}.{}", table.table_name, item.key);
+                match item.operation {
+                    Some(proto::write_batch_item::Operation::Value(value)) => {
+                        ops.push(crate::runs::WriteOperation::Put(key, value));
+                    },
+                    Some(proto::write_batch_item::Operation::Delete(true)) => {
+                        ops.push(crate::runs::WriteOperation::Delete(key));
+                    },
+                    _ => {
+                        return Err(Status::invalid_argument("Unsupported operation"));
+                    },
+                }
+            }
+        }
+
         let (tx, rx) = tokio::sync::oneshot::channel();
-        let item = Item {
-            req: req.into_inner(),
-            tx,
-        };
         self.tx
-            .send(item)
+            .send(WriteReq { ops, tx })
             .await
             .map_err(|e| Status::internal(format!("Failed to send batch: {e}")))?;
 
