@@ -36,3 +36,6 @@ ulid = "1.2.1"
 
 [build-dependencies]
 tonic-build = "0.13"
+
+[dev-dependencies]
+testcontainers-modules = { version = "0.11.6", features = ["dynamodb"] }

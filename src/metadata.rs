@@ -308,7 +308,7 @@ async fn create_table(
         .table_name(table_name)
         .set_attribute_definitions(Some(attribute_definitions))
         .set_key_schema(Some(key_schema))
-        .on_demand_throughput(aws_sdk_dynamodb::types::OnDemandThroughput::builder().build())
+        .billing_mode(aws_sdk_dynamodb::types::BillingMode::PayPerRequest)
         .send()
         .await
     {
@@ -318,5 +318,128 @@ async fn create_table(
             Ok(())
         },
         Err(err) => Err(MetadataError::CreateTableError(err)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use aws_sdk_dynamodb::config::{Credentials, Region};
+    use testcontainers_modules::dynamodb_local::DynamoDb;
+    use testcontainers_modules::testcontainers::runners::AsyncRunner;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn test_append_changelog() {
+        let container = DynamoDb::default()
+            .start()
+            .await
+            .expect("Failed to start DynamoDB local container");
+        let port = container
+            .get_host_port_ipv4(8000)
+            .await
+            .expect("Failed to get port");
+        let endpoint_url = format!("http://localhost:{}", port);
+
+        // Configure DynamoDB client to use local container
+        let config = aws_sdk_dynamodb::Config::builder()
+            .behavior_version_latest()
+            .region(Region::new("us-east-1"))
+            .endpoint_url(endpoint_url)
+            .credentials_provider(Credentials::new("dummy", "dummy", None, None, "dummy"))
+            .build();
+
+        let client = DynamoDbClient::from_conf(config);
+
+        // Create metadata store
+        let metadata_store = MetadataStore::new(client)
+            .await
+            .expect("Failed to create metadata store");
+
+        // Create test run metadata
+        let run1 = proto::RunMetadata {
+            id: "run1".to_string(),
+            stats: Some(proto::run_metadata::Stats::StatsV1(proto::StatsV1 {
+                min_key: "a".to_string(),
+                max_key: "z".to_string(),
+                size_bytes: 100,
+            })),
+        };
+
+        let run2 = proto::RunMetadata {
+            id: "run2".to_string(),
+            stats: Some(proto::run_metadata::Stats::StatsV1(proto::StatsV1 {
+                min_key: "b".to_string(),
+                max_key: "y".to_string(),
+                size_bytes: 200,
+            })),
+        };
+
+        // Test appending to changelog
+        let result = metadata_store
+            .append_changelog(vec![run1.clone()], vec![])
+            .await;
+        assert!(
+            result.is_ok(),
+            "Failed to append to changelog: {:?}",
+            result
+        );
+
+        // Test appending multiple runs
+        let result = metadata_store
+            .append_changelog(vec![run2.clone()], vec![])
+            .await;
+        assert!(
+            result.is_ok(),
+            "Failed to append multiple runs: {:?}",
+            result
+        );
+
+        // Test appending with tombstones
+        let result = metadata_store
+            .append_changelog(vec![], vec!["run1".to_string()])
+            .await;
+        assert!(
+            result.is_ok(),
+            "Failed to append with tombstones: {:?}",
+            result
+        );
+
+        // Test concurrent appends
+        let metadata_store_clone = metadata_store.clone();
+        let run3 = proto::RunMetadata {
+            id: "run3".to_string(),
+            stats: Some(proto::run_metadata::Stats::StatsV1(proto::StatsV1 {
+                min_key: "c".to_string(),
+                max_key: "x".to_string(),
+                size_bytes: 300,
+            })),
+        };
+
+        let run4 = proto::RunMetadata {
+            id: "run4".to_string(),
+            stats: Some(proto::run_metadata::Stats::StatsV1(proto::StatsV1 {
+                min_key: "d".to_string(),
+                max_key: "w".to_string(),
+                size_bytes: 400,
+            })),
+        };
+
+        let handle1 =
+            tokio::spawn(async move { metadata_store.append_changelog(vec![run3], vec![]).await });
+
+        let handle2 = tokio::spawn(async move {
+            metadata_store_clone
+                .append_changelog(vec![run4], vec![])
+                .await
+        });
+
+        let result1 = handle1.await.expect("Task panicked");
+        let result2 = handle2.await.expect("Task panicked");
+
+        assert!(
+            result1.is_ok() || result2.is_ok(),
+            "Both concurrent appends failed"
+        );
     }
 }
