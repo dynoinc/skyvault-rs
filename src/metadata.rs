@@ -5,6 +5,7 @@ use std::time::Duration;
 use async_stream::stream;
 use aws_sdk_dynamodb::Client as DynamoDbClient;
 use aws_sdk_dynamodb::error::SdkError;
+use aws_sdk_dynamodb::operation::batch_get_item::BatchGetItemError;
 use aws_sdk_dynamodb::operation::create_table::CreateTableError;
 use aws_sdk_dynamodb::operation::get_item::GetItemError;
 use aws_sdk_dynamodb::operation::query::QueryError;
@@ -17,6 +18,8 @@ use futures::Stream;
 use thiserror::Error;
 
 use crate::proto;
+#[cfg(test)]
+use crate::test_utils::setup_test_db;
 
 // Define table attributes and schema as global constants
 const RUNS_TABLE_NAME: &str = "runs";
@@ -84,6 +87,9 @@ pub enum MetadataError {
 
     #[error("Query error: {0}")]
     QueryError(#[from] SdkError<QueryError, HttpResponse>),
+
+    #[error("Batch get item error: {0}")]
+    BatchGetItemError(#[from] SdkError<BatchGetItemError, HttpResponse>),
 
     #[error("Counter initialization error: {0}")]
     CounterInitError(String),
@@ -403,6 +409,106 @@ impl MetadataStore {
             }
         }
     }
+
+    pub async fn get_run_metadata_batch(
+        &self,
+        run_ids: &[String],
+    ) -> Result<HashMap<String, proto::RunMetadata>, MetadataError> {
+        if run_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        // Prepare keys for BatchGetItem
+        let keys: Vec<HashMap<String, AttributeValue>> = run_ids
+            .iter()
+            .map(|id| {
+                let mut key = HashMap::new();
+                key.insert("id".to_string(), AttributeValue::S(id.clone()));
+                key
+            })
+            .collect();
+
+        // Create request
+        let request = self.client.batch_get_item().request_items(
+            RUNS_TABLE_NAME,
+            aws_sdk_dynamodb::types::KeysAndAttributes::builder()
+                .set_keys(Some(keys))
+                .build()
+                .expect("Failed to build keys and attributes"),
+        );
+
+        // Execute request
+        let result = request.send().await?;
+
+        // Process results
+        let mut metadata_map = HashMap::new();
+
+        if let Some(responses) = result.responses {
+            if let Some(items) = responses.get(RUNS_TABLE_NAME) {
+                for item in items {
+                    if let Some(id_attr) = item.get("id") {
+                        if let Ok(id) = id_attr.as_s() {
+                            // Extract stats - fail if missing
+                            let stats = match item.get("stats") {
+                                Some(AttributeValue::M(map)) => {
+                                    let min_key = map
+                                        .get("min_key")
+                                        .and_then(|av| av.as_s().ok())
+                                        .ok_or_else(|| {
+                                            MetadataError::ParseError("Missing min_key".to_string())
+                                        })?
+                                        .clone();
+
+                                    let max_key = map
+                                        .get("max_key")
+                                        .and_then(|av| av.as_s().ok())
+                                        .ok_or_else(|| {
+                                            MetadataError::ParseError("Missing max_key".to_string())
+                                        })?
+                                        .clone();
+
+                                    let size_bytes = map
+                                        .get("size_bytes")
+                                        .and_then(|av| av.as_n().ok())
+                                        .ok_or_else(|| {
+                                            MetadataError::ParseError(
+                                                "Missing size_bytes".to_string(),
+                                            )
+                                        })?
+                                        .parse::<u64>()
+                                        .map_err(|e| {
+                                            MetadataError::ParseError(format!(
+                                                "Invalid size_bytes: {}",
+                                                e
+                                            ))
+                                        })?;
+
+                                    proto::run_metadata::Stats::StatsV1(proto::StatsV1 {
+                                        min_key,
+                                        max_key,
+                                        size_bytes,
+                                    })
+                                },
+                                _ => {
+                                    return Err(MetadataError::ParseError(format!(
+                                        "Missing or invalid stats for run {}",
+                                        id
+                                    )));
+                                },
+                            };
+
+                            metadata_map.insert(id.clone(), proto::RunMetadata {
+                                id: id.clone(),
+                                stats: Some(stats),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(metadata_map)
+    }
 }
 
 async fn create_table(
@@ -431,45 +537,14 @@ async fn create_table(
 
 #[cfg(test)]
 mod tests {
-    use aws_sdk_dynamodb::config::{Credentials, Region};
     use futures::StreamExt;
-    use testcontainers_modules::dynamodb_local::DynamoDb;
-    use testcontainers_modules::testcontainers::ContainerAsync;
-    use testcontainers_modules::testcontainers::runners::AsyncRunner;
     use tokio::time::timeout;
 
     use super::*;
 
-    async fn setup_test_db() -> (MetadataStore, ContainerAsync<DynamoDb>) {
-        let container = DynamoDb::default()
-            .start()
-            .await
-            .expect("Failed to start DynamoDB local container");
-        let port = container
-            .get_host_port_ipv4(8000)
-            .await
-            .expect("Failed to get port");
-        let endpoint_url = format!("http://localhost:{}", port);
-
-        let config = aws_sdk_dynamodb::Config::builder()
-            .behavior_version_latest()
-            .region(Region::new("us-east-1"))
-            .endpoint_url(endpoint_url)
-            .credentials_provider(Credentials::new("dummy", "dummy", None, None, "dummy"))
-            .build();
-
-        let client = DynamoDbClient::from_conf(config);
-
-        let metadata_store = MetadataStore::new(client)
-            .await
-            .expect("Failed to create metadata store");
-
-        (metadata_store, container)
-    }
-
     #[tokio::test]
     async fn test_append_changelog() {
-        let (metadata_store, _container) = setup_test_db().await;
+        let (metadata_store, _container) = setup_test_db().await.unwrap();
 
         // Create test run metadata
         let run1 = proto::RunMetadata {
@@ -560,7 +635,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_stream_changelog() {
-        let (metadata_store, _container) = setup_test_db().await;
+        let (metadata_store, _container) = setup_test_db().await.unwrap();
 
         // Add initial entries
         let run1 = proto::RunMetadata {

@@ -16,12 +16,12 @@ unwrap_used = "deny"
 [dependencies]
 tonic = "0.13"
 tonic-health = "0.13"
+tonic-reflection = "0.13"
 tokio = { version = "1", features = ["full"] }
 prost = "0.13"
 clap = { version = "4.5", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
-
 async-trait = "0.1"
 thiserror = "2.0"
 anyhow = "1.0"

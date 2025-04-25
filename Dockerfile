@@ -5,12 +5,16 @@ RUN apt-get update && apt-get install -y protobuf-compiler pkg-config libssl-dev
 
 WORKDIR /app
 
+# Download rust toolchain first
+COPY rust-toolchain.toml ./
+RUN rustup show
+
 # Create a fake project for caching dependencies
 RUN mkdir -p src bin proto
 RUN echo "fn main() {println!(\"fake\")}" > src/lib.rs
 RUN echo "fn main() {println!(\"fake\")}" > bin/main.rs
 RUN echo "syntax = \"proto3\"; package skyvault;" > proto/skyvault.proto
-COPY Cargo.toml Cargo.lock rust-toolchain.toml build.rs .rustfmt.toml ./
+COPY Cargo.toml Cargo.lock build.rs .rustfmt.toml ./
 RUN cargo build
 
 # Build the actual project

@@ -11,7 +11,7 @@ service Index {
 }
 
 service Orchestrator {
-  rpc Orchestrate (OrchestrateRequest) returns (OrchestrateResponse);
+  rpc ListRuns (ListRunsRequest) returns (ListRunsResponse);
 }
 
 message WriteBatchRequest {
@@ -35,8 +35,13 @@ message WriteBatchResponse {}
 
 message IndexRequest {}
 message IndexResponse {}
-message OrchestrateRequest {}
-message OrchestrateResponse {}
+
+message ListRunsRequest {
+}
+
+message ListRunsResponse {
+  repeated RunMetadata runs = 1;
+}
 
 message RunMetadata {
   string id = 1;
