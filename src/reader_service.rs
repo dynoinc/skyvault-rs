@@ -1,11 +1,12 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use futures::future::join_all;
 use futures::{StreamExt, pin_mut};
 use thiserror::Error;
 use tonic::transport::Channel;
 use tonic::{Request, Response, Status};
-use tracing::error;
+use tracing::{error, info};
 
 use crate::consistent_hashring::ConsistentHashRing;
 use crate::forest::{Forest, ForestError};
@@ -42,10 +43,23 @@ impl MyReader {
         let forest = Forest::new(metadata).await?;
 
         let (pods, pods_stream) = pod_watcher::watch().await?;
-        let consistent_hashring = ConsistentHashRing::with_nodes(4, pods);
-        let consistent_hashring = Arc::new(Mutex::new(consistent_hashring));
 
-        let connections = Arc::new(Mutex::new(HashMap::new()));
+        let connections: HashMap<_, _> = join_all(pods.into_iter().map(|pod| async {
+            let conn = match ReaderServiceClient::connect(format!("http://{}:{}", pod, port)).await {
+                Ok(conn) => conn,
+                Err(e) => {
+                    error!("Error connecting to pod {}: {e}", pod);
+                    return None;
+                },
+            };
+
+            Some((pod, conn))
+        })).await.into_iter().filter_map(|conn| { conn }).collect();
+        info!("Initializing ring with {} nodes", connections.len());
+        let consistent_hashring = ConsistentHashRing::with_nodes(4, connections.keys().cloned());
+
+        let connections = Arc::new(Mutex::new(connections));
+        let consistent_hashring = Arc::new(Mutex::new(consistent_hashring));
 
         let ch = consistent_hashring.clone();
         let co = connections.clone();
@@ -65,10 +79,12 @@ impl MyReader {
                                 },
                             };
 
+                        info!("Adding pod {pod} to consistent hashring");
                         co.lock().unwrap().insert(pod.clone(), conn);
                         ch.lock().unwrap().add_node(pod);
                     },
                     Ok(PodChange::Removed(pod)) => {
+                        info!("Removing pod {pod} from consistent hashring");
                         ch.lock().unwrap().remove_node(&pod);
                         co.lock().unwrap().remove(&pod);
                     },
