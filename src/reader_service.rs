@@ -13,8 +13,7 @@ use crate::metadata::MetadataStore;
 use crate::pod_watcher::{self, PodChange, PodWatcherError};
 use crate::proto::reader_service_client::ReaderServiceClient;
 use crate::proto::reader_service_server::ReaderService;
-use crate::runs_cache::RunsCache;
-use crate::storage::ObjectStore;
+use crate::storage::{ObjectStore, StorageCache};
 use crate::{proto, runs};
 
 #[derive(Debug, Error)]
@@ -24,12 +23,21 @@ pub enum ReaderServiceError {
 
     #[error("Forest error: {0}")]
     ForestError(#[from] ForestError),
+
+    #[error("Connection error: {0}")]
+    ConnectionError(#[from] tonic::transport::Error),
 }
 
 pub struct MyReader {
+    // Metadata
     forest: Forest,
-    runs_cache: RunsCache,
+
+    // Cache
+    storage_cache: StorageCache,
     consistent_hashring: Arc<Mutex<ConsistentHashRing<String>>>,
+
+    // Connection
+    port: u16,
     connections: Arc<Mutex<HashMap<String, ReaderServiceClient<Channel>>>>,
 }
 
@@ -46,31 +54,17 @@ impl MyReader {
         let consistent_hashring = Arc::new(Mutex::new(ConsistentHashRing::new(4)));
 
         let ch = consistent_hashring.clone();
-        let co = connections.clone();
         tokio::spawn(async move {
             pin_mut!(pods_stream);
             while let Some(pod_change) = pods_stream.next().await {
                 match pod_change {
                     Ok(PodChange::Added(pod)) => {
-                        let conn =
-                            match ReaderServiceClient::connect(format!("http://{}:{}", pod, port))
-                                .await
-                            {
-                                Ok(conn) => conn,
-                                Err(e) => {
-                                    error!("Error connecting to pod {}: {e}", pod);
-                                    continue;
-                                },
-                            };
-
                         info!("Adding pod {pod} to consistent hashring");
-                        co.lock().unwrap().insert(pod.clone(), conn);
                         ch.lock().unwrap().add_node(pod);
                     },
                     Ok(PodChange::Removed(pod)) => {
                         info!("Removing pod {pod} from consistent hashring");
                         ch.lock().unwrap().remove_node(&pod);
-                        co.lock().unwrap().remove(&pod);
                     },
                     Err(e) => {
                         error!("Error watching pods: {e}");
@@ -79,13 +73,36 @@ impl MyReader {
             }
         });
 
-        let runs_cache = RunsCache::new(storage);
+        let storage_cache = StorageCache::new(storage);
         Ok(Self {
-            runs_cache,
+            storage_cache,
             forest,
             consistent_hashring,
             connections,
+            port,
         })
+    }
+
+    async fn get_connection(&self, pod: &str) -> Result<ReaderServiceClient<Channel>, ReaderServiceError> {
+        // First check if connection exists
+        {
+            let connections = self.connections.lock().unwrap();
+            if let Some(conn) = connections.get(pod).cloned() {
+                return Ok(conn);
+            }
+        }
+        
+        // Connection not found, create a new one outside the lock
+        let addr = format!("http://{}:{}", pod, self.port);
+        let conn = match ReaderServiceClient::connect(addr).await {
+            Ok(conn) => conn,
+            Err(e) => return Err(ReaderServiceError::ConnectionError(e)),
+        };
+        
+        // Now acquire the lock again to insert the new connection
+        let conn_clone = conn.clone();
+        self.connections.lock().unwrap().insert(pod.to_string(), conn);
+        Ok(conn_clone)
     }
 }
 
@@ -106,11 +123,11 @@ impl ReaderService for MyReader {
             None => return Err(Status::internal("No reader service pods available")),
         };
 
-        let mut wal_conn = match self.connections.lock().unwrap().get(&wal_pod) {
-            Some(conn) => conn.clone(),
-            None => {
+        let mut wal_conn = match self.get_connection(&wal_pod).await {
+            Ok(conn) => conn,
+            Err(e) => {
                 return Err(Status::internal(
-                    "No connection to reader service pod for WAL",
+                    format!("No connection to reader service pod for WAL: {}", e),
                 ));
             },
         };
@@ -177,7 +194,7 @@ impl ReaderService for MyReader {
                     break;
                 }
 
-                let run = match self.runs_cache.get_run(&wal.id).await {
+                let run = match self.storage_cache.get_run(&wal.id).await {
                     Ok(run) => run,
                     Err(e) => {
                         return Err(Status::internal(format!(

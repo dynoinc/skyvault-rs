@@ -1,3 +1,7 @@
+
+use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
+
 use aws_sdk_s3::Client as S3Client;
 use aws_sdk_s3::operation::create_bucket::CreateBucketError;
 use aws_sdk_s3::operation::get_object::GetObjectError;
@@ -93,3 +97,47 @@ impl ObjectStore {
         Ok(data)
     }
 }
+
+
+/// A simple cache for the object store that caches run data in memory
+pub struct StorageCache {
+    /// The underlying storage system
+    storage: ObjectStore,
+
+    /// In-memory cache of run data
+    cache: Arc<RwLock<HashMap<String, Arc<Vec<u8>>>>>,
+}
+
+impl StorageCache {
+    /// Create a new StorageCache
+    pub fn new(storage: ObjectStore) -> Self {
+        Self {
+            storage,
+            cache: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+    
+    /// Get run data from cache or storage if not cached
+    pub async fn get_run(&self, run_id: &str) -> Result<Arc<Vec<u8>>, StorageError> {
+        // First check if the run is in the cache
+        {
+            let cache = self.cache.read().unwrap();
+            if let Some(run_data) = cache.get(run_id) {
+                return Ok(run_data.clone());
+            }
+        }
+
+        // Not in cache, fetch from storage
+        let run_data = Arc::new(self.storage.get_run(run_id).await?);
+        
+        // Update cache
+        {
+            let mut cache = self.cache.write().unwrap();
+            cache.insert(run_id.to_string(), run_data.clone());
+        }
+
+        Ok(run_data)
+    }
+}
+
+
