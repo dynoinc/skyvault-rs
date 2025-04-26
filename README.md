@@ -1,4 +1,4 @@
-![Skyvault Logo](docs/logo.png)
+![Skyvault Logo](docs/small.png)
 
 [![build](https://github.com/dynoinc/skyvault-rs/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/dynoinc/skyvault-rs/actions/workflows/build.yml)
 
