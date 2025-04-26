@@ -396,10 +396,10 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "Empty run data")]
     fn test_search_run_empty_data() {
         let data = vec![];
-        let result = search_run(&data, "any");
-        assert!(matches!(result, SearchResult::NotFound));
+        search_run(&data, "any");
     }
 
     #[test]

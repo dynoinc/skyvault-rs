@@ -58,6 +58,7 @@ impl ObjectStore {
             .bucket(self.bucket_name.clone())
             .key(format!("runs/{}", run_id))
             .body(value.into())
+            .if_none_match("*".to_string())
             .send()
             .await
         {

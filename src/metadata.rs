@@ -473,6 +473,7 @@ impl MetadataStore {
                                 belongs_to: BelongsTo::WalSeqNo(seq_no),
                                 stats: stats.clone(),
                             })?))
+                            .condition_expression("attribute_not_exists(id)")
                             .build()
                             .expect("Failed to build put request"),
                     )
