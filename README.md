@@ -24,6 +24,7 @@ SkyVault is a high-performance, scalable object-store backed key-value store.
 ## Prerequisites
 
 - Rust (nightly)
+- Protobuf compiler (protoc)
 - Podman, k8s and helm for local development
 - [Just](https://github.com/casey/just) command runner
 
