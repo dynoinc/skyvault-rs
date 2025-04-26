@@ -1,0 +1,34 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT id, belongs_to, stats\n            FROM runs WHERE id = ANY($1)\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "belongs_to",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 2,
+        "name": "stats",
+        "type_info": "Jsonb"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "9234f56a7596ee69d49434fd7b31b3fb0c883ec0539a0b46d2ed76e99c8785fa"
+}

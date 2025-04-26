@@ -1,0 +1,18 @@
+# PostgreSQL Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "skyvault.fullname" . }}-postgres
+  labels:
+    {{- include "skyvault.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+spec:
+  type: ClusterIP # Keep dependencies internal
+  ports:
+    - port: {{ .Values.postgres.service.port }}
+      targetPort: postgres
+      protocol: TCP
+      name: postgres
+  selector:
+    {{- include "skyvault.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres 

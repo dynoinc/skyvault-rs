@@ -1,7 +1,6 @@
 use std::net::SocketAddr;
 
 use anyhow::{Context, Result};
-use aws_sdk_dynamodb::Client as DynamoDbClient;
 use aws_sdk_s3::Client as S3Client;
 use clap::Parser;
 use rustls::crypto::aws_lc_rs;
@@ -14,6 +13,9 @@ use tracing::level_filters::LevelFilter;
 pub struct Config {
     #[arg(long, env = "SKYVAULT_GRPC_ADDR", default_value = "0.0.0.0:50051")]
     pub grpc_addr: String,
+
+    #[arg(long, env = "SKYVAULT_METADATA_URL", default_value = "postgres://postgres:postgres@localhost:5432/skyvault")]
+    pub metadata_url: String,
 
     #[arg(long, env = "SKYVAULT_BUCKET_NAME", default_value = "skyvault-bucket")]
     pub bucket_name: String,
@@ -36,14 +38,11 @@ async fn main() -> Result<()> {
         .parse()
         .with_context(|| format!("Failed to parse gRPC address: {}", config.grpc_addr))?;
 
-    // Initialize AWS SDK
-    let aws_config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
-
     // Create DynamoDB client
-    let dynamodb_client = DynamoDbClient::new(&aws_config);
-    let metadata = metadata::MetadataStore::new(dynamodb_client).await?;
+    let metadata = metadata::MetadataStore::new(config.metadata_url).await?;
 
     // Create S3 client with path style URLs
+    let aws_config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
     let s3_config = aws_sdk_s3::config::Builder::from(&aws_config)
         .force_path_style(true)
         .build();

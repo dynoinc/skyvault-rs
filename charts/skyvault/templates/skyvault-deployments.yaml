@@ -47,10 +47,12 @@ spec:
               value: {{ $value | quote }}
             {{- end }}
             
-            - name: AWS_ENDPOINT_URL_DYNAMODB
-              value: http://{{ include "skyvault.fullname" $ }}-dynamodb:{{ $.Values.dynamodb.service.port }}
             - name: AWS_ENDPOINT_URL_S3
               value: http://{{ include "skyvault.fullname" $ }}-minio:{{ $.Values.minio.service.port }}
+            
+            # Set SKYVAULT_METADATA_URL to PostgreSQL connection string
+            - name: SKYVAULT_METADATA_URL
+              value: "postgres://{{ $.Values.postgres.env.POSTGRES_USER }}:{{ $.Values.postgres.env.POSTGRES_PASSWORD }}@{{ include "skyvault.fullname" $ }}-postgres:{{ $.Values.postgres.service.port }}/{{ $.Values.postgres.env.POSTGRES_DB }}?sslmode=disable"
 ---
 # Service for each SkyVault instance
 apiVersion: v1

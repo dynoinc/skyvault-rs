@@ -21,6 +21,8 @@ RUN cargo build
 # Delete the fake build artifacts
 RUN rm -rf src bin proto target/debug/deps/skyvault*
 COPY . .
+
+ENV SQLX_OFFLINE true
 RUN cargo build
 
 # Runtime stage

@@ -13,3 +13,6 @@ build:
 
 deploy:
     helm upgrade --install skyvault-dev ./charts/skyvault
+
+pgshell:
+    kubectl exec -it $(kubectl get pods -l app.kubernetes.io/component=postgres -o jsonpath="{.items[0].metadata.name}") -- psql -U postgres -d skyvault

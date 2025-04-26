@@ -99,19 +99,8 @@ tolerations: []
 
 affinity: {}
 
-# Values for the dynamodb-local service
-dynamodb:
-  enabled: true
-  image:
-    repository: docker.io/amazon/dynamodb-local # Use fully qualified name
-    tag: latest
-    pullPolicy: IfNotPresent
-  service:
-    port: 8000
-
 # Values for the minio service
 minio:
-  enabled: true
   image:
     repository: docker.io/minio/minio
     tag: latest
@@ -122,4 +111,18 @@ minio:
   env:
     MINIO_ROOT_USER: minioadmin
     MINIO_ROOT_PASSWORD: minioadmin
+ 
+# Values for the PostgreSQL service
+postgres:
+  image:
+    repository: docker.io/postgres
+    tag: "12"
+    pullPolicy: IfNotPresent
+  service:
+    port: 5432
+  # PostgreSQL required environment variables
+  env:
+    POSTGRES_USER: postgres
+    POSTGRES_PASSWORD: postgres
+    POSTGRES_DB: skyvault
  

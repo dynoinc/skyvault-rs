@@ -13,8 +13,9 @@ SkyVault is a high-performance, scalable object-store backed key-value store.
 | Technology                                   | Description                                                   |
 |----------------------------------------------|---------------------------------------------------------------|
 | [Tonic](https://github.com/hyperium/tonic)   | High performance gRPC framework for Rust                      |
-| [DynamoDB](https://aws.amazon.com/dynamodb/) | Managed NoSQL database service                                |
-| [S3](https://aws.amazon.com/s3/)             | Object storage service                                        |
+| [PostgreSQL](https://www.postgresql.org/)    | Open source relational database                               |
+| [SQLx](https://github.com/launchbadge/sqlx)  | Async SQL toolkit for Rust                                    |
+| [MinIO](https://min.io/)                     | High performance object storage                               |
 | [Prometheus](https://prometheus.io/)         | Monitoring and metrics                                        |
 | [Kubernetes](https://kubernetes.io/)         | Container orchestration platform                              |
 | [Helm](https://helm.sh/)                     | Package manager for Kubernetes                                |
