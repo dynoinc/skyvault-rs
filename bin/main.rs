@@ -3,18 +3,19 @@ use std::net::SocketAddr;
 use anyhow::{Context, Result};
 use aws_sdk_dynamodb::Client as DynamoDbClient;
 use aws_sdk_s3::Client as S3Client;
+use clap::Parser;
 use rustls::crypto::aws_lc_rs;
 use skyvault::{metadata, storage};
-use structopt::StructOpt;
 use tracing::info;
 use tracing::level_filters::LevelFilter;
-#[derive(Debug, StructOpt)]
-#[structopt(name = "skyvault", about = "A gRPC server for skyvault.")]
+
+#[derive(Debug, Parser)]
+#[command(name = "skyvault", about = "A gRPC server for skyvault.")]
 pub struct Config {
-    #[structopt(long, env = "SKYVAULT_GRPC_ADDR", default_value = "0.0.0.0:50051")]
+    #[arg(long, env = "SKYVAULT_GRPC_ADDR", default_value = "0.0.0.0:50051")]
     pub grpc_addr: String,
 
-    #[structopt(long, env = "SKYVAULT_BUCKET_NAME", default_value = "skyvault-bucket")]
+    #[arg(long, env = "SKYVAULT_BUCKET_NAME", default_value = "skyvault-bucket")]
     pub bucket_name: String,
 }
 
@@ -26,7 +27,7 @@ async fn main() -> Result<()> {
 
     aws_lc_rs::default_provider().install_default().expect("failed to install aws-lc-rs CryptoProvider");
 
-    let config = Config::from_args();
+    let config = Config::parse();
     let version = env!("CARGO_PKG_VERSION");
     info!(config = ?config, version = version, "Starting skyvault");
 
