@@ -46,6 +46,11 @@ message ListRunsResponse {
 message RunMetadata {
   string id = 1;
 
+  oneof belongs_to {
+    int64 wal_seqno = 2;
+    string table_name = 3;
+  };
+
   oneof stats {
     StatsV1 stats_v1 = 1001;
   }
@@ -55,4 +60,5 @@ message StatsV1 {
   string min_key = 1;
   string max_key = 2;
   uint64 size_bytes = 3;
+  uint64 item_count = 4;
 }

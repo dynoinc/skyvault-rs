@@ -11,7 +11,7 @@ use tonic_health::ServingStatus;
 pub mod proto {
     tonic::include_proto!("skyvault");
 
-    pub(crate) const FILE_DESCRIPTOR_SET: &[u8] =
+    pub const FILE_DESCRIPTOR_SET: &[u8] =
         tonic::include_file_descriptor_set!("skyvault_descriptor");
 }
 

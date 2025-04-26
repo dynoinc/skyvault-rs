@@ -5,6 +5,7 @@ use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 
 use crate::proto;
 
+
 // Type aliases for clarity
 pub type Key = String;
 pub type Value = Vec<u8>;
@@ -43,43 +44,65 @@ pub enum RunError {
     UnsupportedVersion(u8),
     #[error("Input list of operations cannot be empty")]
     EmptyInput,
-    #[error("No valid operations after deduplication")]
-    NoValidOperations,
 }
 
 const CURRENT_VERSION: u8 = 1;
 const MARKER_PUT: u8 = 0x01;
 const MARKER_DELETE: u8 = 0x00;
 
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+pub struct StatsV1 {
+    pub min_key: String,
+    pub max_key: String,
+    pub size_bytes: u64,
+    pub item_count: u64,
+}
+
+impl From<StatsV1> for proto::StatsV1 {
+    fn from(stats: StatsV1) -> Self {
+        proto::StatsV1 {
+            min_key: stats.min_key,
+            max_key: stats.max_key,
+            size_bytes: stats.size_bytes,
+            item_count: stats.item_count,
+        }
+    }
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+pub enum Stats {
+    StatsV1(StatsV1),
+}
+
+impl From<Stats> for proto::run_metadata::Stats {
+    fn from(stats: Stats) -> Self {
+        match stats {
+            Stats::StatsV1(stats) => proto::run_metadata::Stats::StatsV1(stats.into()),
+        }
+    }
+}
+
 /// Creates a serialized run file (v1) from an iterator of write operations.
 ///
 /// Operations are deduplicated (last write wins) and sorted by key.
 /// Returns the serialized byte vector and metadata.
-pub fn create_run<I>(operations: I) -> Result<(Vec<u8>, proto::run_metadata::Stats), RunError>
+pub fn create_run<I>(operations: I) -> Result<(Vec<u8>, Stats), RunError>
 where
     I: IntoIterator<Item = WriteOperation>,
 {
     // Deduplicate operations, keeping the last one for each key
     let mut unique_ops = BTreeMap::new();
-    let mut has_ops = false;
-
     for op in operations {
-        has_ops = true;
         unique_ops.insert(op.key().to_string(), op);
     }
 
     // Check if we received any operations
-    if !has_ops {
+    if unique_ops.is_empty() {
         return Err(RunError::EmptyInput);
     }
 
     // Extract sorted, unique operations
     let sorted_ops: Vec<WriteOperation> = unique_ops.into_values().collect();
-
-    // Check if we have any operations after deduplication
-    if sorted_ops.is_empty() {
-        return Err(RunError::NoValidOperations);
-    }
 
     // Determine min and max keys - safe now that we've checked for emptiness
     let min_key = sorted_ops
@@ -119,14 +142,16 @@ where
     }
 
     let size_bytes = cursor.position();
+    let item_count = sorted_ops.len() as u64;
 
-    let stats = proto::StatsV1 {
+    let stats = StatsV1 {
         min_key,
         max_key,
         size_bytes,
+        item_count,
     };
 
-    Ok((buffer, proto::run_metadata::Stats::StatsV1(stats)))
+    Ok((buffer, Stats::StatsV1(stats)))
 }
 
 /// Searches for a key within a serialized run (v1).
@@ -266,7 +291,7 @@ mod tests {
         ];
         let (data, stats) = create_run(ops).unwrap();
         match stats {
-            proto::run_metadata::Stats::StatsV1(stats) => {
+            Stats::StatsV1(stats) => {
                 assert_eq!(stats.min_key, "apple");
                 assert_eq!(stats.max_key, "banana");
                 // Expected size: version(1) +
@@ -292,7 +317,7 @@ mod tests {
         ];
         let (data, stats) = create_run(ops).unwrap();
         match stats {
-            proto::run_metadata::Stats::StatsV1(stats) => {
+            Stats::StatsV1(stats) => {
                 assert_eq!(stats.min_key, "apple");
                 assert_eq!(stats.max_key, "cherry");
                 assert_eq!(stats.size_bytes, 57);

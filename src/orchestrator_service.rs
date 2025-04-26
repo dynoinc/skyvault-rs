@@ -3,7 +3,7 @@ use tonic::{Request, Response, Status};
 use crate::forest::{Forest, ForestError};
 use crate::metadata::MetadataStore;
 use crate::proto::orchestrator_server::Orchestrator;
-use crate::proto::{ListRunsRequest, ListRunsResponse};
+use crate::proto::{self, ListRunsRequest, ListRunsResponse};
 
 pub struct MyOrchestrator {
     #[allow(dead_code)]
@@ -26,6 +26,7 @@ impl Orchestrator for MyOrchestrator {
         _request: Request<ListRunsRequest>,
     ) -> Result<Response<ListRunsResponse>, Status> {
         let runs = self.forest.get_live_runs();
-        Ok(Response::new(ListRunsResponse { runs: runs.values().cloned().collect() }))
+        let runs: Vec<proto::RunMetadata> = runs.values().cloned().map(|r| r.into()).collect();
+        Ok(Response::new(ListRunsResponse { runs }))
     }
 }

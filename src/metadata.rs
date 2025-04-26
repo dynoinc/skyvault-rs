@@ -11,10 +11,11 @@ use aws_sdk_dynamodb::operation::get_item::GetItemError;
 use aws_sdk_dynamodb::operation::query::QueryError;
 use aws_sdk_dynamodb::operation::transact_write_items::TransactWriteItemsError;
 use aws_sdk_dynamodb::types::{
-    AttributeDefinition, AttributeValue, KeySchemaElement, Put, TransactWriteItem, Update,
+    AttributeDefinition, AttributeValue, KeySchemaElement, Put, TransactWriteItem,
 };
 use aws_smithy_runtime_api::client::orchestrator::HttpResponse;
 use futures::Stream;
+use serde_dynamo::aws_sdk_dynamodb_1::{from_item, from_items, to_item};
 use thiserror::Error;
 
 use crate::proto;
@@ -24,6 +25,7 @@ use crate::test_utils::setup_test_db;
 // Define table attributes and schema as global constants
 const RUNS_TABLE_NAME: &str = "runs";
 const CHANGELOG_TABLE_NAME: &str = "changelog";
+const CHANGELOG_TABLE_PK: &str = "placeholder_pk";
 static RUNS_TABLE_ATTRIBUTES: OnceLock<Vec<AttributeDefinition>> = OnceLock::new();
 static RUNS_TABLE_SCHEMA: OnceLock<Vec<KeySchemaElement>> = OnceLock::new();
 static CHANGELOG_TABLE_ATTRIBUTES: OnceLock<Vec<AttributeDefinition>> = OnceLock::new();
@@ -96,52 +98,65 @@ pub enum MetadataError {
 
     #[error("Parse error: {0}")]
     ParseError(String),
+
+    #[error("Serde error: {0}")]
+    SerdeError(#[from] serde_dynamo::Error),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ChangelogEntry {
-    pub sequence_number: i64,
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+enum BelongsTo {
+    WalSeqNo(i64),
+    TableName(String),
+}
+
+impl From<BelongsTo> for proto::run_metadata::BelongsTo {
+    fn from(belongs_to: BelongsTo) -> Self {
+        match belongs_to {
+            BelongsTo::WalSeqNo(seq_no) => proto::run_metadata::BelongsTo::WalSeqno(seq_no),
+            BelongsTo::TableName(table_name) => proto::run_metadata::BelongsTo::TableName(table_name),
+        }
+    }
+}
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+pub struct RunMetadata {
+    id: String,
+    belongs_to: BelongsTo,
+    stats: crate::runs::Stats,
+}
+
+impl From<RunMetadata> for proto::RunMetadata {
+    fn from(metadata: RunMetadata) -> Self {
+        proto::RunMetadata {
+            id: metadata.id,
+            belongs_to: Some(metadata.belongs_to.into()),
+            stats: Some(metadata.stats.into()),
+        }
+    }
+}
+#[derive(serde::Serialize, serde::Deserialize, Debug)]
+pub struct ChangelogEntryV1 {
     pub runs_added: Vec<String>,
     pub runs_removed: Vec<String>,
 }
 
-impl TryFrom<HashMap<String, AttributeValue>> for ChangelogEntry {
-    type Error = MetadataError;
+#[derive(serde::Serialize, serde::Deserialize, Debug)]
+pub enum ChangelogEntry {
+    V1(ChangelogEntryV1),
+}
 
-    fn try_from(item: HashMap<String, AttributeValue>) -> Result<Self, Self::Error> {
-        let sequence_number = item
-            .get("sk")
-            .and_then(|av| av.as_n().ok())
-            .ok_or_else(|| MetadataError::ParseError("Missing or invalid 'sk'".to_string()))?
-            .parse::<i64>()
-            .map_err(|e| MetadataError::ParseError(format!("Failed to parse 'sk': {}", e)))?;
+#[derive(serde::Serialize, serde::Deserialize, Debug)]
+pub struct ChangeLogEntryWithID {
+    pk: String,
+    sk: i64,
+    entry: ChangelogEntry,
+}
 
-        let runs_added = item
-            .get("runs_added")
-            .and_then(|av| av.as_l().ok())
-            .map(|l| {
-                l.iter()
-                    .filter_map(|av| av.as_s().ok().cloned())
-                    .collect::<Vec<String>>()
-            })
-            .unwrap_or_default();
-
-        let runs_removed = item
-            .get("runs_removed")
-            .and_then(|av| av.as_l().ok())
-            .map(|l| {
-                l.iter()
-                    .filter_map(|av| av.as_s().ok().cloned())
-                    .collect::<Vec<String>>()
-            })
-            .unwrap_or_default();
-
-        Ok(ChangelogEntry {
-            sequence_number,
-            runs_added,
-            runs_removed,
-        })
-    }
+#[derive(serde::Serialize, serde::Deserialize)]
+struct NextId {
+    pk: String,
+    sk: i64,
+    next_seq_no: i64,
+    next_changelog_id: i64,
 }
 
 #[derive(Clone)]
@@ -179,13 +194,19 @@ impl MetadataStore {
     // Initialize the changelog counter if it doesn't exist
     async fn init_changelog_counter(&self) -> Result<(), MetadataError> {
         // Initialize counter with a condition to only insert if it doesn't exist
+        let next_id = NextId {
+            pk: CHANGELOG_TABLE_PK.to_string(),
+            sk: i64::MAX,
+            next_seq_no: 1,
+            next_changelog_id: 1,
+        };
+
+        let item = to_item(next_id)?;
         match self
             .client
             .put_item()
             .table_name(CHANGELOG_TABLE_NAME)
-            .item("pk", AttributeValue::S("placeholder".to_string()))
-            .item("sk", AttributeValue::N(i64::MAX.to_string()))
-            .item("next_changelog_num", AttributeValue::N("1".to_string()))
+            .set_item(Some(item))
             .condition_expression("attribute_not_exists(pk)")
             .send()
             .await
@@ -220,134 +241,111 @@ impl MetadataStore {
                     .client
                     .query()
                     .table_name(CHANGELOG_TABLE_NAME)
-                    .key_condition_expression("pk = :pkVal AND sk > :skVal")
-                    .expression_attribute_values(":pkVal", AttributeValue::S("changelog".to_string()))
-                    .expression_attribute_values(":skVal", AttributeValue::N(last_seen_sk.to_string()));
-
+                    .key_condition_expression("pk = :pkVal AND sk BETWEEN :skVal AND :maxVal")
+                    .expression_attribute_values(":pkVal", AttributeValue::S(CHANGELOG_TABLE_PK.to_string()))
+                    .expression_attribute_values(":skVal", AttributeValue::N((last_seen_sk + 1).to_string()))
+                    .expression_attribute_values(":maxVal", AttributeValue::N((i64::MAX - 1).to_string()));
+            
                 let mut has_new_items = false;
                 loop {
                     let response = match query_builder.clone().send().await {
                         Ok(resp) => resp,
                         Err(e) => {
                             yield Err(MetadataError::QueryError(e));
-                            // Consider adding a backoff strategy here instead of breaking immediately
-                            break;
+                            return;
                         }
                     };
 
+            
                     if let Some(items) = response.items {
-                        if items.is_empty() {
-                            break; // No more items in this query page
-                        }
-                        has_new_items = true;
                         for item in items {
-                           match ChangelogEntry::try_from(item) {
+                            match from_item::<ChangeLogEntryWithID>(item) {
                                 Ok(entry) => {
-                                    last_seen_sk = entry.sequence_number;
-                                    yield Ok(entry);
+                                    has_new_items = true;
+                                    last_seen_sk = entry.sk;
+                                    yield Ok(entry.entry);
                                 },
                                 Err(e) => {
-                                    yield Err(e);
-                                    // Decide if we should stop the stream on parse error
-                                    // For now, we continue to the next item
+                                    yield Err(MetadataError::SerdeError(e));
                                 }
                             }
                         }
                     }
 
-                    // Check if there are more pages
-                    if let Some(last_evaluated_key) = response.last_evaluated_key {
-                        query_builder = query_builder.set_exclusive_start_key(Some(last_evaluated_key));
+                    if let Some(key) = response.last_evaluated_key {
+                        query_builder = query_builder.set_exclusive_start_key(Some(key));
                     } else {
-                        break; // No more pages
+                        break;
                     }
                 }
-
+                
                 // If no new items were found in the last query cycle, wait before polling again
                 if !has_new_items {
                     tokio::time::sleep(poll_interval).await;
                 }
-                // If there was an error in the inner loop, we might want to add a delay here too
-                // before retrying the outer loop.
             }
         }
     }
 
-    pub async fn append_changelog(
+    pub async fn append_wal(
         &self,
-        runs_added: Vec<proto::RunMetadata>,
-        runs_removed: Vec<String>,
+        run_id: String,
+        stats: crate::runs::Stats,
     ) -> Result<(), MetadataError> {
         loop {
             // Get the current counter value
-            let counter_result = self
+            let next_id_item = self
                 .client
                 .get_item()
                 .table_name(CHANGELOG_TABLE_NAME)
-                .key("pk", AttributeValue::S("placeholder".to_string()))
+                .key("pk", AttributeValue::S(CHANGELOG_TABLE_PK.to_string()))
                 .key("sk", AttributeValue::N(i64::MAX.to_string()))
                 .send()
                 .await?;
 
-            let counter_value = counter_result
-                .item()
-                .and_then(|item| item.get("next_changelog_num"))
-                .and_then(|av| av.as_n().ok())
-                .ok_or_else(|| {
-                    MetadataError::CounterInitError("Failed to get counter value".to_string())
-                })?
-                .parse::<i64>()
-                .map_err(|e| {
-                    MetadataError::CounterInitError(format!("Failed to parse counter value: {}", e))
-                })?;
-
+            let mut next_id = match next_id_item.item {
+                Some(item) => from_item::<NextId>(item)?,
+                None => return Err(MetadataError::CounterInitError("Changelog counter not found".to_string())),
+            };
+            
             let mut write_requests = Vec::new();
+            let item_count = match stats {
+                crate::runs::Stats::StatsV1(ref s) => s.item_count,
+            };
 
-            let update_counter = TransactWriteItem::builder()
-                .update(
-                    Update::builder()
+            let seq_no = next_id.next_seq_no;
+            let changelog_id = next_id.next_changelog_id;
+            next_id.next_seq_no += item_count as i64;
+            next_id.next_changelog_id += 1;
+
+            let update_ids = TransactWriteItem::builder()
+                .put(
+                    Put::builder()
                         .table_name(CHANGELOG_TABLE_NAME)
-                        .key("pk", AttributeValue::S("placeholder".to_string()))
-                        .key("sk", AttributeValue::N(i64::MAX.to_string()))
-                        .update_expression("SET next_changelog_num = next_changelog_num + :incr")
-                        .expression_attribute_values(":incr", AttributeValue::N("1".to_string()))
-                        .condition_expression("next_changelog_num = :current_val")
-                        .expression_attribute_values(
-                            ":current_val",
-                            AttributeValue::N(counter_value.to_string()),
-                        )
+                        .set_item(Some(to_item(next_id)?))
+                        .condition_expression("next_changelog_id = :c")
+                        .expression_attribute_values(":c", AttributeValue::N(changelog_id.to_string()))
                         .build()
-                        .expect("Failed to build update request"),
+                        .expect("Failed to build put request"),
                 )
                 .build();
 
-            write_requests.push(update_counter);
+            write_requests.push(update_ids);
 
             // Add changelog entry
+            let changelog_entry_item = to_item(ChangeLogEntryWithID {
+                pk: CHANGELOG_TABLE_PK.to_string(),
+                sk: seq_no,
+                entry: ChangelogEntry::V1(ChangelogEntryV1 {
+                    runs_added: vec![run_id.clone()],
+                    runs_removed: vec![],
+                }),
+            })?;
             let changelog_entry = TransactWriteItem::builder()
                 .put(
                     Put::builder()
                         .table_name(CHANGELOG_TABLE_NAME)
-                        .item("pk", AttributeValue::S("changelog".to_string()))
-                        .item("sk", AttributeValue::N(counter_value.to_string()))
-                        .item(
-                            "runs_added",
-                            AttributeValue::L(
-                                runs_added
-                                    .iter()
-                                    .map(|run| AttributeValue::S(run.id.clone()))
-                                    .collect(),
-                            ),
-                        )
-                        .item(
-                            "runs_removed",
-                            AttributeValue::L(
-                                runs_removed
-                                    .iter()
-                                    .map(|id| AttributeValue::S(id.clone()))
-                                    .collect(),
-                            ),
-                        )
+                        .set_item(Some(changelog_entry_item))
                         .build()
                         .expect("Failed to build put request"),
                 )
@@ -356,38 +354,21 @@ impl MetadataStore {
             write_requests.push(changelog_entry);
 
             // Add runs
-            for run in &runs_added {
-                write_requests.push(
-                    TransactWriteItem::builder()
-                        .put(
-                            Put::builder()
-                                .table_name(RUNS_TABLE_NAME)
-                                .item("id", AttributeValue::S(run.id.clone()))
-                                .item("stats", match &run.stats {
-                                    Some(proto::run_metadata::Stats::StatsV1(stats)) => {
-                                        let mut map = HashMap::new();
-                                        map.insert(
-                                            "min_key".to_string(),
-                                            AttributeValue::S(stats.min_key.clone()),
-                                        );
-                                        map.insert(
-                                            "max_key".to_string(),
-                                            AttributeValue::S(stats.max_key.clone()),
-                                        );
-                                        map.insert(
-                                            "size_bytes".to_string(),
-                                            AttributeValue::N(stats.size_bytes.to_string()),
-                                        );
-                                        AttributeValue::M(map)
-                                    },
-                                    None => AttributeValue::Null(true),
-                                })
-                                .build()
-                                .expect("Failed to build put request"),
+            write_requests.push(
+                TransactWriteItem::builder()
+                    .put(
+                        Put::builder()
+                            .table_name(RUNS_TABLE_NAME)
+                            .set_item(Some(to_item(RunMetadata {
+                                id: run_id.clone(),
+                                belongs_to: BelongsTo::WalSeqNo(seq_no),
+                                stats: stats.clone(),
+                            })?))
+                            .build()
+                            .expect("Failed to build put request"),
                         )
-                        .build(),
-                );
-            }
+                    .build(),
+            );
 
             // Try to commit the transaction
             match self
@@ -402,7 +383,7 @@ impl MetadataStore {
                     if err.err().is_transaction_canceled_exception() =>
                 {
                     // If there's a conflict, retry
-                    tracing::info!("Transaction conflict, retrying with new counter value");
+                    tracing::info!("Transaction conflict, retrying with new seq_no value");
                     continue;
                 },
                 Err(err) => return Err(MetadataError::TransactWriteError(err)),
@@ -413,7 +394,7 @@ impl MetadataStore {
     pub async fn get_run_metadata_batch(
         &self,
         run_ids: &[String],
-    ) -> Result<HashMap<String, proto::RunMetadata>, MetadataError> {
+    ) -> Result<HashMap<String, RunMetadata>, MetadataError> {
         if run_ids.is_empty() {
             return Ok(HashMap::new());
         }
@@ -443,66 +424,10 @@ impl MetadataStore {
         // Process results
         let mut metadata_map = HashMap::new();
 
-        if let Some(responses) = result.responses {
-            if let Some(items) = responses.get(RUNS_TABLE_NAME) {
-                for item in items {
-                    if let Some(id_attr) = item.get("id") {
-                        if let Ok(id) = id_attr.as_s() {
-                            // Extract stats - fail if missing
-                            let stats = match item.get("stats") {
-                                Some(AttributeValue::M(map)) => {
-                                    let min_key = map
-                                        .get("min_key")
-                                        .and_then(|av| av.as_s().ok())
-                                        .ok_or_else(|| {
-                                            MetadataError::ParseError("Missing min_key".to_string())
-                                        })?
-                                        .clone();
-
-                                    let max_key = map
-                                        .get("max_key")
-                                        .and_then(|av| av.as_s().ok())
-                                        .ok_or_else(|| {
-                                            MetadataError::ParseError("Missing max_key".to_string())
-                                        })?
-                                        .clone();
-
-                                    let size_bytes = map
-                                        .get("size_bytes")
-                                        .and_then(|av| av.as_n().ok())
-                                        .ok_or_else(|| {
-                                            MetadataError::ParseError(
-                                                "Missing size_bytes".to_string(),
-                                            )
-                                        })?
-                                        .parse::<u64>()
-                                        .map_err(|e| {
-                                            MetadataError::ParseError(format!(
-                                                "Invalid size_bytes: {}",
-                                                e
-                                            ))
-                                        })?;
-
-                                    proto::run_metadata::Stats::StatsV1(proto::StatsV1 {
-                                        min_key,
-                                        max_key,
-                                        size_bytes,
-                                    })
-                                },
-                                _ => {
-                                    return Err(MetadataError::ParseError(format!(
-                                        "Missing or invalid stats for run {}",
-                                        id
-                                    )));
-                                },
-                            };
-
-                            metadata_map.insert(id.clone(), proto::RunMetadata {
-                                id: id.clone(),
-                                stats: Some(stats),
-                            });
-                        }
-                    }
+        if let Some(mut responses) = result.responses {
+            if let Some(items) = responses.remove(RUNS_TABLE_NAME) {
+                for metadata in from_items::<RunMetadata>(items)? {
+                    metadata_map.insert(metadata.id.clone(), metadata);
                 }
             }
         }
@@ -537,184 +462,203 @@ async fn create_table(
 
 #[cfg(test)]
 mod tests {
-    use futures::StreamExt;
-    use tokio::time::timeout;
-
     use super::*;
+    use crate::runs::{Stats, StatsV1};
+    use futures::{StreamExt, pin_mut};
+    use std::time::Duration;
 
     #[tokio::test]
-    async fn test_append_changelog() {
-        let (metadata_store, _container) = setup_test_db().await.unwrap();
-
-        // Create test run metadata
-        let run1 = proto::RunMetadata {
-            id: "run1".to_string(),
-            stats: Some(proto::run_metadata::Stats::StatsV1(proto::StatsV1 {
-                min_key: "a".to_string(),
-                max_key: "z".to_string(),
-                size_bytes: 100,
-            })),
-        };
-
-        let run2 = proto::RunMetadata {
-            id: "run2".to_string(),
-            stats: Some(proto::run_metadata::Stats::StatsV1(proto::StatsV1 {
-                min_key: "b".to_string(),
-                max_key: "y".to_string(),
-                size_bytes: 200,
-            })),
-        };
-
-        // Test appending to changelog
-        let result = metadata_store
-            .append_changelog(vec![run1.clone()], vec![])
+    async fn test_metadata_store_creation() {
+        let (store, _container) = setup_test_db().await.expect("Failed to setup test DB");
+        
+        // Verify tables were created by trying to get a non-existent item
+        let result = store.client
+            .get_item()
+            .table_name(RUNS_TABLE_NAME)
+            .key("id", AttributeValue::S("non-existent".to_string()))
+            .send()
             .await;
-        assert!(
-            result.is_ok(),
-            "Failed to append to changelog: {:?}",
-            result
-        );
-
-        // Test appending multiple runs
-        let result = metadata_store
-            .append_changelog(vec![run2.clone()], vec![])
-            .await;
-        assert!(
-            result.is_ok(),
-            "Failed to append multiple runs: {:?}",
-            result
-        );
-
-        // Test appending with tombstones
-        let result = metadata_store
-            .append_changelog(vec![], vec!["run1".to_string()])
-            .await;
-        assert!(
-            result.is_ok(),
-            "Failed to append with tombstones: {:?}",
-            result
-        );
-
-        // Test concurrent appends
-        let metadata_store_clone = metadata_store.clone();
-        let run3 = proto::RunMetadata {
-            id: "run3".to_string(),
-            stats: Some(proto::run_metadata::Stats::StatsV1(proto::StatsV1 {
-                min_key: "c".to_string(),
-                max_key: "x".to_string(),
-                size_bytes: 300,
-            })),
-        };
-
-        let run4 = proto::RunMetadata {
-            id: "run4".to_string(),
-            stats: Some(proto::run_metadata::Stats::StatsV1(proto::StatsV1 {
-                min_key: "d".to_string(),
-                max_key: "w".to_string(),
-                size_bytes: 400,
-            })),
-        };
-
-        let handle1 =
-            tokio::spawn(async move { metadata_store.append_changelog(vec![run3], vec![]).await });
-
-        let handle2 = tokio::spawn(async move {
-            metadata_store_clone
-                .append_changelog(vec![run4], vec![])
-                .await
-        });
-
-        let result1 = handle1.await.expect("Task panicked");
-        let result2 = handle2.await.expect("Task panicked");
-
-        assert!(
-            result1.is_ok() || result2.is_ok(),
-            "Both concurrent appends failed"
-        );
+        
+        assert!(result.is_ok(), "Table should exist and be accessible");
     }
-
+    
+    #[tokio::test]
+    async fn test_append_wal() {
+        let (store, _container) = setup_test_db().await.expect("Failed to setup test DB");
+        
+        let run_id = "test-run-1".to_string();
+        let stats = Stats::StatsV1(StatsV1 { 
+            min_key: "min-key".to_string(),
+            max_key: "max-key".to_string(),
+            size_bytes: 100,
+            item_count: 10,
+        });
+        
+        // Append a WAL entry
+        store.append_wal(run_id.clone(), stats.clone()).await.expect("Failed to append WAL");
+        
+        // Verify the run was added by getting its metadata
+        let metadata = store.get_run_metadata_batch(&[run_id.clone()]).await.expect("Failed to get run metadata");
+        
+        assert_eq!(metadata.len(), 1, "Should have one run metadata entry");
+        assert!(metadata.contains_key(&run_id), "Should contain the added run ID");
+        
+        let run_metadata = metadata.get(&run_id).unwrap();
+        match &run_metadata.stats {
+            Stats::StatsV1(s) => {
+                assert_eq!(s.item_count, 10, "Item count should match what was stored");
+                assert_eq!(s.min_key, "min-key", "Min key should match what was stored");
+                assert_eq!(s.max_key, "max-key", "Max key should match what was stored");
+                assert_eq!(s.size_bytes, 100, "Size bytes should match what was stored");
+            }
+        }
+    }
+    
+    #[tokio::test]
+    async fn test_get_run_metadata_batch() {
+        let (store, _container) = setup_test_db().await.expect("Failed to setup test DB");
+        
+        // Add multiple runs
+        let run_ids = vec!["batch-test-1", "batch-test-2", "batch-test-3"];
+        for (i, run_id) in run_ids.iter().enumerate() {
+            let stats = Stats::StatsV1(StatsV1 { 
+                min_key: format!("min-key-{}", i),
+                max_key: format!("max-key-{}", i),
+                size_bytes: (i as u64 + 1) * 100,
+                item_count: (i + 1) as u64, 
+            });
+            
+            store.append_wal(run_id.to_string(), stats).await.expect("Failed to append WAL");
+        }
+        
+        // Get batch with all run IDs
+        let run_ids_strings: Vec<String> = run_ids.iter().map(|id| id.to_string()).collect();
+        let metadata = store.get_run_metadata_batch(&run_ids_strings).await.expect("Failed to get batch metadata");
+        
+        assert_eq!(metadata.len(), run_ids.len(), "Should retrieve all requested run metadata");
+        
+        // Verify each run's metadata
+        for (i, run_id) in run_ids.iter().enumerate() {
+            let run_metadata = metadata.get(*run_id).expect("Run metadata should exist");
+            match &run_metadata.stats {
+                Stats::StatsV1(s) => {
+                    assert_eq!(s.item_count, (i + 1) as u64, "Item count should match what was stored");
+                    assert_eq!(s.min_key, format!("min-key-{}", i), "Min key should match what was stored");
+                    assert_eq!(s.max_key, format!("max-key-{}", i), "Max key should match what was stored");
+                    assert_eq!(s.size_bytes, (i as u64 + 1) * 100, "Size bytes should match what was stored");
+                }
+            }
+        }
+        
+        // Test with empty array
+        let empty_metadata = store.get_run_metadata_batch(&[]).await.expect("Failed to handle empty batch");
+        assert_eq!(empty_metadata.len(), 0, "Empty request should return empty result");
+        
+        // Test with non-existent IDs
+        let nonexistent = store.get_run_metadata_batch(&["nonexistent".to_string()]).await.expect("Failed to handle nonexistent ID");
+        assert_eq!(nonexistent.len(), 0, "Nonexistent ID should return empty result");
+    }
+    
     #[tokio::test]
     async fn test_stream_changelog() {
-        let (metadata_store, _container) = setup_test_db().await.unwrap();
-
-        // Add initial entries
-        let run1 = proto::RunMetadata {
-            id: "run1".to_string(),
-            stats: None,
-        };
-        let run2 = proto::RunMetadata {
-            id: "run2".to_string(),
-            stats: None,
-        };
-        metadata_store
-            .append_changelog(vec![run1.clone()], vec![])
-            .await
-            .unwrap();
-        metadata_store
-            .append_changelog(vec![run2.clone()], vec!["run1".to_string()])
-            .await
-            .unwrap();
-
-        // Pin the stream
-        let mut stream = Box::pin(metadata_store.stream_changelog());
-
-        // Check initial entries
-        let entry1 = timeout(Duration::from_secs(5), stream.next())
-            .await
-            .expect("Timeout waiting for entry 1")
-            .unwrap()
-            .unwrap();
-        assert_eq!(entry1.sequence_number, 1);
-        assert_eq!(entry1.runs_added, vec!["run1"]);
-        assert_eq!(entry1.runs_removed, Vec::<String>::new());
-
-        let entry2 = timeout(Duration::from_secs(5), stream.next())
-            .await
-            .expect("Timeout waiting for entry 2")
-            .unwrap()
-            .unwrap();
-        assert_eq!(entry2.sequence_number, 2);
-        assert_eq!(entry2.runs_added, vec!["run2"]);
-        assert_eq!(entry2.runs_removed, vec!["run1"]);
-
-        // Add more entries while streaming
-        let run3 = proto::RunMetadata {
-            id: "run3".to_string(),
-            stats: None,
-        };
-        metadata_store
-            .append_changelog(vec![run3.clone()], vec![])
-            .await
-            .unwrap();
-
-        // Check the newly added entry (polling might take a second)
-        let entry3 = timeout(Duration::from_secs(5), stream.next())
-            .await
-            .expect("Timeout waiting for entry 3")
-            .unwrap()
-            .unwrap();
-        assert_eq!(entry3.sequence_number, 3);
-        assert_eq!(entry3.runs_added, vec!["run3"]);
-        assert_eq!(entry3.runs_removed, Vec::<String>::new());
-
-        // Add another entry
-        let run4 = proto::RunMetadata {
-            id: "run4".to_string(),
-            stats: None,
-        };
-        metadata_store
-            .append_changelog(vec![run4.clone()], vec!["run2".to_string()])
-            .await
-            .unwrap();
-
-        // Check the next entry
-        let entry4 = timeout(Duration::from_secs(5), stream.next())
-            .await
-            .expect("Timeout waiting for entry 4")
-            .unwrap()
-            .unwrap();
-        assert_eq!(entry4.sequence_number, 4);
-        assert_eq!(entry4.runs_added, vec!["run4"]);
-        assert_eq!(entry4.runs_removed, vec!["run2"]);
+        let (store, _container) = setup_test_db().await.expect("Failed to setup test DB");
+        
+        // Add some runs to generate changelog entries
+        let run_ids = vec!["stream-test-1", "stream-test-2", "stream-test-3"];
+        for (i, run_id) in run_ids.iter().enumerate() {
+            let stats = Stats::StatsV1(StatsV1 { 
+                min_key: format!("min-key-{}", i),
+                max_key: format!("max-key-{}", i),
+                size_bytes: (i as u64 + 1) * 100,
+                item_count: 1, 
+            });
+            
+            store.append_wal(run_id.to_string(), stats).await.expect("Failed to append WAL");
+        }
+        
+        // Create a stream of changelog entries
+        let stream = store.stream_changelog();
+        pin_mut!(stream);
+        
+        // Collect entries with a timeout to avoid hanging
+        let mut changelog_entries = Vec::new();
+        let mut entry_count = 0;
+        
+        // Use timeout to prevent test from hanging
+        while let Ok(Some(entry_result)) = tokio::time::timeout(
+            Duration::from_secs(2),
+            stream.next()
+        ).await {
+            let entry = entry_result.expect("Failed to get changelog entry");
+            
+            // Verify entry structure
+            match &entry {
+                ChangelogEntry::V1(v1) => {
+                    assert!(!v1.runs_added.is_empty(), "Changelog entry should contain added runs");
+                    assert!(v1.runs_removed.is_empty(), "No runs should be removed");
+                    
+                    // Match one of our expected run IDs
+                    assert!(run_ids.iter().any(|id| v1.runs_added.contains(&id.to_string())), 
+                            "Added run should be one of our test runs");
+                }
+            }
+            
+            changelog_entries.push(entry);
+            entry_count += 1;
+            
+            // Break after we've collected all expected entries
+            if entry_count >= run_ids.len() {
+                break;
+            }
+        }
+        
+        assert_eq!(changelog_entries.len(), run_ids.len(), "Should receive all changelog entries");
+    }
+    
+    #[tokio::test]
+    async fn test_concurrent_appends() {
+        let (store, _container) = setup_test_db().await.expect("Failed to setup test DB");
+        
+        // Create multiple concurrent append operations
+        let mut handles = Vec::new();
+        for i in 0..5 {
+            let store_clone = store.clone();
+            let run_id = format!("concurrent-test-{}", i);
+            let stats = Stats::StatsV1(StatsV1 { 
+                min_key: format!("min-key-{}", i),
+                max_key: format!("max-key-{}", i),
+                size_bytes: (i as u64 + 1) * 100,
+                item_count: 1, 
+            });
+            
+            handles.push(tokio::spawn(async move {
+                store_clone.append_wal(run_id, stats).await
+            }));
+        }
+        
+        // Wait for all operations to complete
+        for handle in handles {
+            let result = handle.await.expect("Task panicked");
+            assert!(result.is_ok(), "Concurrent append should succeed");
+        }
+        
+        // Verify we have all the runs
+        let run_ids: Vec<String> = (0..5).map(|i| format!("concurrent-test-{}", i)).collect();
+        let metadata = store.get_run_metadata_batch(&run_ids).await.expect("Failed to get metadata");
+        
+        assert_eq!(metadata.len(), 5, "All 5 concurrent runs should be stored");
+    }
+    
+    #[tokio::test]
+    async fn test_init_changelog_counter_idempotence() {
+        let (store, _container) = setup_test_db().await.expect("Failed to setup test DB");
+        
+        // Call init_changelog_counter again explicitly
+        let result = store.init_changelog_counter().await;
+        assert!(result.is_ok(), "Second initialization should succeed");
+        
+        // Create a new store with the same client to test initialization during new()
+        let store2 = MetadataStore::new(store.client.clone()).await;
+        assert!(store2.is_ok(), "Creating a second store should succeed");
     }
 }

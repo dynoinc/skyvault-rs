@@ -99,15 +99,7 @@ impl MyBatcher {
         let run_id = ulid::Ulid::new().to_string();
         let run_path = format!("runs/{}", run_id);
         storage.put(&run_path, run).await?;
-
-        let run_metadata = proto::RunMetadata {
-            id: run_id,
-            stats: Some(stats),
-        };
-        metadata
-            .append_changelog(vec![run_metadata], vec![])
-            .await?;
-
+        metadata.append_wal(run_id, stats).await?;
         Ok(())
     }
 }
