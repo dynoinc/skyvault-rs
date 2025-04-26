@@ -58,7 +58,7 @@ impl Forest {
         wal.sort_by(|a, b| {
             match (&a.belongs_to, &b.belongs_to) {
                 (metadata::BelongsTo::WalSeqNo(a_seq), metadata::BelongsTo::WalSeqNo(b_seq)) => {
-                    a_seq.cmp(b_seq)
+                    b_seq.cmp(a_seq)
                 },
                 // Handle other cases (though they shouldn't occur for WAL runs)
                 _ => std::cmp::Ordering::Equal,
@@ -127,13 +127,23 @@ impl Forest {
             .await?;
 
         let mut state = self.state.lock().unwrap();
-        let new_wal = Arc::make_mut(&mut state)
+        let mut new_wal: Vec<metadata::RunMetadata> = Arc::make_mut(&mut state)
             .wal
             .iter()
             .filter(|run| !runs_removed.contains(&run.id))
             .cloned()
             .chain(new_runs.into_values())
             .collect();
+
+        new_wal.sort_by(|a, b| {
+            match (&a.belongs_to, &b.belongs_to) {
+                (metadata::BelongsTo::WalSeqNo(a_seq), metadata::BelongsTo::WalSeqNo(b_seq)) => {
+                    b_seq.cmp(a_seq)
+                },
+                // Handle other cases (though they shouldn't occur for WAL runs)
+                _ => std::cmp::Ordering::Equal,
+            }
+        });
 
         *state = Arc::new(State { wal: new_wal });
 

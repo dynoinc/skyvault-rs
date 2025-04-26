@@ -1,7 +1,9 @@
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use futures::{pin_mut, StreamExt};
+use futures::{StreamExt, pin_mut};
 use thiserror::Error;
+use tonic::transport::Channel;
 use tonic::{Request, Response, Status};
 use tracing::error;
 
@@ -9,9 +11,11 @@ use crate::consistent_hashring::ConsistentHashRing;
 use crate::forest::{Forest, ForestError};
 use crate::metadata::MetadataStore;
 use crate::pod_watcher::{self, PodChange, PodWatcherError};
-use crate::proto;
+use crate::proto::reader_service_client::ReaderServiceClient;
 use crate::proto::reader_service_server::ReaderService;
+use crate::runs_cache::RunsCache;
 use crate::storage::ObjectStore;
+use crate::{proto, runs};
 
 #[derive(Debug, Error)]
 pub enum ReaderServiceError {
@@ -22,41 +26,66 @@ pub enum ReaderServiceError {
     ForestError(#[from] ForestError),
 }
 
-
 pub struct MyReader {
-    #[allow(dead_code)]
-    storage: ObjectStore,
     forest: Forest,
+    runs_cache: RunsCache,
     consistent_hashring: Arc<Mutex<ConsistentHashRing<String>>>,
+    connections: Arc<Mutex<HashMap<String, ReaderServiceClient<Channel>>>>,
 }
 
 impl MyReader {
-    pub async fn new(metadata: MetadataStore, storage: ObjectStore) -> Result<Self, ReaderServiceError> {
+    pub async fn new(
+        metadata: MetadataStore,
+        storage: ObjectStore,
+        port: u16,
+    ) -> Result<Self, ReaderServiceError> {
         let forest = Forest::new(metadata).await?;
-        
+
         let (pods, pods_stream) = pod_watcher::watch().await?;
         let consistent_hashring = ConsistentHashRing::with_nodes(4, pods);
         let consistent_hashring = Arc::new(Mutex::new(consistent_hashring));
 
+        let connections = Arc::new(Mutex::new(HashMap::new()));
+
         let ch = consistent_hashring.clone();
+        let co = connections.clone();
         tokio::spawn(async move {
             pin_mut!(pods_stream);
             while let Some(pod_change) = pods_stream.next().await {
                 match pod_change {
                     Ok(PodChange::Added(pod)) => {
+                        let conn =
+                            match ReaderServiceClient::connect(format!("http://{}:{}", pod, port))
+                                .await
+                            {
+                                Ok(conn) => conn,
+                                Err(e) => {
+                                    error!("Error connecting to pod {}: {e}", pod);
+                                    continue;
+                                },
+                            };
+
+                        co.lock().unwrap().insert(pod.clone(), conn);
                         ch.lock().unwrap().add_node(pod);
                     },
                     Ok(PodChange::Removed(pod)) => {
                         ch.lock().unwrap().remove_node(&pod);
+                        co.lock().unwrap().remove(&pod);
                     },
                     Err(e) => {
                         error!("Error watching pods: {e}");
-                    }
+                    },
                 }
             }
         });
 
-        Ok(Self { storage, forest, consistent_hashring })
+        let runs_cache = RunsCache::new(storage);
+        Ok(Self {
+            runs_cache,
+            forest,
+            consistent_hashring,
+            connections,
+        })
     }
 }
 
@@ -66,15 +95,126 @@ impl ReaderService for MyReader {
         &self,
         request: Request<proto::GetBatchRequest>,
     ) -> Result<Response<proto::GetBatchResponse>, Status> {
-        let forest_state = self.forest.get_state();
+        // For WAL we send all requests to same pod.
+        let wal_pod = {
+            let consistent_hashring = self.consistent_hashring.lock().unwrap();
+            consistent_hashring.get_node(&"wal")
+        };
 
-        for table_request in request.into_inner().tables {
-            let table_name = table_request.table_name;
-            let keys = table_request.keys;
+        let wal_pod = match wal_pod {
+            Some(pod) => pod,
+            None => return Err(Status::internal("No reader service pods available")),
+        };
 
-            todo!()
+        let mut wal_conn = match self.connections.lock().unwrap().get(&wal_pod) {
+            Some(conn) => conn.clone(),
+            None => {
+                return Err(Status::internal(
+                    "No connection to reader service pod for WAL",
+                ));
+            },
+        };
+
+        let wal_response = wal_conn
+            .get_from_wal(proto::GetFromWalRequest {
+                tables: request.into_inner().tables,
+            })
+            .await?;
+
+        let mut response = proto::GetBatchResponse::default();
+        for table_response in wal_response.into_inner().tables {
+            let table_name = table_response.table_name;
+            let items = table_response.items;
+
+            let mut table_response = proto::TableReadBatchResponse {
+                table_name,
+                items: vec![],
+            };
+
+            for item in items {
+                match item.result {
+                    Some(proto::get_from_wal_item::Result::Value(value)) => {
+                        table_response.items.push(proto::GetBatchItem {
+                            key: item.key,
+                            value,
+                        });
+                    },
+                    Some(proto::get_from_wal_item::Result::Deleted(_)) | None => {},
+                }
+            }
+
+            response.tables.push(table_response);
         }
 
-        Ok(Response::new(proto::GetBatchResponse { tables: vec![] }))
+        Ok(Response::new(response))
+    }
+
+    async fn get_from_wal(
+        &self,
+        request: Request<proto::GetFromWalRequest>,
+    ) -> Result<Response<proto::GetFromWalResponse>, Status> {
+        let forest_state = self.forest.get_state();
+
+        let mut response = proto::GetFromWalResponse::default();
+        for table in request.into_inner().tables {
+            let table_name = table.table_name;
+            let mut remaining_keys = table.keys;
+
+            let mut table_response = proto::TableGetFromWalResponse {
+                table_name,
+                items: vec![],
+            };
+
+            for wal in forest_state.wal.iter() {
+                if remaining_keys.is_empty() {
+                    break;
+                }
+
+                let run = match self.runs_cache.get_run(&wal.id).await {
+                    Ok(run) => run,
+                    Err(e) => {
+                        return Err(Status::internal(format!(
+                            "Error getting run {}: {}",
+                            wal.id, e
+                        )));
+                    },
+                };
+
+                remaining_keys.retain(|key| {   
+                    match runs::search_run(run.as_ref(), key.as_str()) {
+                        runs::SearchResult::Found(value) => {
+                            table_response.items.push(proto::GetFromWalItem {
+                                key: key.clone(),
+                                result: Some(proto::get_from_wal_item::Result::Value(value)),
+                            });
+
+                            false
+                        },
+                        runs::SearchResult::Tombstone => {
+                            table_response.items.push(proto::GetFromWalItem {
+                                key: key.clone(),
+                                result: Some(proto::get_from_wal_item::Result::Deleted(())),
+                            });
+
+                            false
+                        },
+                        runs::SearchResult::NotFound => {
+                            true
+                        },
+                    }
+                });
+            }
+
+            for key in remaining_keys {
+                table_response.items.push(proto::GetFromWalItem {
+                    key: key.clone(),
+                    result: None,
+                });
+            }
+
+            response.tables.push(table_response);
+        }
+
+        Ok(Response::new(response))
     }
 }

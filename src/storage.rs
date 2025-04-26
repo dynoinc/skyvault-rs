@@ -1,5 +1,8 @@
 use aws_sdk_s3::Client as S3Client;
 use aws_sdk_s3::operation::create_bucket::CreateBucketError;
+use aws_sdk_s3::operation::get_object::GetObjectError;
+use aws_sdk_s3::operation::put_object::PutObjectError;
+use aws_sdk_s3::primitives::ByteStreamError;
 use aws_smithy_runtime_api::client::orchestrator::HttpResponse;
 use aws_smithy_runtime_api::client::result::SdkError;
 use thiserror::Error;
@@ -8,6 +11,18 @@ use thiserror::Error;
 pub enum StorageError {
     #[error("Create bucket error: {0}")]
     CreateBucketError(#[from] SdkError<CreateBucketError, HttpResponse>),
+
+    #[error("Put object error: {0}")]
+    PutObjectError(#[from] SdkError<PutObjectError, HttpResponse>),
+
+    #[error("Get object error: {0}")]
+    GetObjectError(#[from] SdkError<GetObjectError, HttpResponse>),
+
+    #[error("Get object failed to read body: {0}")]
+    GetObjectReadBodyError(#[from] ByteStreamError),
+
+    #[error("Object not found: {0}")]
+    NotFound(String),
 }
 
 #[derive(Clone)]
@@ -36,16 +51,44 @@ impl ObjectStore {
 }
 
 impl ObjectStore {
-    pub async fn put(&self, key: &str, value: Vec<u8>) -> Result<(), StorageError> {
-        let _ = self
+    pub async fn put_run(&self, run_id: &str, value: Vec<u8>) -> Result<(), StorageError> {
+        match self
             .client
             .put_object()
             .bucket(self.bucket_name.clone())
-            .key(key)
+            .key(format!("runs/{}", run_id))
             .body(value.into())
             .send()
-            .await;
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(err) => Err(StorageError::PutObjectError(err)),
+        }
+    }
 
-        Ok(())
+    pub async fn get_run(&self, run_id: &str) -> Result<Vec<u8>, StorageError> {
+        let key = format!("runs/{}", run_id);
+        let response = match self
+            .client
+            .get_object()
+            .bucket(self.bucket_name.clone())
+            .key(key.clone())
+            .send()
+            .await
+        {
+            Ok(resp) => resp,
+            Err(err) => {
+                if let SdkError::ServiceError(ref inner) = err {
+                    if let GetObjectError::NoSuchKey(_) = inner.err() {
+                        return Err(StorageError::NotFound(key));
+                    }
+                }
+                return Err(StorageError::GetObjectError(err));
+            },
+        };
+
+        let data = response.body.collect().await?.to_vec();
+
+        Ok(data)
     }
 }

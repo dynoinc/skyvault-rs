@@ -154,48 +154,50 @@ where
 }
 
 /// Searches for a key within a serialized run (v1).
-pub fn search_run(run_data: &[u8], search_key: &str) -> Result<SearchResult, RunError> {
+pub fn search_run(run_data: &[u8], search_key: &str) -> SearchResult {
     let mut cursor = Cursor::new(run_data);
 
     // Check if data is empty
     if run_data.is_empty() {
-        return Err(RunError::Format("Empty run data".to_string()));
+        panic!("Empty run data");
     }
 
     // Read and check version
-    let version = cursor.read_u8()?;
+    let version = cursor.read_u8().expect("Failed to read version byte");
     if version != CURRENT_VERSION {
-        return Err(RunError::UnsupportedVersion(version));
+        panic!("Unsupported version: {}", version);
     }
 
     // Iterate through entries
     while cursor.position() < run_data.len() as u64 {
         // Check if we have enough data to read the marker
         if cursor.position() >= run_data.len() as u64 {
-            return Err(RunError::Format("Unexpected end of data".to_string()));
+            panic!("Unexpected end of data");
         }
 
-        let marker = cursor.read_u8()?;
+        let marker = cursor.read_u8().expect("Failed to read marker byte");
         if marker != MARKER_PUT && marker != MARKER_DELETE {
-            return Err(RunError::Format(format!("Invalid marker byte: {marker}")));
+            panic!("Invalid marker byte: {}", marker);
         }
 
         // Check if we have enough data to read the key length
         if cursor.position() + 4 > run_data.len() as u64 {
-            return Err(RunError::Format("Incomplete key length data".to_string()));
+            panic!("Incomplete key length data");
         }
 
         // Read key
-        let key_len = cursor.read_u32::<BigEndian>()? as usize;
+        let key_len = cursor
+            .read_u32::<BigEndian>()
+            .expect("Failed to read key length") as usize;
         let current_pos = cursor.position() as usize;
 
         // Check for potential overflow or incomplete data before allocation
         if current_pos.checked_add(key_len).is_none() {
-            return Err(RunError::Format("Key length overflow".to_string()));
+            panic!("Key length overflow");
         }
 
         if current_pos + key_len > run_data.len() {
-            return Err(RunError::Format("Incomplete key data".to_string()));
+            panic!("Incomplete key data");
         }
 
         let key_slice = &run_data[current_pos..current_pos + key_len];
@@ -207,20 +209,23 @@ pub fn search_run(run_data: &[u8], search_key: &str) -> Result<SearchResult, Run
                 if marker == MARKER_PUT {
                     // Check if we have enough data to read the value length
                     if cursor.position() + 4 > run_data.len() as u64 {
-                        return Err(RunError::Format("Incomplete value length data".to_string()));
+                        panic!("Incomplete value length data");
                     }
 
                     // Skip value if it was a Put operation
-                    let value_len = cursor.read_u32::<BigEndian>()? as usize;
+                    let value_len = cursor
+                        .read_u32::<BigEndian>()
+                        .expect("Failed to read value length")
+                        as usize;
                     let val_pos = cursor.position() as usize;
 
                     // Check for potential overflow or incomplete data
                     if val_pos.checked_add(value_len).is_none() {
-                        return Err(RunError::Format("Value length overflow".to_string()));
+                        panic!("Value length overflow");
                     }
 
                     if val_pos + value_len > run_data.len() {
-                        return Err(RunError::Format("Incomplete value data".to_string()));
+                        panic!("Incomplete value data");
                     }
 
                     cursor.set_position((val_pos + value_len) as u64); // Move cursor past the value
@@ -234,44 +239,41 @@ pub fn search_run(run_data: &[u8], search_key: &str) -> Result<SearchResult, Run
                     MARKER_PUT => {
                         // Check if we have enough data to read the value length
                         if cursor.position() + 4 > run_data.len() as u64 {
-                            return Err(RunError::Format(
-                                "Incomplete value length data for found key".to_string(),
-                            ));
+                            panic!("Incomplete value length data for found key");
                         }
 
-                        let value_len = cursor.read_u32::<BigEndian>()? as usize;
+                        let value_len = cursor
+                            .read_u32::<BigEndian>()
+                            .expect("Failed to read value length")
+                            as usize;
                         let val_pos = cursor.position() as usize;
 
                         // Check for potential overflow or incomplete data
                         if val_pos.checked_add(value_len).is_none() {
-                            return Err(RunError::Format(
-                                "Value length overflow for found key".to_string(),
-                            ));
+                            panic!("Value length overflow for found key");
                         }
 
                         if val_pos + value_len > run_data.len() {
-                            return Err(RunError::Format(
-                                "Incomplete value data for found key".to_string(),
-                            ));
+                            panic!("Incomplete value data for found key");
                         }
 
                         let value = run_data[val_pos..val_pos + value_len].to_vec();
-                        Ok(SearchResult::Found(value))
+                        SearchResult::Found(value)
                     },
-                    MARKER_DELETE => Ok(SearchResult::Tombstone),
-                    _ => Err(RunError::Format(format!("Invalid marker byte: {marker}"))),
+                    MARKER_DELETE => SearchResult::Tombstone,
+                    _ => panic!("Invalid marker byte: {}", marker),
                 };
             },
             std::cmp::Ordering::Greater => {
                 // Current key is larger than search key. Since runs are sorted,
                 // the key cannot exist further in the run.
-                return Ok(SearchResult::NotFound);
+                return SearchResult::NotFound;
             },
         }
     }
 
     // Reached end of run without finding the key
-    Ok(SearchResult::NotFound)
+    SearchResult::NotFound
 }
 
 #[cfg(test)]
@@ -342,15 +344,15 @@ mod tests {
         let (data, _) = create_run(ops).unwrap();
 
         assert_eq!(
-            search_run(&data, "banana").unwrap(),
+            search_run(&data, "banana"),
             SearchResult::Found(value("yellow"))
         );
         assert_eq!(
-            search_run(&data, "apple").unwrap(),
+            search_run(&data, "apple"),
             SearchResult::Found(value("red"))
         );
         assert_eq!(
-            search_run(&data, "cherry").unwrap(),
+            search_run(&data, "cherry"),
             SearchResult::Found(value("red"))
         );
     }
@@ -365,11 +367,11 @@ mod tests {
         let (data, _) = create_run(ops).unwrap();
 
         assert_eq!(
-            search_run(&data, "banana").unwrap(),
+            search_run(&data, "banana"),
             SearchResult::Tombstone
         );
         assert_eq!(
-            search_run(&data, "apple").unwrap(),
+            search_run(&data, "apple"),
             SearchResult::Found(value("red"))
         );
     }
@@ -383,12 +385,12 @@ mod tests {
         let (data, _) = create_run(ops).unwrap();
 
         // Key too small
-        assert_eq!(search_run(&data, "apple").unwrap(), SearchResult::NotFound);
+        assert_eq!(search_run(&data, "apple"), SearchResult::NotFound);
         // Key in between
-        assert_eq!(search_run(&data, "cherry").unwrap(), SearchResult::NotFound);
+        assert_eq!(search_run(&data, "cherry"), SearchResult::NotFound);
         // Key too large
         assert_eq!(
-            search_run(&data, "elderberry").unwrap(),
+            search_run(&data, "elderberry"),
             SearchResult::NotFound
         );
     }
@@ -397,14 +399,14 @@ mod tests {
     fn test_search_run_empty_data() {
         let data = vec![];
         let result = search_run(&data, "any");
-        assert!(matches!(result, Err(RunError::Format(_))));
+        assert!(matches!(result, SearchResult::NotFound));
     }
 
     #[test]
+    #[should_panic(expected = "Unsupported version: 2")]
     fn test_search_run_invalid_version() {
         let data = vec![2, 0]; // Version 2, dummy data
-        let result = search_run(&data, "any");
-        assert!(matches!(result, Err(RunError::UnsupportedVersion(2))));
+        search_run(&data, "any");
     }
 
     #[test]

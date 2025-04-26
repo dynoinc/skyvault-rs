@@ -2,9 +2,9 @@
 
 use std::net::SocketAddr;
 
-use proto::writer_service_server::WriterServiceServer;
-use proto::reader_service_server::ReaderServiceServer;
 use proto::orchestrator_service_server::OrchestratorServiceServer;
+use proto::reader_service_server::ReaderServiceServer;
+use proto::writer_service_server::WriterServiceServer;
 use tonic::transport::Server;
 use tonic_health::ServingStatus;
 
@@ -15,16 +15,17 @@ pub mod proto {
         tonic::include_file_descriptor_set!("skyvault_descriptor");
 }
 
-pub mod writer_service;
-pub mod reader_service;
 pub mod orchestrator_service;
+pub mod reader_service;
+pub mod writer_service;
 
+mod consistent_hashring;
 mod forest;
 pub mod metadata;
-mod runs;
-pub mod storage;
 mod pod_watcher;
-mod consistent_hashring;
+mod runs;
+mod runs_cache;
+pub mod storage;
 #[cfg(test)]
 pub mod test_utils;
 
@@ -53,23 +54,33 @@ pub async fn server(
 
     let writer = writer_service::MyWriter::new(metadata.clone(), storage.clone());
     health_reporter
-        .set_service_status(proto::writer_service_server::SERVICE_NAME, ServingStatus::Serving)
+        .set_service_status(
+            proto::writer_service_server::SERVICE_NAME,
+            ServingStatus::Serving,
+        )
         .await;
 
-    let reader = reader_service::MyReader::new(metadata.clone(), storage.clone()).await?;
+    let reader =
+        reader_service::MyReader::new(metadata.clone(), storage.clone(), addr.port()).await?;
     health_reporter
-        .set_service_status(proto::reader_service_server::SERVICE_NAME, ServingStatus::Serving)
+        .set_service_status(
+            proto::reader_service_server::SERVICE_NAME,
+            ServingStatus::Serving,
+        )
         .await;
 
     let orchestrator = orchestrator_service::MyOrchestrator::new(metadata.clone()).await?;
     health_reporter
-        .set_service_status(proto::orchestrator_service_server::SERVICE_NAME, ServingStatus::Serving)
+        .set_service_status(
+            proto::orchestrator_service_server::SERVICE_NAME,
+            ServingStatus::Serving,
+        )
         .await;
 
     let reflection_service = tonic_reflection::server::Builder::configure()
         .register_encoded_file_descriptor_set(proto::FILE_DESCRIPTOR_SET)
         .build_v1()
-        .unwrap();
+        .expect("Failed to build reflection service");
 
     Server::builder()
         .add_service(WriterServiceServer::new(writer))

@@ -1,7 +1,9 @@
 use thiserror::Error;
 use tonic::{Request, Response, Status};
 
-use crate::{metadata, proto::{self, writer_service_server::WriterService}, storage};
+use crate::proto::writer_service_server::WriterService;
+use crate::proto::{self};
+use crate::{metadata, storage};
 
 #[derive(Error, Debug)]
 pub enum WriterServiceError {
@@ -97,8 +99,7 @@ impl MyWriter {
             crate::runs::create_run(batch.iter_mut().flat_map(|req| req.ops.drain(..)))?;
 
         let run_id = ulid::Ulid::new().to_string();
-        let run_path = format!("runs/{}", run_id);
-        storage.put(&run_path, run).await?;
+        storage.put_run(&run_id, run).await?;
         metadata.append_wal(run_id, stats).await?;
         Ok(())
     }
@@ -126,11 +127,8 @@ impl WriterService for MyWriter {
                     Some(proto::write_batch_item::Operation::Value(value)) => {
                         ops.push(crate::runs::WriteOperation::Put(key, value));
                     },
-                    Some(proto::write_batch_item::Operation::Delete(true)) => {
+                    None => {
                         ops.push(crate::runs::WriteOperation::Delete(key));
-                    },
-                    _ => {
-                        return Err(Status::invalid_argument("Unsupported operation"));
                     },
                 }
             }

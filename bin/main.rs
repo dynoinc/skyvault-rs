@@ -3,6 +3,7 @@ use std::net::SocketAddr;
 use anyhow::{Context, Result};
 use aws_sdk_dynamodb::Client as DynamoDbClient;
 use aws_sdk_s3::Client as S3Client;
+use rustls::crypto::aws_lc_rs;
 use skyvault::{metadata, storage};
 use structopt::StructOpt;
 use tracing::info;
@@ -22,6 +23,8 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_max_level(LevelFilter::INFO)
         .init();
+
+    aws_lc_rs::default_provider().install_default().expect("failed to install aws-lc-rs CryptoProvider");
 
     let config = Config::from_args();
     let version = env!("CARGO_PKG_VERSION");
