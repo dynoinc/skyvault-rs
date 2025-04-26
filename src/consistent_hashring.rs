@@ -29,19 +29,6 @@ where
         }
     }
 
-    /// Create a new consistent hash ring with the specified number of virtual nodes per real node
-    /// and an initial set of nodes.
-    pub fn with_nodes<I>(replicas: usize, nodes: I) -> Self
-    where
-        I: IntoIterator<Item = T>,
-    {
-        let mut ring = Self::new(replicas);
-        for node in nodes {
-            ring.add_node(node);
-        }
-        ring
-    }
-
     /// Add a node to the hash ring.
     pub fn add_node(&mut self, node: T) {
         for i in 0..self.replicas {

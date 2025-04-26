@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use futures::future::join_all;
 use futures::{StreamExt, pin_mut};
 use thiserror::Error;
 use tonic::transport::Channel;
@@ -42,24 +41,9 @@ impl MyReader {
     ) -> Result<Self, ReaderServiceError> {
         let forest = Forest::new(metadata).await?;
 
-        let (pods, pods_stream) = pod_watcher::watch().await?;
-
-        let connections: HashMap<_, _> = join_all(pods.into_iter().map(|pod| async {
-            let conn = match ReaderServiceClient::connect(format!("http://{}:{}", pod, port)).await {
-                Ok(conn) => conn,
-                Err(e) => {
-                    error!("Error connecting to pod {}: {e}", pod);
-                    return None;
-                },
-            };
-
-            Some((pod, conn))
-        })).await.into_iter().filter_map(|conn| { conn }).collect();
-        info!("Initializing ring with {} nodes", connections.len());
-        let consistent_hashring = ConsistentHashRing::with_nodes(4, connections.keys().cloned());
-
-        let connections = Arc::new(Mutex::new(connections));
-        let consistent_hashring = Arc::new(Mutex::new(consistent_hashring));
+        let pods_stream = pod_watcher::watch().await?;
+        let connections = Arc::new(Mutex::new(HashMap::new()));
+        let consistent_hashring = Arc::new(Mutex::new(ConsistentHashRing::new(4)));
 
         let ch = consistent_hashring.clone();
         let co = connections.clone();
@@ -131,10 +115,17 @@ impl ReaderService for MyReader {
             },
         };
 
+        let wal_request = proto::GetFromWalRequest {
+            tables: request.into_inner().tables.into_iter().map(|table| {
+                proto::TableReadBatchRequest {
+                    table_name: table.table_name.clone(),
+                    keys: table.keys.into_iter().map(|key| format!("{}.{}", table.table_name, key)).collect(),
+                }
+            }).collect(),
+        };
+
         let wal_response = wal_conn
-            .get_from_wal(proto::GetFromWalRequest {
-                tables: request.into_inner().tables,
-            })
+            .get_from_wal(wal_request)
             .await?;
 
         let mut response = proto::GetBatchResponse::default();
