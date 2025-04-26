@@ -5,7 +5,6 @@ use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 
 use crate::proto;
 
-
 // Type aliases for clarity
 pub type Key = String;
 pub type Value = Vec<u8>;

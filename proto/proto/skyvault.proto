@@ -12,6 +12,7 @@ service Index {
 
 service Orchestrator {
   rpc ListRuns (ListRunsRequest) returns (ListRunsResponse);
+  rpc DumpChangelog (DumpChangelogRequest) returns (DumpChangelogResponse);
 }
 
 message WriteBatchRequest {
@@ -42,6 +43,27 @@ message ListRunsRequest {
 message ListRunsResponse {
   repeated RunMetadata runs = 1;
 }
+
+message DumpChangelogRequest {
+}
+
+message DumpChangelogResponse {
+  repeated ChangelogEntry entries = 1;
+  int64 next_seqno = 2;
+  int64 next_changelog_id = 3;
+}
+
+message ChangelogEntry {
+  oneof entry {
+    ChangelogEntryV1 v1 = 1;
+  }
+}
+
+message ChangelogEntryV1 {
+  repeated string runs_added = 1;
+  repeated string runs_removed = 2;
+}
+
 
 message RunMetadata {
   string id = 1;

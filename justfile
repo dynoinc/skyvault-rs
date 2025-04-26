@@ -5,8 +5,10 @@ check:
     cargo clippy -- -D warnings
     cargo test -- --nocapture
 
-deploy:
+build:
     podman build -t localhost/skyvault:dev .
     podman save --output ./target/myapp.tar localhost/skyvault:dev
     kind load image-archive ./target/myapp.tar --name kind-cluster
+
+deploy:
     helm upgrade --install skyvault-dev ./charts/skyvault

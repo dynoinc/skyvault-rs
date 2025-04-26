@@ -104,7 +104,7 @@ pub enum MetadataError {
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
-enum BelongsTo {
+pub enum BelongsTo {
     WalSeqNo(i64),
     TableName(String),
 }
@@ -113,15 +113,17 @@ impl From<BelongsTo> for proto::run_metadata::BelongsTo {
     fn from(belongs_to: BelongsTo) -> Self {
         match belongs_to {
             BelongsTo::WalSeqNo(seq_no) => proto::run_metadata::BelongsTo::WalSeqno(seq_no),
-            BelongsTo::TableName(table_name) => proto::run_metadata::BelongsTo::TableName(table_name),
+            BelongsTo::TableName(table_name) => {
+                proto::run_metadata::BelongsTo::TableName(table_name)
+            },
         }
     }
 }
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct RunMetadata {
-    id: String,
-    belongs_to: BelongsTo,
-    stats: crate::runs::Stats,
+    pub id: String,
+    pub belongs_to: BelongsTo,
+    pub stats: crate::runs::Stats,
 }
 
 impl From<RunMetadata> for proto::RunMetadata {
@@ -139,9 +141,28 @@ pub struct ChangelogEntryV1 {
     pub runs_removed: Vec<String>,
 }
 
+impl From<ChangelogEntryV1> for proto::ChangelogEntryV1 {
+    fn from(entry: ChangelogEntryV1) -> Self {
+        proto::ChangelogEntryV1 {
+            runs_added: entry.runs_added,
+            runs_removed: entry.runs_removed,
+        }
+    }
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 pub enum ChangelogEntry {
     V1(ChangelogEntryV1),
+}
+
+impl From<ChangelogEntry> for proto::ChangelogEntry {
+    fn from(entry: ChangelogEntry) -> Self {
+        match entry {
+            ChangelogEntry::V1(v1) => proto::ChangelogEntry {
+                entry: Some(proto::changelog_entry::Entry::V1(v1.into())),
+            },
+        }
+    }
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
@@ -152,11 +173,11 @@ pub struct ChangeLogEntryWithID {
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
-struct NextId {
+pub struct NextId {
     pk: String,
     sk: i64,
-    next_seq_no: i64,
-    next_changelog_id: i64,
+    pub next_seq_no: i64,
+    pub next_changelog_id: i64,
 }
 
 #[derive(Clone)]
@@ -186,13 +207,13 @@ impl MetadataStore {
 
         // Initialize the changelog counter if it doesn't exist
         let store = Self { client };
-        store.init_changelog_counter().await?;
+        store.init_next_id().await?;
 
         Ok(store)
     }
 
     // Initialize the changelog counter if it doesn't exist
-    async fn init_changelog_counter(&self) -> Result<(), MetadataError> {
+    async fn init_next_id(&self) -> Result<(), MetadataError> {
         // Initialize counter with a condition to only insert if it doesn't exist
         let next_id = NextId {
             pk: CHANGELOG_TABLE_PK.to_string(),
@@ -227,13 +248,93 @@ impl MetadataStore {
         }
     }
 
-    /// Returns a stream of changelog entries, starting from the beginning.
-    /// The stream continuously polls for new entries after reaching the end.
-    pub fn stream_changelog(
+    pub async fn get_next_id(&self) -> Result<NextId, MetadataError> {
+        let next_id = self
+            .client
+            .get_item()
+            .table_name(CHANGELOG_TABLE_NAME)
+            .key("pk", AttributeValue::S(CHANGELOG_TABLE_PK.to_string()))
+            .key("sk", AttributeValue::N(i64::MAX.to_string()))
+            .send()
+            .await?;
+        let next_id = match next_id.item {
+            Some(item) => from_item::<NextId>(item)?,
+            None => {
+                return Err(MetadataError::CounterInitError(
+                    "Changelog counter not found".to_string(),
+                ));
+            },
+        };
+        Ok(next_id)
+    }
+
+    /// Fetches all existing changelog entries and returns them as a vector.
+    pub async fn get_changelog_snapshot(
         &self,
-    ) -> impl Stream<Item = Result<ChangelogEntry, MetadataError>> + '_ {
-        stream! {
-            let mut last_seen_sk: i64 = 0;
+    ) -> Result<(Vec<ChangelogEntry>, i64), MetadataError> {
+        let mut entries = Vec::new();
+        let mut last_seen_sk: i64 = 0;
+        let mut query_builder = self
+            .client
+            .query()
+            .table_name(CHANGELOG_TABLE_NAME)
+            .key_condition_expression("pk = :pkVal AND sk BETWEEN :skVal AND :maxVal")
+            .expression_attribute_values(
+                ":pkVal",
+                AttributeValue::S(CHANGELOG_TABLE_PK.to_string()),
+            )
+            .expression_attribute_values(
+                ":skVal",
+                AttributeValue::N((last_seen_sk + 1).to_string()),
+            )
+            .expression_attribute_values(":maxVal", AttributeValue::N((i64::MAX - 1).to_string()));
+
+        loop {
+            let response = query_builder
+                .clone()
+                .send()
+                .await
+                .map_err(MetadataError::QueryError)?;
+
+            if let Some(items) = response.items {
+                for item in items {
+                    match from_item::<ChangeLogEntryWithID>(item) {
+                        Ok(entry) => {
+                            last_seen_sk = entry.sk;
+                            entries.push(entry.entry);
+                        },
+                        Err(e) => {
+                            return Err(MetadataError::SerdeError(e));
+                        },
+                    }
+                }
+            }
+
+            if let Some(key) = response.last_evaluated_key {
+                query_builder = query_builder.set_exclusive_start_key(Some(key));
+            } else {
+                break;
+            }
+        }
+
+        Ok((entries, last_seen_sk))
+    }
+
+    /// Returns a snapshot of existing changelog entries and a stream of new entries.
+    /// The stream continuously polls for new entries after reaching the end of the snapshot.
+    pub async fn get_changelog(
+        self,
+    ) -> Result<
+        (
+            Vec<ChangelogEntry>,
+            impl Stream<Item = Result<ChangelogEntry, MetadataError>>,
+        ),
+        MetadataError,
+    > {
+        let (snapshot, last_seen_sk) = self.get_changelog_snapshot().await?;
+
+        let stream = stream! {
+            let mut last_seen_sk = last_seen_sk;
             let poll_interval = Duration::from_secs(1);
 
             loop {
@@ -245,18 +346,17 @@ impl MetadataStore {
                     .expression_attribute_values(":pkVal", AttributeValue::S(CHANGELOG_TABLE_PK.to_string()))
                     .expression_attribute_values(":skVal", AttributeValue::N((last_seen_sk + 1).to_string()))
                     .expression_attribute_values(":maxVal", AttributeValue::N((i64::MAX - 1).to_string()));
-            
+
                 let mut has_new_items = false;
                 loop {
                     let response = match query_builder.clone().send().await {
                         Ok(resp) => resp,
                         Err(e) => {
                             yield Err(MetadataError::QueryError(e));
-                            return;
+                            break;
                         }
                     };
 
-            
                     if let Some(items) = response.items {
                         for item in items {
                             match from_item::<ChangeLogEntryWithID>(item) {
@@ -278,13 +378,15 @@ impl MetadataStore {
                         break;
                     }
                 }
-                
+
                 // If no new items were found in the last query cycle, wait before polling again
                 if !has_new_items {
                     tokio::time::sleep(poll_interval).await;
                 }
             }
-        }
+        };
+
+        Ok((snapshot, stream))
     }
 
     pub async fn append_wal(
@@ -305,9 +407,13 @@ impl MetadataStore {
 
             let mut next_id = match next_id_item.item {
                 Some(item) => from_item::<NextId>(item)?,
-                None => return Err(MetadataError::CounterInitError("Changelog counter not found".to_string())),
+                None => {
+                    return Err(MetadataError::CounterInitError(
+                        "Changelog counter not found".to_string(),
+                    ));
+                },
             };
-            
+
             let mut write_requests = Vec::new();
             let item_count = match stats {
                 crate::runs::Stats::StatsV1(ref s) => s.item_count,
@@ -324,7 +430,10 @@ impl MetadataStore {
                         .table_name(CHANGELOG_TABLE_NAME)
                         .set_item(Some(to_item(next_id)?))
                         .condition_expression("next_changelog_id = :c")
-                        .expression_attribute_values(":c", AttributeValue::N(changelog_id.to_string()))
+                        .expression_attribute_values(
+                            ":c",
+                            AttributeValue::N(changelog_id.to_string()),
+                        )
                         .build()
                         .expect("Failed to build put request"),
                 )
@@ -366,7 +475,7 @@ impl MetadataStore {
                             })?))
                             .build()
                             .expect("Failed to build put request"),
-                        )
+                    )
                     .build(),
             );
 
@@ -393,21 +502,21 @@ impl MetadataStore {
 
     pub async fn get_run_metadata_batch(
         &self,
-        run_ids: &[String],
+        run_ids: impl IntoIterator<Item = String>,
     ) -> Result<HashMap<String, RunMetadata>, MetadataError> {
-        if run_ids.is_empty() {
-            return Ok(HashMap::new());
-        }
-
         // Prepare keys for BatchGetItem
         let keys: Vec<HashMap<String, AttributeValue>> = run_ids
-            .iter()
+            .into_iter()
             .map(|id| {
                 let mut key = HashMap::new();
-                key.insert("id".to_string(), AttributeValue::S(id.clone()));
+                key.insert("id".to_string(), AttributeValue::S(id));
                 key
             })
             .collect();
+
+        if keys.is_empty() {
+            return Ok(HashMap::new());
+        }
 
         // Create request
         let request = self.client.batch_get_item().request_items(
@@ -462,47 +571,59 @@ async fn create_table(
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
+    use futures::{StreamExt, pin_mut};
+
     use super::*;
     use crate::runs::{Stats, StatsV1};
-    use futures::{StreamExt, pin_mut};
-    use std::time::Duration;
 
     #[tokio::test]
     async fn test_metadata_store_creation() {
         let (store, _container) = setup_test_db().await.expect("Failed to setup test DB");
-        
+
         // Verify tables were created by trying to get a non-existent item
-        let result = store.client
+        let result = store
+            .client
             .get_item()
             .table_name(RUNS_TABLE_NAME)
             .key("id", AttributeValue::S("non-existent".to_string()))
             .send()
             .await;
-        
+
         assert!(result.is_ok(), "Table should exist and be accessible");
     }
-    
+
     #[tokio::test]
     async fn test_append_wal() {
         let (store, _container) = setup_test_db().await.expect("Failed to setup test DB");
-        
+
         let run_id = "test-run-1".to_string();
-        let stats = Stats::StatsV1(StatsV1 { 
+        let stats = Stats::StatsV1(StatsV1 {
             min_key: "min-key".to_string(),
             max_key: "max-key".to_string(),
             size_bytes: 100,
             item_count: 10,
         });
-        
+
         // Append a WAL entry
-        store.append_wal(run_id.clone(), stats.clone()).await.expect("Failed to append WAL");
-        
+        store
+            .append_wal(run_id.clone(), stats.clone())
+            .await
+            .expect("Failed to append WAL");
+
         // Verify the run was added by getting its metadata
-        let metadata = store.get_run_metadata_batch(&[run_id.clone()]).await.expect("Failed to get run metadata");
-        
+        let metadata = store
+            .get_run_metadata_batch([run_id.clone()])
+            .await
+            .expect("Failed to get run metadata");
+
         assert_eq!(metadata.len(), 1, "Should have one run metadata entry");
-        assert!(metadata.contains_key(&run_id), "Should contain the added run ID");
-        
+        assert!(
+            metadata.contains_key(&run_id),
+            "Should contain the added run ID"
+        );
+
         let run_metadata = metadata.get(&run_id).unwrap();
         match &run_metadata.stats {
             Stats::StatsV1(s) => {
@@ -510,153 +631,212 @@ mod tests {
                 assert_eq!(s.min_key, "min-key", "Min key should match what was stored");
                 assert_eq!(s.max_key, "max-key", "Max key should match what was stored");
                 assert_eq!(s.size_bytes, 100, "Size bytes should match what was stored");
-            }
+            },
         }
     }
-    
+
     #[tokio::test]
     async fn test_get_run_metadata_batch() {
         let (store, _container) = setup_test_db().await.expect("Failed to setup test DB");
-        
+
         // Add multiple runs
         let run_ids = vec!["batch-test-1", "batch-test-2", "batch-test-3"];
         for (i, run_id) in run_ids.iter().enumerate() {
-            let stats = Stats::StatsV1(StatsV1 { 
+            let stats = Stats::StatsV1(StatsV1 {
                 min_key: format!("min-key-{}", i),
                 max_key: format!("max-key-{}", i),
                 size_bytes: (i as u64 + 1) * 100,
-                item_count: (i + 1) as u64, 
+                item_count: (i + 1) as u64,
             });
-            
-            store.append_wal(run_id.to_string(), stats).await.expect("Failed to append WAL");
+
+            store
+                .append_wal(run_id.to_string(), stats)
+                .await
+                .expect("Failed to append WAL");
         }
-        
+
         // Get batch with all run IDs
         let run_ids_strings: Vec<String> = run_ids.iter().map(|id| id.to_string()).collect();
-        let metadata = store.get_run_metadata_batch(&run_ids_strings).await.expect("Failed to get batch metadata");
-        
-        assert_eq!(metadata.len(), run_ids.len(), "Should retrieve all requested run metadata");
-        
+        let metadata = store
+            .get_run_metadata_batch(run_ids_strings)
+            .await
+            .expect("Failed to get batch metadata");
+
+        assert_eq!(
+            metadata.len(),
+            run_ids.len(),
+            "Should retrieve all requested run metadata"
+        );
+
         // Verify each run's metadata
         for (i, run_id) in run_ids.iter().enumerate() {
             let run_metadata = metadata.get(*run_id).expect("Run metadata should exist");
             match &run_metadata.stats {
                 Stats::StatsV1(s) => {
-                    assert_eq!(s.item_count, (i + 1) as u64, "Item count should match what was stored");
-                    assert_eq!(s.min_key, format!("min-key-{}", i), "Min key should match what was stored");
-                    assert_eq!(s.max_key, format!("max-key-{}", i), "Max key should match what was stored");
-                    assert_eq!(s.size_bytes, (i as u64 + 1) * 100, "Size bytes should match what was stored");
-                }
+                    assert_eq!(
+                        s.item_count,
+                        (i + 1) as u64,
+                        "Item count should match what was stored"
+                    );
+                    assert_eq!(
+                        s.min_key,
+                        format!("min-key-{}", i),
+                        "Min key should match what was stored"
+                    );
+                    assert_eq!(
+                        s.max_key,
+                        format!("max-key-{}", i),
+                        "Max key should match what was stored"
+                    );
+                    assert_eq!(
+                        s.size_bytes,
+                        (i as u64 + 1) * 100,
+                        "Size bytes should match what was stored"
+                    );
+                },
             }
         }
-        
+
         // Test with empty array
-        let empty_metadata = store.get_run_metadata_batch(&[]).await.expect("Failed to handle empty batch");
-        assert_eq!(empty_metadata.len(), 0, "Empty request should return empty result");
-        
+        let empty_metadata = store
+            .get_run_metadata_batch(Vec::<String>::new())
+            .await
+            .expect("Failed to handle empty batch");
+        assert_eq!(
+            empty_metadata.len(),
+            0,
+            "Empty request should return empty result"
+        );
+
         // Test with non-existent IDs
-        let nonexistent = store.get_run_metadata_batch(&["nonexistent".to_string()]).await.expect("Failed to handle nonexistent ID");
-        assert_eq!(nonexistent.len(), 0, "Nonexistent ID should return empty result");
+        let nonexistent = store
+            .get_run_metadata_batch(vec!["nonexistent".to_string()])
+            .await
+            .expect("Failed to handle nonexistent ID");
+        assert_eq!(
+            nonexistent.len(),
+            0,
+            "Nonexistent ID should return empty result"
+        );
     }
-    
+
     #[tokio::test]
     async fn test_stream_changelog() {
         let (store, _container) = setup_test_db().await.expect("Failed to setup test DB");
-        
+
         // Add some runs to generate changelog entries
         let run_ids = vec!["stream-test-1", "stream-test-2", "stream-test-3"];
         for (i, run_id) in run_ids.iter().enumerate() {
-            let stats = Stats::StatsV1(StatsV1 { 
+            let stats = Stats::StatsV1(StatsV1 {
                 min_key: format!("min-key-{}", i),
                 max_key: format!("max-key-{}", i),
                 size_bytes: (i as u64 + 1) * 100,
-                item_count: 1, 
+                item_count: 1,
             });
-            
-            store.append_wal(run_id.to_string(), stats).await.expect("Failed to append WAL");
+
+            store
+                .append_wal(run_id.to_string(), stats)
+                .await
+                .expect("Failed to append WAL");
         }
-        
+
         // Create a stream of changelog entries
-        let stream = store.stream_changelog();
+        let (snapshot, stream) = store
+            .get_changelog()
+            .await
+            .expect("Failed to get changelog");
         pin_mut!(stream);
-        
+
         // Collect entries with a timeout to avoid hanging
-        let mut changelog_entries = Vec::new();
+        let mut changelog_entries = snapshot;
         let mut entry_count = 0;
-        
+
         // Use timeout to prevent test from hanging
-        while let Ok(Some(entry_result)) = tokio::time::timeout(
-            Duration::from_secs(2),
-            stream.next()
-        ).await {
+        while let Ok(Some(entry_result)) =
+            tokio::time::timeout(Duration::from_secs(2), stream.next()).await
+        {
             let entry = entry_result.expect("Failed to get changelog entry");
-            
+
             // Verify entry structure
             match &entry {
                 ChangelogEntry::V1(v1) => {
-                    assert!(!v1.runs_added.is_empty(), "Changelog entry should contain added runs");
+                    assert!(
+                        !v1.runs_added.is_empty(),
+                        "Changelog entry should contain added runs"
+                    );
                     assert!(v1.runs_removed.is_empty(), "No runs should be removed");
-                    
+
                     // Match one of our expected run IDs
-                    assert!(run_ids.iter().any(|id| v1.runs_added.contains(&id.to_string())), 
-                            "Added run should be one of our test runs");
-                }
+                    assert!(
+                        run_ids
+                            .iter()
+                            .any(|id| v1.runs_added.contains(&id.to_string())),
+                        "Added run should be one of our test runs"
+                    );
+                },
             }
-            
+
             changelog_entries.push(entry);
             entry_count += 1;
-            
+
             // Break after we've collected all expected entries
             if entry_count >= run_ids.len() {
                 break;
             }
         }
-        
-        assert_eq!(changelog_entries.len(), run_ids.len(), "Should receive all changelog entries");
+
+        assert_eq!(
+            changelog_entries.len(),
+            run_ids.len(),
+            "Should receive all changelog entries"
+        );
     }
-    
+
     #[tokio::test]
     async fn test_concurrent_appends() {
         let (store, _container) = setup_test_db().await.expect("Failed to setup test DB");
-        
+
         // Create multiple concurrent append operations
         let mut handles = Vec::new();
         for i in 0..5 {
             let store_clone = store.clone();
             let run_id = format!("concurrent-test-{}", i);
-            let stats = Stats::StatsV1(StatsV1 { 
+            let stats = Stats::StatsV1(StatsV1 {
                 min_key: format!("min-key-{}", i),
                 max_key: format!("max-key-{}", i),
                 size_bytes: (i as u64 + 1) * 100,
-                item_count: 1, 
+                item_count: 1,
             });
-            
+
             handles.push(tokio::spawn(async move {
                 store_clone.append_wal(run_id, stats).await
             }));
         }
-        
+
         // Wait for all operations to complete
         for handle in handles {
             let result = handle.await.expect("Task panicked");
             assert!(result.is_ok(), "Concurrent append should succeed");
         }
-        
+
         // Verify we have all the runs
         let run_ids: Vec<String> = (0..5).map(|i| format!("concurrent-test-{}", i)).collect();
-        let metadata = store.get_run_metadata_batch(&run_ids).await.expect("Failed to get metadata");
-        
+        let metadata = store
+            .get_run_metadata_batch(run_ids)
+            .await
+            .expect("Failed to get metadata");
+
         assert_eq!(metadata.len(), 5, "All 5 concurrent runs should be stored");
     }
-    
+
     #[tokio::test]
     async fn test_init_changelog_counter_idempotence() {
         let (store, _container) = setup_test_db().await.expect("Failed to setup test DB");
-        
+
         // Call init_changelog_counter again explicitly
-        let result = store.init_changelog_counter().await;
+        let result = store.init_next_id().await;
         assert!(result.is_ok(), "Second initialization should succeed");
-        
+
         // Create a new store with the same client to test initialization during new()
         let store2 = MetadataStore::new(store.client.clone()).await;
         assert!(store2.is_ok(), "Creating a second store should succeed");

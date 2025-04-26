@@ -1,4 +1,5 @@
-use std::{env, path::PathBuf};
+use std::env;
+use std::path::PathBuf;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     tonic_build::compile_protos("proto/skyvault.proto")?;
@@ -7,6 +8,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     tonic_build::configure()
         .file_descriptor_set_path(out_dir.join("skyvault_descriptor.bin"))
         .compile_protos(&["proto/skyvault.proto"], &["proto"])?;
-    
+
     Ok(())
 }

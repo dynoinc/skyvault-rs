@@ -32,7 +32,7 @@ pub enum ServerError {
     /// Errors from the transport layer.
     #[error("Transport error: {0}")]
     Transport(#[from] tonic::transport::Error),
-    
+
     /// Errors from the Forest component.
     #[error("Forest error: {0}")]
     Forest(#[from] forest::ForestError),
@@ -72,9 +72,10 @@ pub async fn server(
         .add_service(health_service)
         .add_service(reflection_service)
         .serve_with_shutdown(addr, async {
-            let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-                .expect("Failed to install SIGTERM handler");
-            
+            let mut terminate =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                    .expect("Failed to install SIGTERM handler");
+
             tokio::select! {
                 _ = tokio::signal::ctrl_c() => {
                     tracing::info!("Received SIGINT, shutting down");
