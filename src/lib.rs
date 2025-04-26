@@ -2,9 +2,9 @@
 
 use std::net::SocketAddr;
 
-use proto::batcher_server::{self, Batcher, BatcherServer};
-use proto::index_server::{self, IndexServer};
-use proto::orchestrator_server::{self, OrchestratorServer};
+use proto::writer_service_server::WriterServiceServer;
+use proto::reader_service_server::ReaderServiceServer;
+use proto::orchestrator_service_server::OrchestratorServiceServer;
 use tonic::transport::Server;
 use tonic_health::ServingStatus;
 
@@ -15,8 +15,8 @@ pub mod proto {
         tonic::include_file_descriptor_set!("skyvault_descriptor");
 }
 
-pub mod batcher_service;
-pub mod index_service;
+pub mod writer_service;
+pub mod reader_service;
 pub mod orchestrator_service;
 
 mod forest;
@@ -41,7 +41,7 @@ pub enum ServerError {
 
     /// Errors from the Index component.
     #[error("Index error: {0}")]
-    Index(#[from] index_service::IndexServiceError),
+    Index(#[from] reader_service::ReaderServiceError),
 }
 
 pub async fn server(
@@ -51,19 +51,19 @@ pub async fn server(
 ) -> Result<(), ServerError> {
     let (health_reporter, health_service) = tonic_health::server::health_reporter();
 
-    let batcher = batcher_service::MyBatcher::new(metadata.clone(), storage.clone());
+    let writer = writer_service::MyWriter::new(metadata.clone(), storage.clone());
     health_reporter
-        .set_service_status(batcher_server::SERVICE_NAME, ServingStatus::Serving)
+        .set_service_status(proto::writer_service_server::SERVICE_NAME, ServingStatus::Serving)
         .await;
 
-    let index = index_service::MyIndex::new(metadata.clone(), storage.clone()).await?;
+    let reader = reader_service::MyReader::new(metadata.clone(), storage.clone()).await?;
     health_reporter
-        .set_service_status(index_server::SERVICE_NAME, ServingStatus::Serving)
+        .set_service_status(proto::reader_service_server::SERVICE_NAME, ServingStatus::Serving)
         .await;
 
     let orchestrator = orchestrator_service::MyOrchestrator::new(metadata.clone()).await?;
     health_reporter
-        .set_service_status(orchestrator_server::SERVICE_NAME, ServingStatus::Serving)
+        .set_service_status(proto::orchestrator_service_server::SERVICE_NAME, ServingStatus::Serving)
         .await;
 
     let reflection_service = tonic_reflection::server::Builder::configure()
@@ -72,9 +72,9 @@ pub async fn server(
         .unwrap();
 
     Server::builder()
-        .add_service(BatcherServer::new(batcher))
-        .add_service(IndexServer::new(index))
-        .add_service(OrchestratorServer::new(orchestrator))
+        .add_service(WriterServiceServer::new(writer))
+        .add_service(ReaderServiceServer::new(reader))
+        .add_service(OrchestratorServiceServer::new(orchestrator))
         .add_service(health_service)
         .add_service(reflection_service)
         .serve_with_shutdown(addr, async {

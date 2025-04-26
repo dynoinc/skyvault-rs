@@ -2,24 +2,16 @@ syntax = "proto3";
 
 package skyvault;
 
-service Batcher {
+// WRITER
+service WriterService {
   rpc WriteBatch (WriteBatchRequest) returns (WriteBatchResponse);
 }
 
-service Index {
-  rpc IndexDocument (IndexRequest) returns (IndexResponse);
-}
-
-service Orchestrator {
-  rpc ListRuns (ListRunsRequest) returns (ListRunsResponse);
-  rpc DumpChangelog (DumpChangelogRequest) returns (DumpChangelogResponse);
-}
-
 message WriteBatchRequest {
-  repeated TableBatch tables = 1;
+  repeated TableWriteBatchRequest tables = 1;
 }
 
-message TableBatch {
+message TableWriteBatchRequest {
   string table_name = 1;
   repeated WriteBatchItem items = 2;
 }
@@ -34,8 +26,39 @@ message WriteBatchItem {
 
 message WriteBatchResponse {}
 
-message IndexRequest {}
-message IndexResponse {}
+// READER
+service ReaderService {
+  rpc GetBatch (GetBatchRequest) returns (GetBatchResponse);
+}
+
+message GetBatchRequest {
+  repeated TableReadBatchRequest tables = 1;
+}
+
+message TableReadBatchRequest {
+  string table_name = 1;
+  repeated string keys = 2;
+}
+
+message GetBatchResponse {
+  repeated TableReadBatchResponse tables = 1;
+}
+
+message TableReadBatchResponse {
+  string table_name = 1;
+  repeated GetBatchItem items = 2;
+}
+
+message GetBatchItem {
+  string key = 1;
+  bytes value = 2;
+}
+
+// ORCHESTRATOR
+service OrchestratorService {
+  rpc ListRuns (ListRunsRequest) returns (ListRunsResponse);
+  rpc DumpChangelog (DumpChangelogRequest) returns (DumpChangelogResponse);
+}
 
 message ListRunsRequest {
 }
@@ -63,7 +86,6 @@ message ChangelogEntryV1 {
   repeated string runs_added = 1;
   repeated string runs_removed = 2;
 }
-
 
 message RunMetadata {
   string id = 1;

@@ -1,10 +1,10 @@
 use thiserror::Error;
 use tonic::{Request, Response, Status};
 
-use crate::{Batcher, metadata, proto, storage};
+use crate::{metadata, proto::{self, writer_service_server::WriterService}, storage};
 
 #[derive(Error, Debug)]
-pub enum BatchError {
+pub enum WriterServiceError {
     #[error("Metadata error: {0}")]
     MetadataError(#[from] metadata::MetadataError),
 
@@ -23,11 +23,11 @@ struct WriteReq {
     tx: tokio::sync::oneshot::Sender<Result<(), Status>>,
 }
 
-pub struct MyBatcher {
+pub struct MyWriter {
     tx: tokio::sync::mpsc::Sender<WriteReq>,
 }
 
-impl MyBatcher {
+impl MyWriter {
     #[must_use]
     pub fn new(metadata: metadata::MetadataStore, storage: storage::ObjectStore) -> Self {
         let (tx, rx) = tokio::sync::mpsc::channel(100);
@@ -92,7 +92,7 @@ impl MyBatcher {
         metadata: &metadata::MetadataStore,
         storage: &storage::ObjectStore,
         batch: &mut [WriteReq],
-    ) -> Result<(), BatchError> {
+    ) -> Result<(), WriterServiceError> {
         let (run, stats) =
             crate::runs::create_run(batch.iter_mut().flat_map(|req| req.ops.drain(..)))?;
 
@@ -105,7 +105,7 @@ impl MyBatcher {
 }
 
 #[tonic::async_trait]
-impl Batcher for MyBatcher {
+impl WriterService for MyWriter {
     async fn write_batch(
         &self,
         req: Request<proto::WriteBatchRequest>,

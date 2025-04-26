@@ -9,12 +9,12 @@ use crate::consistent_hashring::ConsistentHashRing;
 use crate::forest::{Forest, ForestError};
 use crate::metadata::MetadataStore;
 use crate::pod_watcher::{self, PodChange, PodWatcherError};
-use crate::proto::index_server::Index;
-use crate::proto::{IndexRequest, IndexResponse};
+use crate::proto;
+use crate::proto::reader_service_server::ReaderService;
 use crate::storage::ObjectStore;
 
 #[derive(Debug, Error)]
-pub enum IndexServiceError {
+pub enum ReaderServiceError {
     #[error("Pod watcher error: {0}")]
     PodWatcherError(#[from] PodWatcherError),
 
@@ -23,15 +23,15 @@ pub enum IndexServiceError {
 }
 
 
-pub struct MyIndex {
+pub struct MyReader {
     #[allow(dead_code)]
     storage: ObjectStore,
     forest: Forest,
     consistent_hashring: Arc<Mutex<ConsistentHashRing<String>>>,
 }
 
-impl MyIndex {
-    pub async fn new(metadata: MetadataStore, storage: ObjectStore) -> Result<Self, IndexServiceError> {
+impl MyReader {
+    pub async fn new(metadata: MetadataStore, storage: ObjectStore) -> Result<Self, ReaderServiceError> {
         let forest = Forest::new(metadata).await?;
         
         let (pods, pods_stream) = pod_watcher::watch().await?;
@@ -61,11 +61,20 @@ impl MyIndex {
 }
 
 #[tonic::async_trait]
-impl Index for MyIndex {
-    async fn index_document(
+impl ReaderService for MyReader {
+    async fn get_batch(
         &self,
-        _request: Request<IndexRequest>,
-    ) -> Result<Response<IndexResponse>, Status> {
-        Ok(Response::new(IndexResponse {}))
+        request: Request<proto::GetBatchRequest>,
+    ) -> Result<Response<proto::GetBatchResponse>, Status> {
+        let forest_state = self.forest.get_state();
+
+        for table_request in request.into_inner().tables {
+            let table_name = table_request.table_name;
+            let keys = table_request.keys;
+
+            todo!()
+        }
+
+        Ok(Response::new(proto::GetBatchResponse { tables: vec![] }))
     }
 }

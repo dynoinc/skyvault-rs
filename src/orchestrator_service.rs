@@ -2,7 +2,7 @@ use tonic::{Request, Response, Status};
 
 use crate::forest::{Forest, ForestError};
 use crate::metadata::MetadataStore;
-use crate::proto::orchestrator_server::Orchestrator;
+use crate::proto::orchestrator_service_server::OrchestratorService;
 use crate::proto::{
     self, DumpChangelogRequest, DumpChangelogResponse, ListRunsRequest, ListRunsResponse,
 };
@@ -21,7 +21,7 @@ impl MyOrchestrator {
 }
 
 #[tonic::async_trait]
-impl Orchestrator for MyOrchestrator {
+impl OrchestratorService for MyOrchestrator {
     async fn list_runs(
         &self,
         _request: Request<ListRunsRequest>,
