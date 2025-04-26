@@ -23,6 +23,8 @@ mod forest;
 pub mod metadata;
 mod runs;
 pub mod storage;
+mod pod_watcher;
+mod consistent_hashring;
 #[cfg(test)]
 pub mod test_utils;
 
@@ -36,6 +38,10 @@ pub enum ServerError {
     /// Errors from the Forest component.
     #[error("Forest error: {0}")]
     Forest(#[from] forest::ForestError),
+
+    /// Errors from the Index component.
+    #[error("Index error: {0}")]
+    Index(#[from] index_service::IndexServiceError),
 }
 
 pub async fn server(
@@ -50,7 +56,7 @@ pub async fn server(
         .set_service_status(batcher_server::SERVICE_NAME, ServingStatus::Serving)
         .await;
 
-    let index = index_service::MyIndex::new(metadata.clone(), storage.clone());
+    let index = index_service::MyIndex::new(metadata.clone(), storage.clone()).await?;
     health_reporter
         .set_service_status(index_server::SERVICE_NAME, ServingStatus::Serving)
         .await;

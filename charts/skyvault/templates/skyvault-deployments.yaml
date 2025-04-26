@@ -1,0 +1,76 @@
+{{- range $key, $deployment := .Values.deployments }}
+{{- if $deployment.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "skyvault.fullname" $ }}-{{ $deployment.instanceName }}
+  labels:
+    {{- include "skyvault.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: skyvault
+    app.kubernetes.io/instance-id: {{ $deployment.instanceName }}
+spec:
+  replicas: {{ $deployment.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "skyvault.selectorLabels" $ | nindent 6 }}
+      app.kubernetes.io/component: skyvault
+      app.kubernetes.io/instance-id: {{ $deployment.instanceName }}
+  template:
+    metadata:
+      labels:
+        {{- include "skyvault.selectorLabels" $ | nindent 8 }}
+        app.kubernetes.io/component: skyvault
+        app.kubernetes.io/instance-id: {{ $deployment.instanceName }}
+    spec:
+      serviceAccountName: {{ include "skyvault.serviceAccountName" $ }}
+      containers:
+        - name: {{ $.Chart.Name }}
+          image: "{{ $.Values.common.image.repository }}:{{ $.Values.common.image.tag | default $.Chart.AppVersion }}"
+          imagePullPolicy: {{ $.Values.common.image.pullPolicy }}
+          ports:
+            - name: grpc
+              containerPort: {{ $deployment.service.port }}
+              protocol: TCP
+          resources:
+            {{- toYaml $deployment.resources | nindent 12 }}
+          env:
+            # Common environment variables
+            {{- range $key, $value := $.Values.common.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+            
+            # Instance-specific environment variables
+            {{- range $key, $value := $deployment.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+            
+            - name: AWS_ENDPOINT_URL_DYNAMODB
+              value: http://{{ include "skyvault.fullname" $ }}-dynamodb:{{ $.Values.dynamodb.service.port }}
+            - name: AWS_ENDPOINT_URL_S3
+              value: http://{{ include "skyvault.fullname" $ }}-minio:{{ $.Values.minio.service.port }}
+---
+# Service for each SkyVault instance
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "skyvault.fullname" $ }}-{{ $deployment.instanceName }}
+  labels:
+    {{- include "skyvault.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: skyvault
+    app.kubernetes.io/instance-id: {{ $deployment.instanceName }}
+spec:
+  type: {{ $deployment.service.type }}
+  ports:
+    - port: {{ $deployment.service.port }}
+      targetPort: grpc
+      protocol: TCP
+      name: grpc
+  selector:
+    {{- include "skyvault.selectorLabels" $ | nindent 4 }}
+    app.kubernetes.io/component: skyvault
+    app.kubernetes.io/instance-id: {{ $deployment.instanceName }}
+{{- end }}
+{{- end }} 

@@ -2,17 +2,59 @@
 # This is a YAML-formatted file.
 # Declare variables to be passed into your templates.
 
-replicaCount: 1
+# Common configuration for all SkyVault instances
+common:
+  image:
+    repository: localhost/skyvault
+    pullPolicy: Never
+    tag: dev
+  
+  # Common environment variables for all deployments
+  env:
+    AWS_REGION: us-east-1
+    AWS_ACCESS_KEY_ID: minioadmin
+    AWS_SECRET_ACCESS_KEY: minioadmin
 
-image:
-  repository: localhost/skyvault
-  pullPolicy: Never
-  tag: dev
+# Multiple deployment instances configuration
+deployments:
+  # First instance - you can have multiple of these with different keys
+  instance1:
+    enabled: true
+    instanceName: "primary"
+    replicaCount: 2
+    resources:
+      limits:
+        cpu: 500m
+        memory: 512Mi
+      requests:
+        cpu: 200m
+        memory: 256Mi
+    service:
+      type: ClusterIP
+      port: 50051
+    # Instance-specific environment variables
+    env:
+      LOG_LEVEL: "info"
+      
+  # Second instance example with different config
+  instance2:
+    enabled: true
+    instanceName: "secondary"
+    replicaCount: 1
+    resources:
+      limits:
+        cpu: 250m
+        memory: 256Mi
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    service:
+      type: ClusterIP
+      port: 50052
+    env:
+      LOG_LEVEL: "debug"
 
-imagePullSecrets: []
-nameOverride: ""
-fullnameOverride: ""
-
+# Service account configuration
 serviceAccount:
   # Specifies whether a service account should be created
   create: true
@@ -35,10 +77,6 @@ securityContext: {}
   # runAsNonRoot: true
   # runAsUser: 1000
 
-service:
-  type: ClusterIP
-  port: 50051
-
 ingress:
   enabled: false
   className: ""
@@ -55,33 +93,15 @@ ingress:
   #    hosts:
   #      - chart-example.local
 
-resources: {}
-  # We usually recommend not to specify default resources and to leave this as a conscious
-  # choice for the user. This also increases chances charts run on environments with little
-  # resources, such as Minikube. If you do want to specify resources, uncomment the following
-  # lines, adjust them as necessary, and remove the curly braces after resources:
-  # limits:
-  #   cpu: 100m
-  #   memory: 128Mi
-  # requests:
-  #   cpu: 100m
-  #   memory: 128Mi
-
-autoscaling:
-  enabled: false
-  minReplicas: 1
-  maxReplicas: 100
-  targetCPUUtilizationPercentage: 80
-  # targetMemoryUtilizationPercentage: 80
-
 nodeSelector: {}
 
 tolerations: []
 
 affinity: {}
 
-# Values for the dynamodb-local dependency
+# Values for the dynamodb-local service
 dynamodb:
+  enabled: true
   image:
     repository: docker.io/amazon/dynamodb-local # Use fully qualified name
     tag: latest
@@ -89,15 +109,16 @@ dynamodb:
   service:
     port: 8000
 
-# Values for the minio dependency
+# Values for the minio service
 minio:
+  enabled: true
   image:
     repository: docker.io/minio/minio
     tag: latest
     pullPolicy: IfNotPresent
   service:
     port: 9000
-  # MinIO requires these environment variables
+  # MinIO required environment variables
   env:
     MINIO_ROOT_USER: minioadmin
     MINIO_ROOT_PASSWORD: minioadmin

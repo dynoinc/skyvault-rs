@@ -59,4 +59,12 @@ Create the name of the service account to use
 {{- else }}
 {{- default "default" .Values.serviceAccount.name }}
 {{- end }}
+{{- end }}
+
+{{/*
+Get deployment instance selector labels
+*/}}
+{{- define "skyvault.instanceSelectorLabels" -}}
+{{- include "skyvault.selectorLabels" . }}
+app.kubernetes.io/instance-id: {{ .instanceName }}
 {{- end }} 
