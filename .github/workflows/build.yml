@@ -38,7 +38,11 @@ jobs:
         protoc --version
 
     - name: Build
-      run: cargo build
+      run: |
+        export SQLX_OFFLINE=true
+        cargo build
 
     - name: Run tests
-      run: cargo test
+      run: |
+        export SQLX_OFFLINE=true
+        cargo test
