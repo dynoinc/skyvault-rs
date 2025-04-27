@@ -11,17 +11,14 @@ pub async fn setup_test_db() -> Result<(MetadataStore, ContainerAsync<Postgres>)
         .start()
         .await
         .expect("Failed to start PostgreSQL container");
-    
+
     let port = container
         .get_host_port_ipv4(5432)
         .await
         .expect("Failed to get port");
-    
+
     // Create PostgreSQL connection string
-    let postgres_url = format!(
-        "postgres://postgres:postgres@localhost:{}/postgres",
-        port
-    );
+    let postgres_url = format!("postgres://postgres:postgres@localhost:{}/postgres", port);
 
     let metadata_store = MetadataStore::new(postgres_url)
         .await

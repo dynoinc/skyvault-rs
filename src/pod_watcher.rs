@@ -1,7 +1,7 @@
 use std::fs;
 
 use async_stream::stream;
-use futures::{pin_mut, Stream, StreamExt};
+use futures::{Stream, StreamExt, pin_mut};
 use hostname::get as get_hostname;
 use k8s_openapi::api::core::v1::Pod;
 use kube::Client;
@@ -30,7 +30,8 @@ pub enum PodWatcherError {
 /// Returns a tuple containing:
 /// - A HashSet of current pod names
 /// - A stream that yields pod addition and removal events
-pub async fn watch() -> Result<impl Stream<Item = Result<PodChange, PodWatcherError>>, PodWatcherError> {
+pub async fn watch()
+-> Result<impl Stream<Item = Result<PodChange, PodWatcherError>>, PodWatcherError> {
     // Create Kubernetes client
     let client = Client::try_default().await?;
 
@@ -60,7 +61,7 @@ pub async fn watch() -> Result<impl Stream<Item = Result<PodChange, PodWatcherEr
         watcher::Config::default()
             .labels(&label_selector)
             .streaming_lists(),
-        );
+    );
 
     let pod_stream = stream! {
         pin_mut!(raw_stream);

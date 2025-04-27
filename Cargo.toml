@@ -10,6 +10,10 @@ path = "src/lib.rs"
 name = "skyvault"
 path = "bin/main.rs"
 
+[[bin]]
+name = "worker"
+path = "bin/worker.rs"
+
 [lints.clippy]
 unwrap_used = "deny"
 

@@ -30,7 +30,6 @@ message WriteBatchResponse {}
 // READER
 service ReaderService {
   rpc GetBatch (GetBatchRequest) returns (GetBatchResponse);
-
   rpc GetFromWAL (GetFromWALRequest) returns (GetFromWALResponse);
 }
 
@@ -82,6 +81,13 @@ message GetFromWALItem {
 service OrchestratorService {
   rpc ListRuns (ListRunsRequest) returns (ListRunsResponse);
   rpc DumpChangelog (DumpChangelogRequest) returns (DumpChangelogResponse);
+  rpc KickOffWALCompaction (KickOffWALCompactionRequest) returns (KickOffWALCompactionResponse);
+}
+
+message KickOffWALCompactionRequest {
+}
+
+message KickOffWALCompactionResponse {
 }
 
 message ListRunsRequest {

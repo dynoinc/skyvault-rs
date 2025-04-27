@@ -2,6 +2,7 @@
 
 use std::net::SocketAddr;
 
+use clap::Parser;
 use proto::orchestrator_service_server::OrchestratorServiceServer;
 use proto::reader_service_server::ReaderServiceServer;
 use proto::writer_service_server::WriterServiceServer;
@@ -28,6 +29,26 @@ pub mod storage;
 #[cfg(test)]
 pub mod test_utils;
 
+#[derive(Debug, Parser, Clone)]
+#[command(name = "skyvault", about = "A gRPC server for skyvault.")]
+pub struct Config {
+    #[arg(long, env = "SKYVAULT_GRPC_ADDR", value_parser = clap::value_parser!(SocketAddr), default_value = "0.0.0.0:50051")]
+    pub grpc_addr: SocketAddr,
+
+    #[arg(
+        long,
+        env = "SKYVAULT_METADATA_URL",
+        default_value = "postgres://postgres:postgres@localhost:5432/skyvault"
+    )]
+    pub metadata_url: String,
+
+    #[arg(long, env = "SKYVAULT_BUCKET_NAME", default_value = "skyvault-bucket")]
+    pub bucket_name: String,
+
+    #[arg(long, env = "SKYVAULT_IMAGE_ID", default_value = "skyvault")]
+    pub image_id: String,
+}
+
 /// Error types for the skyvault2 library.
 #[derive(thiserror::Error, Debug)]
 pub enum ServerError {
@@ -42,10 +63,14 @@ pub enum ServerError {
     /// Errors from the Index component.
     #[error("Index error: {0}")]
     Index(#[from] reader_service::ReaderServiceError),
+
+    /// Errors from the Orchestrator component.
+    #[error("Orchestrator error: {0}")]
+    Orchestrator(#[from] orchestrator_service::OrchestratorError),
 }
 
 pub async fn server(
-    addr: SocketAddr,
+    config: Config,
     metadata: metadata::MetadataStore,
     storage: storage::ObjectStore,
 ) -> Result<(), ServerError> {
@@ -60,7 +85,8 @@ pub async fn server(
         .await;
 
     let reader =
-        reader_service::MyReader::new(metadata.clone(), storage.clone(), addr.port()).await?;
+        reader_service::MyReader::new(metadata.clone(), storage.clone(), config.grpc_addr.port())
+            .await?;
     health_reporter
         .set_service_status(
             proto::reader_service_server::SERVICE_NAME,
@@ -68,7 +94,9 @@ pub async fn server(
         )
         .await;
 
-    let orchestrator = orchestrator_service::MyOrchestrator::new(metadata.clone()).await?;
+    let orchestrator =
+        orchestrator_service::MyOrchestrator::new(metadata.clone(), config.clone())
+            .await?;
     health_reporter
         .set_service_status(
             proto::orchestrator_service_server::SERVICE_NAME,
@@ -87,7 +115,7 @@ pub async fn server(
         .add_service(OrchestratorServiceServer::new(orchestrator))
         .add_service(health_service)
         .add_service(reflection_service)
-        .serve_with_shutdown(addr, async {
+        .serve_with_shutdown(config.grpc_addr, async {
             let mut terminate =
                 tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
                     .expect("Failed to install SIGTERM handler");

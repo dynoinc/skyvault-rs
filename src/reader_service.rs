@@ -83,7 +83,10 @@ impl MyReader {
         })
     }
 
-    async fn get_connection(&self, pod: &str) -> Result<ReaderServiceClient<Channel>, ReaderServiceError> {
+    async fn get_connection(
+        &self,
+        pod: &str,
+    ) -> Result<ReaderServiceClient<Channel>, ReaderServiceError> {
         // First check if connection exists
         {
             let connections = self.connections.lock().unwrap();
@@ -91,17 +94,20 @@ impl MyReader {
                 return Ok(conn);
             }
         }
-        
+
         // Connection not found, create a new one outside the lock
         let addr = format!("http://{}:{}", pod, self.port);
         let conn = match ReaderServiceClient::connect(addr).await {
             Ok(conn) => conn,
             Err(e) => return Err(ReaderServiceError::ConnectionError(e)),
         };
-        
+
         // Now acquire the lock again to insert the new connection
         let conn_clone = conn.clone();
-        self.connections.lock().unwrap().insert(pod.to_string(), conn);
+        self.connections
+            .lock()
+            .unwrap()
+            .insert(pod.to_string(), conn);
         Ok(conn_clone)
     }
 }
@@ -126,24 +132,30 @@ impl ReaderService for MyReader {
         let mut wal_conn = match self.get_connection(&wal_pod).await {
             Ok(conn) => conn,
             Err(e) => {
-                return Err(Status::internal(
-                    format!("No connection to reader service pod for WAL: {}", e),
-                ));
+                return Err(Status::internal(format!(
+                    "No connection to reader service pod for WAL: {}",
+                    e
+                )));
             },
         };
 
         let wal_request = proto::GetFromWalRequest {
-            tables: request.into_inner().tables.into_iter().map(|table| {
-                proto::TableReadBatchRequest {
+            tables: request
+                .into_inner()
+                .tables
+                .into_iter()
+                .map(|table| proto::TableReadBatchRequest {
                     table_name: table.table_name.clone(),
-                    keys: table.keys.into_iter().map(|key| format!("{}.{}", table.table_name, key)).collect(),
-                }
-            }).collect(),
+                    keys: table
+                        .keys
+                        .into_iter()
+                        .map(|key| format!("{}.{}", table.table_name, key))
+                        .collect(),
+                })
+                .collect(),
         };
 
-        let wal_response = wal_conn
-            .get_from_wal(wal_request)
-            .await?;
+        let wal_response = wal_conn.get_from_wal(wal_request).await?;
 
         let mut response = proto::GetBatchResponse::default();
         for table_response in wal_response.into_inner().tables {
@@ -204,28 +216,24 @@ impl ReaderService for MyReader {
                     },
                 };
 
-                remaining_keys.retain(|key| {   
-                    match runs::search_run(run.as_ref(), key.as_str()) {
-                        runs::SearchResult::Found(value) => {
-                            table_response.items.push(proto::GetFromWalItem {
-                                key: key.clone(),
-                                result: Some(proto::get_from_wal_item::Result::Value(value)),
-                            });
+                remaining_keys.retain(|key| match runs::search_run(run.as_ref(), key.as_str()) {
+                    runs::SearchResult::Found(value) => {
+                        table_response.items.push(proto::GetFromWalItem {
+                            key: key.clone(),
+                            result: Some(proto::get_from_wal_item::Result::Value(value)),
+                        });
 
-                            false
-                        },
-                        runs::SearchResult::Tombstone => {
-                            table_response.items.push(proto::GetFromWalItem {
-                                key: key.clone(),
-                                result: Some(proto::get_from_wal_item::Result::Deleted(())),
-                            });
+                        false
+                    },
+                    runs::SearchResult::Tombstone => {
+                        table_response.items.push(proto::GetFromWalItem {
+                            key: key.clone(),
+                            result: Some(proto::get_from_wal_item::Result::Deleted(())),
+                        });
 
-                            false
-                        },
-                        runs::SearchResult::NotFound => {
-                            true
-                        },
-                    }
+                        false
+                    },
+                    runs::SearchResult::NotFound => true,
                 });
             }
 

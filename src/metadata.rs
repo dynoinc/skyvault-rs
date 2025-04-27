@@ -3,14 +3,13 @@ use std::time::Duration;
 
 use async_stream::stream;
 use futures::Stream;
+use sqlx::PgPool;
 use sqlx::migrate::Migrator;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::types::JsonValue;
-use sqlx::PgPool;
 use thiserror::Error;
 
 use crate::proto;
-
 
 #[derive(Error, Debug)]
 pub enum MetadataError {
@@ -79,8 +78,7 @@ pub enum ChangelogEntry {
 impl From<JsonValue> for ChangelogEntry {
     fn from(val: JsonValue) -> Self {
         // panics on malformed JSON; switch to `from_value(val).unwrap()` or handle the Result
-        serde_json::from_value(val)
-            .expect("invalid ChangelogEntry JSON")
+        serde_json::from_value(val).expect("invalid ChangelogEntry JSON")
     }
 }
 
@@ -95,14 +93,14 @@ impl From<ChangelogEntry> for proto::ChangelogEntry {
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
-pub struct ChangelogEntryWithID {   
+pub struct ChangelogEntryWithID {
     id: i64,
     changes: ChangelogEntry,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
 pub enum JobParams {
-    WALCompaction
+    WALCompaction,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -123,7 +121,7 @@ impl MetadataStore {
             .max_connections(5)
             .connect(&metadata_url)
             .await?;
-        
+
         MIGRATOR.run(&pg_pool).await?;
 
         Ok(Self { pg_pool })
@@ -166,7 +164,7 @@ impl MetadataStore {
                 )
                 .fetch_all(&self.pg_pool)
                 .await?;
-                
+
                 for entry in new_entries {
                     last_id = entry.id;
                     yield Ok(entry.changes);
@@ -184,11 +182,10 @@ impl MetadataStore {
         run_id: String,
         stats: crate::runs::Stats,
     ) -> Result<(), MetadataError> {
-
         loop {
             // Start a transaction to add changelog record and run metadata
             let mut transaction = self.pg_pool.begin().await?;
-            
+
             // Insert changelog entry and get its ID
             let changelog_entry = sqlx::query_as!(
                 ChangelogEntryWithID,
@@ -217,7 +214,7 @@ impl MetadataStore {
             )
             .execute(&mut *transaction)
             .await?;
-            
+
             // Commit the transaction, retry on conflict
             match transaction.commit().await {
                 Ok(_) => break,
@@ -228,7 +225,7 @@ impl MetadataStore {
                         }
                     }
                     return Err(e.into());
-                }
+                },
             }
         }
 
@@ -249,24 +246,32 @@ impl MetadataStore {
         )
         .fetch_all(&self.pg_pool)
         .await?;
-        
-        let run_metadatas = rows.into_iter().map(|row| {
-            let belongs_to: BelongsTo = serde_json::from_value(row.belongs_to).map_err(MetadataError::JsonSerdeError)?;
-            let stats: crate::runs::Stats = serde_json::from_value(row.stats).map_err(MetadataError::JsonSerdeError)?;
-            
-            Ok(RunMetadata {
-                id: row.id,
-                belongs_to,
-                stats,
-            })
-        }).collect::<Result<Vec<RunMetadata>, MetadataError>>()?;
 
-        Ok(run_metadatas.into_iter().map(|m| (m.id.clone(), m)).collect())
+        let run_metadatas = rows
+            .into_iter()
+            .map(|row| {
+                let belongs_to: BelongsTo = serde_json::from_value(row.belongs_to)
+                    .map_err(MetadataError::JsonSerdeError)?;
+                let stats: crate::runs::Stats =
+                    serde_json::from_value(row.stats).map_err(MetadataError::JsonSerdeError)?;
+
+                Ok(RunMetadata {
+                    id: row.id,
+                    belongs_to,
+                    stats,
+                })
+            })
+            .collect::<Result<Vec<RunMetadata>, MetadataError>>()?;
+
+        Ok(run_metadatas
+            .into_iter()
+            .map(|m| (m.id.clone(), m))
+            .collect())
     }
 
     pub async fn schedule_wal_compaction(&self) -> Result<(), MetadataError> {
         let mut transaction = self.pg_pool.begin().await?;
-        
+
         // Check if there's already a wal_compaction job in pending or running state
         let existing_job = sqlx::query!(
             r#"
@@ -278,7 +283,7 @@ impl MetadataStore {
         )
         .fetch_optional(&mut *transaction)
         .await?;
-        
+
         // Only insert if no existing job was found
         if existing_job.is_none() {
             sqlx::query!(
@@ -292,7 +297,7 @@ impl MetadataStore {
             .execute(&mut *transaction)
             .await?;
         }
-        
+
         transaction.commit().await?;
 
         Ok(())
@@ -308,13 +313,13 @@ impl MetadataStore {
         .await?
         .into_iter()
         .map(|row| {
-            let job_params: JobParams = serde_json::from_value(row.job)
-                .map_err(|e| MetadataError::JsonSerdeError(e))?;
+            let job_params: JobParams =
+                serde_json::from_value(row.job).map_err(|e| MetadataError::JsonSerdeError(e))?;
             Ok((row.id, job_params))
         })
         .collect::<Result<Vec<(i64, JobParams)>, MetadataError>>()?;
 
-        Ok(jobs)    
+        Ok(jobs)
     }
 }
 
@@ -327,28 +332,28 @@ mod tests {
     async fn test_schedule_and_get_wal_compaction_job() {
         // Setup test database
         let (metadata_store, _container) = setup_test_db().await.unwrap();
-        
+
         // Schedule a WAL compaction job
         metadata_store.schedule_wal_compaction().await.unwrap();
-        
+
         // Get pending jobs
         let pending_jobs = metadata_store.get_pending_jobs().await.unwrap();
-        
+
         // Verify that we have exactly one job
         assert_eq!(pending_jobs.len(), 1);
-        
+
         // Verify the job ID is positive
         let (job_id, job_params) = &pending_jobs[0];
         assert!(*job_id > 0);
-        
+
         // Verify the job parameters match WALCompaction
         match job_params {
             JobParams::WALCompaction => {},
         }
-        
+
         // Schedule another job - should not create a duplicate
         metadata_store.schedule_wal_compaction().await.unwrap();
-        
+
         // Verify we still have only one job
         let pending_jobs_after_second_schedule = metadata_store.get_pending_jobs().await.unwrap();
         assert_eq!(pending_jobs_after_second_schedule.len(), 1);

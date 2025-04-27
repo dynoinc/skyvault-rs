@@ -1,4 +1,3 @@
-
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
@@ -98,7 +97,6 @@ impl ObjectStore {
     }
 }
 
-
 /// A simple cache for the object store that caches run data in memory
 pub struct StorageCache {
     /// The underlying storage system
@@ -116,7 +114,7 @@ impl StorageCache {
             cache: Arc::new(RwLock::new(HashMap::new())),
         }
     }
-    
+
     /// Get run data from cache or storage if not cached
     pub async fn get_run(&self, run_id: &str) -> Result<Arc<Vec<u8>>, StorageError> {
         // First check if the run is in the cache
@@ -129,7 +127,7 @@ impl StorageCache {
 
         // Not in cache, fetch from storage
         let run_data = Arc::new(self.storage.get_run(run_id).await?);
-        
+
         // Update cache
         {
             let mut cache = self.cache.write().unwrap();
@@ -139,5 +137,3 @@ impl StorageCache {
         Ok(run_data)
     }
 }
-
-

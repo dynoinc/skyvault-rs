@@ -366,10 +366,7 @@ mod tests {
         ];
         let (data, _) = create_run(ops).unwrap();
 
-        assert_eq!(
-            search_run(&data, "banana"),
-            SearchResult::Tombstone
-        );
+        assert_eq!(search_run(&data, "banana"), SearchResult::Tombstone);
         assert_eq!(
             search_run(&data, "apple"),
             SearchResult::Found(value("red"))
@@ -389,10 +386,7 @@ mod tests {
         // Key in between
         assert_eq!(search_run(&data, "cherry"), SearchResult::NotFound);
         // Key too large
-        assert_eq!(
-            search_run(&data, "elderberry"),
-            SearchResult::NotFound
-        );
+        assert_eq!(search_run(&data, "elderberry"), SearchResult::NotFound);
     }
 
     #[test]

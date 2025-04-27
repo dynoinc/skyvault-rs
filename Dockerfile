@@ -13,13 +13,14 @@ RUN rustup show
 RUN mkdir -p src bin proto
 RUN echo "fn main() {println!(\"fake\")}" > src/lib.rs
 RUN echo "fn main() {println!(\"fake\")}" > bin/main.rs
+RUN echo "fn main() {println!(\"fake\")}" > bin/worker.rs
 RUN echo "syntax = \"proto3\"; package skyvault;" > proto/skyvault.proto
 COPY Cargo.toml Cargo.lock build.rs .rustfmt.toml ./
 RUN cargo build
 
 # Build the actual project
 # Delete the fake build artifacts
-RUN rm -rf src bin proto target/debug/deps/skyvault*
+RUN rm -rf src bin proto target/debug/deps/skyvault* target/debug/deps/worker*
 COPY . .
 
 ENV SQLX_OFFLINE true
@@ -35,6 +36,7 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 COPY --from=builder /app/target/debug/skyvault /app/skyvault
+COPY --from=builder /app/target/debug/worker /app/worker
 
 EXPOSE 50051
 CMD ["/app/skyvault"]
