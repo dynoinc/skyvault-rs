@@ -2,11 +2,11 @@
 
 [![build](https://github.com/dynoinc/skyvault-rs/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/dynoinc/skyvault-rs/actions/workflows/build.yml)
 
-SkyVault is a high-performance, scalable object-store backed key-value store.
+Skyvault is a high-performance, scalable object-store backed key-value store.
 
 ## Architecture
 
-![SkyVault Architecture](docs/arch.png)
+![Skyvault Architecture](docs/arch.png)
 
 ## Technologies Used
 

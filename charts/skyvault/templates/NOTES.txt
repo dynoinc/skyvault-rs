@@ -1,5 +1,5 @@
 {{- define "skyvault.notes" -}}
-1. SkyVault Instances:
+1. Skyvault Instances:
 {{- range $key, $deployment := .Values.deployments }}
 {{- if $deployment.enabled }}
 

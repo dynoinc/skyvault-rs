@@ -1,6 +1,6 @@
 apiVersion: v2
-name: skyvault
-description: A Helm chart for SkyVault and its dependencies
+name: Skyvault
+description: A Helm chart for Skyvault and its dependencies
 
 # A chart can be either an 'application' or a 'library' chart.
 # Application charts are installable charts, while library charts provide utilities

@@ -56,7 +56,7 @@ spec:
             - name: SKYVAULT_METADATA_URL
               value: "postgres://{{ $.Values.postgres.env.POSTGRES_USER }}:{{ $.Values.postgres.env.POSTGRES_PASSWORD }}@{{ include "skyvault.fullname" $ }}-postgres:{{ $.Values.postgres.service.port }}/{{ $.Values.postgres.env.POSTGRES_DB }}?sslmode=disable"
 ---
-# Service for each SkyVault instance
+# Service for each Skyvault instance
 apiVersion: v1
 kind: Service
 metadata:

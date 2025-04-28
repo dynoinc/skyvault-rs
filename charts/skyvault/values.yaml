@@ -2,7 +2,7 @@
 # This is a YAML-formatted file.
 # Declare variables to be passed into your templates.
 
-# Common configuration for all SkyVault instances
+# Common configuration for all Skyvault instances
 common:
   image:
     repository: localhost/skyvault

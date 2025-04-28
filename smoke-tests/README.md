@@ -1,6 +1,6 @@
-# SkyVault Smoke Tests
+# Skyvault Smoke Tests
 
-This directory contains smoke tests for the SkyVault service using pytest.
+This directory contains smoke tests for the Skyvault service using pytest.
 
 ## Running Tests
 
