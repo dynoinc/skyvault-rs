@@ -18,14 +18,14 @@ SkyVault is a high-performance, scalable object-store backed key-value store.
 | [MinIO](https://min.io/)                     | High performance object storage                               |
 | [Kubernetes](https://kubernetes.io/)         | Container orchestration platform                              |
 | [Helm](https://helm.sh/)                     | Package manager for Kubernetes                                |
-| [Podman](https://podman.io/)                 | Daemonless container engine                                   |
+| [Docker](https://www.docker.com/)            | Container platform                                            |
 | [Cursor Editor](https://cursor.sh/)          | AI-powered code editor used for development                   |
 
 ## Prerequisites
 
 - Rust (nightly)
 - Protobuf compiler (protoc)
-- Podman, k8s and helm for local development
+- Docker, k8s and helm for local development
 - [Just](https://github.com/casey/just) command runner
 
 ## Getting Started
