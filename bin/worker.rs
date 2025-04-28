@@ -2,7 +2,7 @@ use anyhow::Result;
 use aws_sdk_s3::Client as S3Client;
 use clap::Parser;
 use rustls::crypto::aws_lc_rs;
-use skyvault::{metadata, storage};
+use skyvault::{jobs, metadata, storage};
 use tracing::info;
 use tracing::level_filters::LevelFilter;
 
@@ -48,6 +48,7 @@ async fn main() -> Result<()> {
     let s3_client = S3Client::from_conf(s3_config);
     let _storage = storage::ObjectStore::new(s3_client, &config.bucket_name).await?;
 
+    jobs::execute(_metadata, _storage, config.job_id).await?;
     info!("Complete!");
     Ok(())
 }

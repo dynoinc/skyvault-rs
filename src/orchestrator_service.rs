@@ -2,13 +2,14 @@ use kube::Error as KubeError;
 use thiserror::Error;
 use tonic::{Request, Response, Status};
 
+use crate::Config;
 use crate::forest::{Forest, ForestError};
 use crate::metadata::{JobParams, MetadataStore};
 use crate::proto::orchestrator_service_server::OrchestratorService;
 use crate::proto::{
-    self, DumpChangelogRequest, DumpChangelogResponse, KickOffWalCompactionRequest, KickOffWalCompactionResponse, ListRunsRequest, ListRunsResponse,
+    self, DumpChangelogRequest, DumpChangelogResponse, KickOffWalCompactionRequest,
+    KickOffWalCompactionResponse, ListRunsRequest, ListRunsResponse,
 };
-use crate::Config;
 
 #[derive(Clone)]
 pub struct MyOrchestrator {
@@ -134,7 +135,11 @@ impl MyOrchestrator {
                     spec: Some(k8s_openapi::api::core::v1::PodSpec {
                         containers: vec![k8s_openapi::api::core::v1::Container {
                             name: "worker".to_string(),
-                            command: Some(vec!["/app/worker".to_string(), "--job-id".to_string(), job_id.clone()]),
+                            command: Some(vec![
+                                "/app/worker".to_string(),
+                                "--job-id".to_string(),
+                                job_id.clone(),
+                            ]),
                             image: Some(self.config.image_id.clone()),
                             env: Some(vec![
                                 k8s_openapi::api::core::v1::EnvVar {

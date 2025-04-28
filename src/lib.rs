@@ -22,6 +22,7 @@ pub mod writer_service;
 
 mod consistent_hashring;
 mod forest;
+pub mod jobs;
 pub mod metadata;
 mod pod_watcher;
 mod runs;
@@ -95,8 +96,7 @@ pub async fn server(
         .await;
 
     let orchestrator =
-        orchestrator_service::MyOrchestrator::new(metadata.clone(), config.clone())
-            .await?;
+        orchestrator_service::MyOrchestrator::new(metadata.clone(), config.clone()).await?;
     health_reporter
         .set_service_status(
             proto::orchestrator_service_server::SERVICE_NAME,

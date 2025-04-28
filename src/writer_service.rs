@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use thiserror::Error;
 use tonic::{Request, Response, Status};
 
@@ -48,7 +50,8 @@ impl MyWriter {
     ) {
         while let Some(item) = rx.recv().await {
             let mut ops_count = item.ops.len();
-            let mut buffer = vec![item];
+            let mut ops = vec![item.ops];
+            let mut tx = vec![item.tx];
 
             let timeout = tokio::time::sleep(std::time::Duration::from_millis(250));
             tokio::pin!(timeout);
@@ -61,7 +64,8 @@ impl MyWriter {
                         match maybe_item {
                             Some(item) => {
                                 ops_count += item.ops.len();
-                                buffer.push(item);
+                                ops.push(item.ops);
+                                tx.push(item.tx);
 
                                 // If we've collected enough items, process the batch immediately
                                 if ops_count >= 50_000 {
@@ -80,10 +84,10 @@ impl MyWriter {
                 }
             }
 
-            let result = Self::process_batch(&metadata, &storage, &mut buffer).await;
+            let result = Self::process_batch(&metadata, &storage, ops).await;
             let result = result.map_err(|e| Status::internal(e.to_string()));
-            for item in buffer.drain(..) {
-                let _ = item.tx.send(result.clone());
+            for item in tx.drain(..) {
+                let _ = item.send(result.clone());
             }
         }
 
@@ -93,13 +97,19 @@ impl MyWriter {
     async fn process_batch(
         metadata: &metadata::MetadataStore,
         storage: &storage::ObjectStore,
-        batch: &mut [WriteReq],
+        batch: Vec<Vec<crate::runs::WriteOperation>>,
     ) -> Result<(), WriterServiceError> {
-        let (run, stats) =
-            crate::runs::create_run(batch.iter_mut().flat_map(|req| req.ops.drain(..)))?;
-
         let run_id = ulid::Ulid::new().to_string();
-        storage.put_run(&run_id, run).await?;
+        let sorted_ops = batch
+            .into_iter()
+            .flat_map(|req| req.into_iter())
+            .map(|op| (op.key().to_string(), op))
+            .collect::<BTreeMap<_, _>>();
+
+        let ops_stream = futures::stream::iter(sorted_ops.into_values().map(|op| Ok(op)));
+        let (data, stats) = crate::runs::build_run(ops_stream).await?;
+        storage.put_run(&run_id, data).await?;
+
         metadata.append_wal(run_id, stats).await?;
         Ok(())
     }

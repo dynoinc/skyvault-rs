@@ -21,6 +21,9 @@ pub enum MetadataError {
 
     #[error("JSON serde error: {0}")]
     JsonSerdeError(#[from] serde_json::Error),
+
+    #[error("Some runs were already marked as deleted")]
+    AlreadyDeleted(String),
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
@@ -104,7 +107,7 @@ pub enum JobParams {
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
-pub struct Job {
+struct Job {
     params: JobParams,
 }
 
@@ -232,6 +235,71 @@ impl MetadataStore {
         Ok(())
     }
 
+    pub async fn compact_wal(
+        &self,
+        compacted: Vec<String>,
+        seq_no: i64,
+        new_run_id: String,
+        new_stats: crate::runs::Stats,
+    ) -> Result<(), MetadataError> {
+        let mut transaction = self.pg_pool.begin().await?;
+
+        // Mark all compacted runs as deleted in a single query and get the count of updated rows
+        let result = sqlx::query!(
+            r#"
+            WITH updated_runs AS (
+                UPDATE runs
+                SET deleted_at = NOW()
+                WHERE id = ANY($1)
+                AND deleted_at IS NULL
+                RETURNING id
+            )
+            SELECT COUNT(*) FROM updated_runs
+            "#,
+            &compacted as &[String]
+        )
+        .fetch_one(&mut *transaction)
+        .await?;
+
+        // Check if we updated exactly the number of runs we expected to
+        if result.count.unwrap_or(0) as usize != compacted.len() {
+            return Err(MetadataError::AlreadyDeleted(
+                "Some runs were already marked as deleted".to_string(),
+            ));
+        }
+
+        sqlx::query_as!(
+            ChangelogEntryWithID,
+            r#"
+            INSERT INTO changelog (changes)
+            VALUES ($1)
+            RETURNING *
+            "#,
+            serde_json::to_value(ChangelogEntry::V1(ChangelogEntryV1 {
+                runs_added: vec![new_run_id.clone()],
+                runs_removed: compacted,
+            }))?
+        )
+        .fetch_one(&mut *transaction)
+        .await?;
+
+        sqlx::query!(
+            r#"
+            INSERT INTO runs (id, belongs_to, stats)
+            VALUES ($1, $2, $3)
+            "#,
+            new_run_id,
+            serde_json::to_value(BelongsTo::WalSeqNo(seq_no))?,
+            serde_json::to_value(new_stats.clone())?
+        )
+        .execute(&mut *transaction)
+        .await?;
+
+        transaction.commit().await?;
+
+        Ok(())
+    }
+
     pub async fn get_run_metadata_batch(
         &self,
         run_ids: impl IntoIterator<Item = String>,
@@ -320,6 +388,17 @@ impl MetadataStore {
         .collect::<Result<Vec<(i64, JobParams)>, MetadataError>>()?;
 
         Ok(jobs)
+    }
+
+    pub async fn get_job(&self, job_id: i64) -> Result<JobParams, MetadataError> {
+        let row = sqlx::query!(r#"SELECT id, job FROM jobs WHERE id = $1"#, job_id)
+            .fetch_one(&self.pg_pool)
+            .await?;
+
+        let params: JobParams =
+            serde_json::from_value(row.job).map_err(|e| MetadataError::JsonSerdeError(e))?;
+
+        Ok(params)
     }
 }
 

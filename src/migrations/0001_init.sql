@@ -1,7 +1,8 @@
 CREATE TABLE IF NOT EXISTS runs (
     id TEXT PRIMARY KEY,
     belongs_to JSONB NOT NULL DEFAULT '{}',
-    stats JSONB NOT NULL DEFAULT '{}'
+    stats JSONB NOT NULL DEFAULT '{}',
+    deleted_at TIMESTAMPTZ DEFAULT NULL
 );
 
 CREATE TABLE IF NOT EXISTS changelog (

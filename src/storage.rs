@@ -5,9 +5,10 @@ use aws_sdk_s3::Client as S3Client;
 use aws_sdk_s3::operation::create_bucket::CreateBucketError;
 use aws_sdk_s3::operation::get_object::GetObjectError;
 use aws_sdk_s3::operation::put_object::PutObjectError;
-use aws_sdk_s3::primitives::ByteStreamError;
+use aws_sdk_s3::primitives::{ByteStream, ByteStreamError};
 use aws_smithy_runtime_api::client::orchestrator::HttpResponse;
 use aws_smithy_runtime_api::client::result::SdkError;
+use bytes::Bytes;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -26,6 +27,9 @@ pub enum StorageError {
 
     #[error("Object not found: {0}")]
     NotFound(String),
+
+    #[error("I/O error: {0}")]
+    IoError(#[from] std::io::Error),
 }
 
 #[derive(Clone)]
@@ -54,13 +58,15 @@ impl ObjectStore {
 }
 
 impl ObjectStore {
-    pub async fn put_run(&self, run_id: &str, value: Vec<u8>) -> Result<(), StorageError> {
+    pub async fn put_run(&self, run_id: &str, data: Bytes) -> Result<(), StorageError> {
+        let byte_stream = ByteStream::from(data);
+
         match self
             .client
             .put_object()
             .bucket(self.bucket_name.clone())
             .key(format!("runs/{}", run_id))
-            .body(value.into())
+            .body(byte_stream)
             .if_none_match("*".to_string())
             .send()
             .await
@@ -70,7 +76,7 @@ impl ObjectStore {
         }
     }
 
-    pub async fn get_run(&self, run_id: &str) -> Result<Vec<u8>, StorageError> {
+    pub async fn get_run(&self, run_id: &str) -> Result<ByteStream, StorageError> {
         let key = format!("runs/{}", run_id);
         let response = match self
             .client
@@ -91,9 +97,7 @@ impl ObjectStore {
             },
         };
 
-        let data = response.body.collect().await?.to_vec();
-
-        Ok(data)
+        Ok(response.body)
     }
 }
 
@@ -126,7 +130,8 @@ impl StorageCache {
         }
 
         // Not in cache, fetch from storage
-        let run_data = Arc::new(self.storage.get_run(run_id).await?);
+        let run_stream = self.storage.get_run(run_id).await?;
+        let run_data = Arc::new(run_stream.collect().await?.to_vec());
 
         // Update cache
         {
