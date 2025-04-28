@@ -26,6 +26,8 @@ pub async fn execute(
     let job_params = metadata_store.get_job(job_id).await?;
 
     match job_params {
-        JobParams::WALCompaction => execute_wal_compaction(metadata_store, object_store, job_id).await,
+        JobParams::WALCompaction => {
+            execute_wal_compaction(metadata_store, object_store, job_id).await
+        },
     }
 }

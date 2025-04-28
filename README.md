@@ -16,7 +16,6 @@ SkyVault is a high-performance, scalable object-store backed key-value store.
 | [PostgreSQL](https://www.postgresql.org/)    | Open source relational database                               |
 | [SQLx](https://github.com/launchbadge/sqlx)  | Async SQL toolkit for Rust                                    |
 | [MinIO](https://min.io/)                     | High performance object storage                               |
-| [Prometheus](https://prometheus.io/)         | Monitoring and metrics                                        |
 | [Kubernetes](https://kubernetes.io/)         | Container orchestration platform                              |
 | [Helm](https://helm.sh/)                     | Package manager for Kubernetes                                |
 | [Podman](https://podman.io/)                 | Daemonless container engine                                   |

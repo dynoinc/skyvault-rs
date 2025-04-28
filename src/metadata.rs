@@ -338,9 +338,10 @@ impl MetadataStoreTrait for PostgresMetadataStore {
 
         // Check if we updated exactly one job
         if job_result.count.unwrap_or(0) != 1 {
-            return Err(MetadataError::InvalidJobState(
-                format!("Job {} is not in pending state", job_id)
-            ));
+            return Err(MetadataError::InvalidJobState(format!(
+                "Job {} is not in pending state",
+                job_id
+            )));
         }
 
         sqlx::query_as!(

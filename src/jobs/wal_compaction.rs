@@ -264,7 +264,13 @@ pub async fn execute_wal_compaction(
         .unwrap();
 
     metadata_store
-        .append_compaction(job_id, compacted, run_id, BelongsTo::WalSeqNo(smallest_seq_no), stats)
+        .append_compaction(
+            job_id,
+            compacted,
+            run_id,
+            BelongsTo::WalSeqNo(smallest_seq_no),
+            stats,
+        )
         .await?;
     Ok(())
 }
