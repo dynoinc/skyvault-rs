@@ -8,7 +8,7 @@ __pycache__/
 *.pyo
 
 # Generated gRPC code
-generated/
+proto/skyvault*
 
 # uv cache
 .uv_cache/
