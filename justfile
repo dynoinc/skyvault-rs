@@ -9,7 +9,8 @@ build:
     cargo sqlx prepare
     podman build -t localhost/skyvault:dev .
     podman save --output ./target/myapp.tar localhost/skyvault:dev
-    kind load image-archive ./target/myapp.tar --name kind-cluster
+    # kind load image-archive ./target/myapp.tar --name kind-cluster
+    minikube image load ./target/myapp.tar
     kubectl delete pod -l app.kubernetes.io/component=skyvault
 
 deploy:

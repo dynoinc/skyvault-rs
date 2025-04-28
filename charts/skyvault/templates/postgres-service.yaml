@@ -7,7 +7,7 @@ metadata:
     {{- include "skyvault.labels" . | nindent 4 }}
     app.kubernetes.io/component: postgres
 spec:
-  type: ClusterIP # Keep dependencies internal
+  type: {{ .Values.postgres.service.type }}
   ports:
     - port: {{ .Values.postgres.service.port }}
       targetPort: postgres

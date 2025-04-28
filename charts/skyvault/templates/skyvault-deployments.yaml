@@ -72,6 +72,9 @@ spec:
       targetPort: grpc
       protocol: TCP
       name: grpc
+      {{- if and (eq $deployment.service.type "NodePort") (hasKey $deployment.service "nodePort") }}
+      nodePort: {{ $deployment.service.nodePort }}
+      {{- end }}
   selector:
     {{- include "skyvault.selectorLabels" $ | nindent 4 }}
     app.kubernetes.io/component: skyvault

@@ -30,8 +30,9 @@ deployments:
         cpu: 200m
         memory: 256Mi
     service:
-      type: ClusterIP
+      type: NodePort
       port: 50051
+      nodePort: 30051
     # Instance-specific environment variables
     env:
       LOG_LEVEL: "info"
@@ -49,8 +50,9 @@ deployments:
         cpu: 100m
         memory: 128Mi
     service:
-      type: ClusterIP
+      type: NodePort
       port: 50052
+      nodePort: 30052
     env:
       LOG_LEVEL: "debug"
 
@@ -107,6 +109,7 @@ minio:
     pullPolicy: IfNotPresent
   service:
     port: 9000
+    type: ClusterIP
   # MinIO required environment variables
   env:
     MINIO_ROOT_USER: minioadmin
@@ -120,6 +123,7 @@ postgres:
     pullPolicy: IfNotPresent
   service:
     port: 5432
+    type: ClusterIP
   # PostgreSQL required environment variables
   env:
     POSTGRES_USER: postgres

@@ -7,7 +7,7 @@ metadata:
     {{- include "skyvault.labels" . | nindent 4 }}
     app.kubernetes.io/component: minio
 spec:
-  type: ClusterIP # Keep dependencies internal
+  type: {{ .Values.minio.service.type }}
   ports:
     - port: {{ .Values.minio.service.port }}
       targetPort: minio-api
