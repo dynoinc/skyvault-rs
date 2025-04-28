@@ -5,6 +5,9 @@ check:
     cargo clippy -- -D warnings
     RUST_BACKTRACE=1 cargo test
 
+    cd smoke-tests && uv run ruff check .
+    cd smoke-tests && uv run ruff format .
+
 build:
     cargo sqlx prepare
     docker build -t localhost/skyvault:dev .
@@ -20,4 +23,4 @@ pgshell:
 
 smoke:
     cd smoke-tests && uv run build.py
-    cd smoke-tests && uv run tests.py
+    cd smoke-tests && uv run pytest

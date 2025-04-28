@@ -4,11 +4,16 @@ version = "0.1.0"
 description = "Python smoke tests for SkyVault gRPC service"
 requires-python = ">=3.13"
 dependencies = [
-    "grpcio",
-    "grpcio-tools",
-    "protobuf",
+    "grpcio>=1.71.0",
+    "grpcio-tools>=1.71.0",
+    "protobuf>=5.29.4",
+    "pytest>=8.3.5",
 ]
 
-[build-system]
-requires = ["setuptools>=61.0"]
-build-backend = "setuptools.build_meta" 
+[dependency-groups]
+dev = [
+    "ruff>=0.11.7",
+]
+
+[tool.ruff]
+exclude = ["proto/**"]

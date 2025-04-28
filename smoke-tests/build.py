@@ -1,8 +1,7 @@
 import grpc_tools.protoc
-import os
 import sys
 import pathlib
-import shutil
+
 
 def run_protoc():
     """Generates Python gRPC code from skyvault.proto."""
@@ -29,7 +28,9 @@ def run_protoc():
     proto_include_proj = f"-I{workspace_root.resolve()}"
     # Include path for google/protobuf/empty.proto provided by grpcio-tools
     try:
-        protobuf_include_path = pathlib.Path(grpc_tools.protoc.__file__).parent / '_proto'
+        protobuf_include_path = (
+            pathlib.Path(grpc_tools.protoc.__file__).parent / "_proto"
+        )
         proto_include_google = f"-I{protobuf_include_path.resolve()}"
     except Exception as e:
         print(f"Error finding google protobuf include path: {e}", file=sys.stderr)
@@ -37,11 +38,11 @@ def run_protoc():
         sys.exit(1)
 
     command = [
-        'grpc_tools.protoc',
-        proto_include_proj, # To find proto/proto/skyvault.proto
-        proto_include_google, # To find google/protobuf/empty.proto
+        "grpc_tools.protoc",
+        proto_include_proj,  # To find proto/proto/skyvault.proto
+        proto_include_google,  # To find google/protobuf/empty.proto
         f"--python_out={generated_dir.resolve()}",
-        f"--pyi_out={generated_dir.resolve()}", # Generate .pyi stub files
+        f"--pyi_out={generated_dir.resolve()}",  # Generate .pyi stub files
         f"--grpc_python_out={generated_dir.resolve()}",
         # Specify the proto file relative to the include path
         str(proto_file.relative_to(workspace_root)),
@@ -54,8 +55,11 @@ def run_protoc():
     if exit_code == 0:
         print("Python gRPC code generated successfully.")
     else:
-        print(f"Error: protoc command failed with exit code {exit_code}", file=sys.stderr)
+        print(
+            f"Error: protoc command failed with exit code {exit_code}", file=sys.stderr
+        )
         sys.exit(exit_code)
 
+
 if __name__ == "__main__":
-    run_protoc() 
+    run_protoc()
