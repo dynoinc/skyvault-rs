@@ -18,3 +18,8 @@ target/
 
 # Env file
 .env
+
+# Python Smoke Tests
+smoke-tests/.venv/
+smoke-tests/.uv_cache/
+smoke-tests/skyvault_smoke_tests.egg-info
