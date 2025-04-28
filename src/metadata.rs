@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::pin::Pin;
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_stream::stream;
@@ -111,14 +113,54 @@ struct Job {
     params: JobParams,
 }
 
+#[async_trait::async_trait]
+pub trait MetadataStoreTrait: Send + Sync + 'static {
+    async fn get_changelog_snapshot(
+        &self,
+    ) -> Result<(Vec<ChangelogEntry>, i64), MetadataError>;
+
+    type ChangelogStream: Stream<Item = Result<ChangelogEntry, MetadataError>> + Send + 'static;
+    
+    async fn get_changelog(
+        &self,
+    ) -> Result<(Vec<ChangelogEntry>, Self::ChangelogStream), MetadataError>;
+
+    async fn append_wal(
+        &self,
+        run_id: String,
+        stats: crate::runs::Stats,
+    ) -> Result<(), MetadataError>;
+
+    async fn compact_wal(
+        &self,
+        compacted: Vec<String>,
+        seq_no: i64,
+        new_run_id: String,
+        new_stats: crate::runs::Stats,
+    ) -> Result<(), MetadataError>;
+
+    async fn get_run_metadata_batch(
+        &self,
+        run_ids: Vec<String>,
+    ) -> Result<HashMap<String, RunMetadata>, MetadataError>;
+
+    async fn schedule_wal_compaction(&self) -> Result<(), MetadataError>;
+
+    async fn get_pending_jobs(&self) -> Result<Vec<(i64, JobParams)>, MetadataError>;
+
+    async fn get_job(&self, job_id: i64) -> Result<JobParams, MetadataError>;
+}
+
+pub type MetadataStore = Arc<dyn MetadataStoreTrait<ChangelogStream = Pin<Box<dyn Stream<Item = Result<ChangelogEntry, MetadataError>> + Send + 'static>>>>;
+
 #[derive(Clone)]
-pub struct MetadataStore {
+pub struct PostgresMetadataStore {
     pg_pool: PgPool,
 }
 
 static MIGRATOR: Migrator = sqlx::migrate!("./src/migrations");
 
-impl MetadataStore {
+impl PostgresMetadataStore {
     pub async fn new(metadata_url: String) -> Result<Self, MetadataError> {
         let pg_pool = PgPoolOptions::new()
             .max_connections(5)
@@ -129,9 +171,12 @@ impl MetadataStore {
 
         Ok(Self { pg_pool })
     }
+}
 
+#[async_trait::async_trait]
+impl MetadataStoreTrait for PostgresMetadataStore {
     /// Fetches all existing changelog entries and returns them as a vector.
-    pub async fn get_changelog_snapshot(
+    async fn get_changelog_snapshot(
         &self,
     ) -> Result<(Vec<ChangelogEntry>, i64), MetadataError> {
         let entries = sqlx::query_as!(
@@ -145,19 +190,18 @@ impl MetadataStore {
         Ok((entries.into_iter().map(|e| e.changes).collect(), last_id))
     }
 
+    type ChangelogStream = Pin<Box<dyn Stream<Item = Result<ChangelogEntry, MetadataError>> + Send + 'static>>;
+    
     /// Returns a snapshot of existing changelog entries and a stream of new entries.
     /// The stream continuously polls for new entries after reaching the end of the snapshot.
-    pub async fn get_changelog(
-        self,
-    ) -> Result<
-        (
-            Vec<ChangelogEntry>,
-            impl Stream<Item = Result<ChangelogEntry, MetadataError>>,
-        ),
-        MetadataError,
-    > {
+    async fn get_changelog(
+        &self,
+    ) -> Result<(Vec<ChangelogEntry>, Self::ChangelogStream), MetadataError> {
         let (snapshot, mut last_id) = self.get_changelog_snapshot().await?;
-
+        
+        // Clone pg_pool to avoid lifetime issues
+        let pg_pool = self.pg_pool.clone();
+        
         let stream = stream! {
             loop {
                 let new_entries = sqlx::query_as!(
@@ -165,7 +209,7 @@ impl MetadataStore {
                     "SELECT * FROM changelog WHERE id > $1 ORDER BY id ASC",
                     last_id
                 )
-                .fetch_all(&self.pg_pool)
+                .fetch_all(&pg_pool)
                 .await?;
 
                 for entry in new_entries {
@@ -177,10 +221,10 @@ impl MetadataStore {
             }
         };
 
-        Ok((snapshot, stream))
+        Ok((snapshot, Box::pin(stream)))
     }
 
-    pub async fn append_wal(
+    async fn append_wal(
         &self,
         run_id: String,
         stats: crate::runs::Stats,
@@ -235,7 +279,7 @@ impl MetadataStore {
         Ok(())
     }
 
-    pub async fn compact_wal(
+    async fn compact_wal(
         &self,
         compacted: Vec<String>,
         seq_no: i64,
@@ -300,17 +344,16 @@ impl MetadataStore {
         Ok(())
     }
 
-    pub async fn get_run_metadata_batch(
+    async fn get_run_metadata_batch(
         &self,
-        run_ids: impl IntoIterator<Item = String>,
+        run_ids: Vec<String>,
     ) -> Result<HashMap<String, RunMetadata>, MetadataError> {
-        let run_ids_vec: Vec<String> = run_ids.into_iter().collect();
         let rows = sqlx::query!(
             r#"
             SELECT id, belongs_to, stats
             FROM runs WHERE id = ANY($1)
             "#,
-            &run_ids_vec as &[String]
+            &run_ids as &[String]
         )
         .fetch_all(&self.pg_pool)
         .await?;
@@ -337,7 +380,7 @@ impl MetadataStore {
             .collect())
     }
 
-    pub async fn schedule_wal_compaction(&self) -> Result<(), MetadataError> {
+    async fn schedule_wal_compaction(&self) -> Result<(), MetadataError> {
         let mut transaction = self.pg_pool.begin().await?;
 
         // Check if there's already a wal_compaction job in pending or running state
@@ -371,7 +414,7 @@ impl MetadataStore {
         Ok(())
     }
 
-    pub async fn get_pending_jobs(&self) -> Result<Vec<(i64, JobParams)>, MetadataError> {
+    async fn get_pending_jobs(&self) -> Result<Vec<(i64, JobParams)>, MetadataError> {
         let jobs = sqlx::query!(
             r#"
             SELECT id, job FROM jobs WHERE status = 'pending'
@@ -390,7 +433,7 @@ impl MetadataStore {
         Ok(jobs)
     }
 
-    pub async fn get_job(&self, job_id: i64) -> Result<JobParams, MetadataError> {
+    async fn get_job(&self, job_id: i64) -> Result<JobParams, MetadataError> {
         let row = sqlx::query!(r#"SELECT id, job FROM jobs WHERE id = $1"#, job_id)
             .fetch_one(&self.pg_pool)
             .await?;

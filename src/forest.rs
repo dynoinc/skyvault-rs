@@ -32,7 +32,7 @@ pub struct Forest {
 impl Forest {
     /// Creates a new Forest instance and starts the changelog stream processor.
     pub async fn new(metadata_store: MetadataStore) -> Result<Self, ForestError> {
-        let (snapshot, stream) = metadata_store.clone().get_changelog().await?;
+        let (snapshot, stream) = metadata_store.get_changelog().await?;
 
         let mut wal_runs = HashSet::new();
         for entry in snapshot {
@@ -48,10 +48,9 @@ impl Forest {
             }
         }
 
-        let mut wal: Vec<metadata::RunMetadata> = metadata_store
-            .get_run_metadata_batch(wal_runs)
-            .await
-            .expect("Failed to get run metadata")
+        let run_ids = wal_runs.into_iter().collect::<Vec<_>>();
+        let run_metadatas = metadata_store.get_run_metadata_batch(run_ids).await?;
+        let mut wal: Vec<metadata::RunMetadata> = run_metadatas
             .into_values()
             .collect();
 

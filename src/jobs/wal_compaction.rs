@@ -32,7 +32,8 @@ pub async fn execute_wal_compaction(
         }
     }
 
-    let run_metadatas = metadata_store.get_run_metadata_batch(wal_runs).await?;
+    let run_ids = wal_runs.into_iter().collect::<Vec<_>>();
+    let run_metadatas = metadata_store.get_run_metadata_batch(run_ids).await?;
     let run_ids_and_seqno = run_metadatas
         .values()
         .map(|metadata| {

@@ -10,6 +10,7 @@ use aws_smithy_runtime_api::client::orchestrator::HttpResponse;
 use aws_smithy_runtime_api::client::result::SdkError;
 use bytes::Bytes;
 use thiserror::Error;
+use async_trait::async_trait;
 
 #[derive(Error, Debug)]
 pub enum StorageError {
@@ -50,13 +51,21 @@ impl From<SdkError<GetObjectError, HttpResponse>> for StorageError {
     }
 }
 
+#[async_trait]
+pub trait ObjectStoreTrait: Send + Sync + 'static {
+    async fn put_run(&self, run_id: &str, data: Bytes) -> Result<(), StorageError>;
+    async fn get_run(&self, run_id: &str) -> Result<ByteStream, StorageError>;
+}
+
+pub type ObjectStore = Arc<dyn ObjectStoreTrait>;
+
 #[derive(Clone)]
-pub struct ObjectStore {
+pub struct S3ObjectStore {
     client: S3Client,
     bucket_name: String,
 }
 
-impl ObjectStore {
+impl S3ObjectStore {
     pub async fn new(client: S3Client, bucket_name: &str) -> Result<Self, StorageError> {
         // Create the bucket if it doesn't exist
         // Ignore the error if the bucket already exists
@@ -75,8 +84,9 @@ impl ObjectStore {
     }
 }
 
-impl ObjectStore {
-    pub async fn put_run(&self, run_id: &str, data: Bytes) -> Result<(), StorageError> {
+#[async_trait]
+impl ObjectStoreTrait for S3ObjectStore {
+    async fn put_run(&self, run_id: &str, data: Bytes) -> Result<(), StorageError> {
         let byte_stream = ByteStream::from(data);
 
         match self
@@ -94,7 +104,7 @@ impl ObjectStore {
         }
     }
 
-    pub async fn get_run(&self, run_id: &str) -> Result<ByteStream, StorageError> {
+    async fn get_run(&self, run_id: &str) -> Result<ByteStream, StorageError> {
         let key = format!("runs/{}", run_id);
         let response = match self
             .client

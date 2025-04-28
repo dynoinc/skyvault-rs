@@ -3,6 +3,7 @@ use aws_sdk_s3::Client as S3Client;
 use clap::Parser;
 use rustls::crypto::aws_lc_rs;
 use skyvault::{Config, metadata, storage};
+use std::sync::Arc;
 use tracing::info;
 use tracing::level_filters::LevelFilter;
 
@@ -21,7 +22,7 @@ async fn main() -> Result<()> {
     info!(config = ?config, version = version, "Starting skyvault");
 
     // Create metadata client
-    let metadata = metadata::MetadataStore::new(config.metadata_url.clone()).await?;
+    let metadata = Arc::new(metadata::PostgresMetadataStore::new(config.metadata_url.clone()).await?);
 
     // Create S3 client with path style URLs
     let aws_config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
@@ -29,7 +30,7 @@ async fn main() -> Result<()> {
         .force_path_style(true)
         .build();
     let s3_client = S3Client::from_conf(s3_config);
-    let storage = storage::ObjectStore::new(s3_client, &config.bucket_name).await?;
+    let storage = Arc::new(storage::S3ObjectStore::new(s3_client, &config.bucket_name).await?);
 
     skyvault::server(config, metadata, storage)
         .await
