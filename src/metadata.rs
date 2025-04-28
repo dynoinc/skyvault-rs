@@ -382,7 +382,7 @@ impl MetadataStore {
         .into_iter()
         .map(|row| {
             let job_params: JobParams =
-                serde_json::from_value(row.job).map_err(|e| MetadataError::JsonSerdeError(e))?;
+                serde_json::from_value(row.job).map_err(MetadataError::JsonSerdeError)?;
             Ok((row.id, job_params))
         })
         .collect::<Result<Vec<(i64, JobParams)>, MetadataError>>()?;
@@ -396,7 +396,7 @@ impl MetadataStore {
             .await?;
 
         let params: JobParams =
-            serde_json::from_value(row.job).map_err(|e| MetadataError::JsonSerdeError(e))?;
+            serde_json::from_value(row.job).map_err(MetadataError::JsonSerdeError)?;
 
         Ok(params)
     }

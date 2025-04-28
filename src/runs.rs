@@ -422,7 +422,7 @@ mod tests {
             WriteOperation::Put("banana".to_string(), value("yellow")),
         ];
 
-        let (data, stats) = build_run(stream::iter(ops.into_iter().map(|op| Ok(op))))
+        let (data, stats) = build_run(stream::iter(ops.into_iter().map(Ok)))
             .await
             .unwrap();
         match stats {
@@ -450,7 +450,7 @@ mod tests {
             WriteOperation::Delete("banana".to_string()),           // Kept
             WriteOperation::Put("banana".to_string(), value("yellow")), // Overwritten by delete
         ];
-        let (data, stats) = build_run(stream::iter(ops.into_iter().map(|op| Ok(op))))
+        let (data, stats) = build_run(stream::iter(ops.into_iter().map(Ok)))
             .await
             .unwrap();
         match stats {
@@ -466,7 +466,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_run_empty_input() {
         let ops: Vec<WriteOperation> = vec![];
-        let result = build_run(stream::iter(ops.into_iter().map(|op| Ok(op)))).await;
+        let result = build_run(stream::iter(ops.into_iter().map(Ok))).await;
         assert!(matches!(result, Err(RunError::EmptyInput)));
     }
 
@@ -477,7 +477,7 @@ mod tests {
             WriteOperation::Put("banana".to_string(), value("yellow")),
             WriteOperation::Put("cherry".to_string(), value("red")),
         ];
-        let (data, _) = build_run(stream::iter(ops.into_iter().map(|op| Ok(op))))
+        let (data, _) = build_run(stream::iter(ops.into_iter().map(Ok)))
             .await
             .unwrap();
 
@@ -502,7 +502,7 @@ mod tests {
             WriteOperation::Delete("banana".to_string()),
             WriteOperation::Put("cherry".to_string(), value("red")),
         ];
-        let (data, _) = build_run(stream::iter(ops.into_iter().map(|op| Ok(op))))
+        let (data, _) = build_run(stream::iter(ops.into_iter().map(Ok)))
             .await
             .unwrap();
 
@@ -519,7 +519,7 @@ mod tests {
             WriteOperation::Put("banana".to_string(), value("yellow")),
             WriteOperation::Put("date".to_string(), value("brown")),
         ];
-        let (data, _) = build_run(stream::iter(ops.into_iter().map(|op| Ok(op))))
+        let (data, _) = build_run(stream::iter(ops.into_iter().map(Ok)))
             .await
             .unwrap();
 
@@ -556,7 +556,7 @@ mod tests {
 
         // Using into_iter()
         let ops_copy = ops.clone();
-        let (data1, _) = build_run(stream::iter(ops_copy.into_iter().map(|op| Ok(op))))
+        let (data1, _) = build_run(stream::iter(ops_copy.into_iter().map(Ok)))
             .await
             .unwrap();
 
@@ -565,7 +565,7 @@ mod tests {
             WriteOperation::Put("apple".to_string(), value("red")),
             WriteOperation::Put("banana".to_string(), value("yellow")),
         ];
-        let (data2, _) = build_run(stream::iter(array_ops.into_iter().map(|op| Ok(op))))
+        let (data2, _) = build_run(stream::iter(array_ops.into_iter().map(Ok)))
             .await
             .unwrap();
 

@@ -106,7 +106,7 @@ impl MyWriter {
             .map(|op| (op.key().to_string(), op))
             .collect::<BTreeMap<_, _>>();
 
-        let ops_stream = futures::stream::iter(sorted_ops.into_values().map(|op| Ok(op)));
+        let ops_stream = futures::stream::iter(sorted_ops.into_values().map(Ok));
         let (data, stats) = crate::runs::build_run(ops_stream).await?;
         storage.put_run(&run_id, data).await?;
 

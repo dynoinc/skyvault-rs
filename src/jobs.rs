@@ -71,12 +71,7 @@ async fn execute_wal_compaction(
     let run_data = stream::iter(run_ids_and_seqno.clone())
         .map(|(run_id, _)| {
             let store = object_store.clone();
-            async move {
-                store
-                    .get_run(&run_id)
-                    .await
-                    .map_err(|err| JobError::Storage(err))
-            }
+            async move { store.get_run(&run_id).await.map_err(JobError::Storage) }
         })
         .buffered(count)
         .try_collect::<Vec<_>>()
@@ -92,13 +87,7 @@ async fn execute_wal_compaction(
                     match bs.try_next().await {
                         Ok(Some(bytes)) => Some((Ok(bytes), bs)),
                         Ok(None) => None,
-                        Err(e) => Some((
-                            Err(std::io::Error::new(
-                                std::io::ErrorKind::Other,
-                                e.to_string(),
-                            )),
-                            bs,
-                        )),
+                        Err(e) => Some((Err(std::io::Error::other(e.to_string())), bs)),
                     }
                 })
             });
@@ -115,7 +104,7 @@ async fn execute_wal_compaction(
 
     impl Ord for HeapItem {
         fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-            match self.op.key().cmp(&other.op.key()) {
+            match self.op.key().cmp(other.op.key()) {
                 std::cmp::Ordering::Equal => other.seq_no.cmp(&self.seq_no), // Higher seq_no first
                 ord => ord.reverse(),                                        // Min-heap by key
             }
@@ -194,12 +183,7 @@ async fn execute_wal_compaction(
 
         // Return a stream that consumes from the receiver
         stream::unfold(rx, |mut rx| {
-            Box::pin(async move {
-                match rx.recv().await {
-                    Some(item) => Some((item, rx)),
-                    None => None,
-                }
-            })
+            Box::pin(async move { rx.recv().await.map(|item| (item, rx)) })
         })
     };
 
@@ -209,8 +193,8 @@ async fn execute_wal_compaction(
 
     let compacted = run_metadatas.keys().cloned().collect::<Vec<_>>();
     let smallest_seq_no = run_metadatas
-        .iter()
-        .map(|(_, metadata)| match metadata.belongs_to {
+        .values()
+        .map(|metadata| match metadata.belongs_to {
             BelongsTo::WalSeqNo(seqno) => seqno,
             BelongsTo::TableName(_) => {
                 panic!("Run ID {} belongs to table, not WAL", metadata.id)
