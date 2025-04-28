@@ -6,35 +6,13 @@ use futures::Stream;
 use futures::stream::{self, StreamExt, TryStreamExt};
 use tokio::sync::mpsc;
 
-use crate::metadata::{BelongsTo, ChangelogEntry, JobParams, MetadataError, MetadataStore};
+use crate::metadata::{BelongsTo, ChangelogEntry, MetadataStore};
 use crate::runs::{RunError, WriteOperation};
-use crate::storage::{ObjectStore, StorageError};
+use crate::storage::ObjectStore;
 
-#[derive(Debug, thiserror::Error)]
-pub enum JobError {
-    #[error("Metadata error: {0}")]
-    Metadata(#[from] MetadataError),
+use super::JobError;
 
-    #[error("Storage error: {0}")]
-    Storage(#[from] StorageError),
-
-    #[error("Run error: {0}")]
-    Run(#[from] RunError),
-}
-
-pub async fn execute(
-    metadata_store: MetadataStore,
-    object_store: ObjectStore,
-    job_id: i64,
-) -> Result<(), JobError> {
-    let job_params = metadata_store.get_job(job_id).await?;
-
-    match job_params {
-        JobParams::WALCompaction => execute_wal_compaction(metadata_store, object_store).await,
-    }
-}
-
-async fn execute_wal_compaction(
+pub async fn execute_wal_compaction(
     metadata_store: MetadataStore,
     object_store: ObjectStore,
 ) -> Result<(), JobError> {
@@ -207,4 +185,4 @@ async fn execute_wal_compaction(
         .compact_wal(compacted, smallest_seq_no, run_id, stats)
         .await?;
     Ok(())
-}
+} 
