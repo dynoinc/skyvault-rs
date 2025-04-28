@@ -26,6 +26,9 @@ pub enum MetadataError {
 
     #[error("Some runs were already marked as deleted")]
     AlreadyDeleted(String),
+
+    #[error("Job is not in pending state")]
+    InvalidJobState(String),
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
@@ -129,11 +132,12 @@ pub trait MetadataStoreTrait: Send + Sync + 'static {
         stats: crate::runs::Stats,
     ) -> Result<(), MetadataError>;
 
-    async fn compact_wal(
+    async fn append_compaction(
         &self,
+        job_id: i64,
         compacted: Vec<String>,
-        seq_no: i64,
         new_run_id: String,
+        belongs_to: BelongsTo,
         new_stats: crate::runs::Stats,
     ) -> Result<(), MetadataError>;
 
@@ -282,11 +286,12 @@ impl MetadataStoreTrait for PostgresMetadataStore {
         Ok(())
     }
 
-    async fn compact_wal(
+    async fn append_compaction(
         &self,
+        job_id: i64,
         compacted: Vec<String>,
-        seq_no: i64,
         new_run_id: String,
+        belongs_to: BelongsTo,
         new_stats: crate::runs::Stats,
     ) -> Result<(), MetadataError> {
         let mut transaction = self.pg_pool.begin().await?;
@@ -315,6 +320,29 @@ impl MetadataStoreTrait for PostgresMetadataStore {
             ));
         }
 
+        // Mark the job as completed if it's pending
+        let job_result = sqlx::query!(
+            r#"
+            WITH updated_jobs AS (
+                UPDATE jobs
+                SET status = 'completed'
+                WHERE id = $1 AND status = 'pending'
+                RETURNING id
+            )
+            SELECT COUNT(*) FROM updated_jobs
+            "#,
+            job_id
+        )
+        .fetch_one(&mut *transaction)
+        .await?;
+
+        // Check if we updated exactly one job
+        if job_result.count.unwrap_or(0) != 1 {
+            return Err(MetadataError::InvalidJobState(
+                format!("Job {} is not in pending state", job_id)
+            ));
+        }
+
         sqlx::query_as!(
             ChangelogEntryWithID,
             r#"
@@ -336,7 +364,7 @@ impl MetadataStoreTrait for PostgresMetadataStore {
             VALUES ($1, $2, $3)
             "#,
             new_run_id,
-            serde_json::to_value(BelongsTo::WalSeqNo(seq_no))?,
+            serde_json::to_value(belongs_to)?,
             serde_json::to_value(new_stats.clone())?
         )
         .execute(&mut *transaction)

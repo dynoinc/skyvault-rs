@@ -184,6 +184,7 @@ where
 pub async fn execute_wal_compaction(
     metadata_store: MetadataStore,
     object_store: ObjectStore,
+    job_id: i64,
 ) -> Result<(), JobError> {
     let (changelog_snapshot, _) = metadata_store.get_changelog_snapshot().await?;
 
@@ -263,7 +264,7 @@ pub async fn execute_wal_compaction(
         .unwrap();
 
     metadata_store
-        .compact_wal(compacted, smallest_seq_no, run_id, stats)
+        .append_compaction(job_id, compacted, run_id, BelongsTo::WalSeqNo(smallest_seq_no), stats)
         .await?;
     Ok(())
 }
