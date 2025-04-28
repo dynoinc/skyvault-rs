@@ -114,7 +114,7 @@ where
 
         // Check if keys are sorted
         if let Some(ref last) = last_key {
-            if current_key < *last {
+            if current_key <= *last {
                 return Err(RunError::Format(
                     "Operations must be sorted by key".to_string(),
                 ));
@@ -442,25 +442,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_create_run_with_delete_and_duplicates() {
+    async fn test_create_run_with_duplicates() {
         let ops = vec![
-            WriteOperation::Put("apple".to_string(), value("green")), // Overwritten
-            WriteOperation::Put("cherry".to_string(), value("red")),
-            WriteOperation::Put("apple".to_string(), value("red")), // Kept
-            WriteOperation::Delete("banana".to_string()),           // Kept
-            WriteOperation::Put("banana".to_string(), value("yellow")), // Overwritten by delete
+            WriteOperation::Put("apple".to_string(), value("green")),
+            WriteOperation::Put("apple".to_string(), value("red")),
         ];
-        let (data, stats) = build_run(stream::iter(ops.into_iter().map(Ok)))
-            .await
-            .unwrap();
-        match stats {
-            Stats::StatsV1(stats) => {
-                assert_eq!(stats.min_key, "apple");
-                assert_eq!(stats.max_key, "cherry");
-                assert_eq!(stats.size_bytes, 57);
-            },
-        }
-        assert_eq!(data[0], 1); // Version
+        let result = build_run(stream::iter(ops.into_iter().map(Ok))).await;
+        assert!(matches!(result, Err(RunError::Format(_))));
     }
 
     #[tokio::test]

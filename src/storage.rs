@@ -14,13 +14,13 @@ use thiserror::Error;
 #[derive(Error, Debug)]
 pub enum StorageError {
     #[error("Create bucket error: {0}")]
-    CreateBucketError(#[from] SdkError<CreateBucketError, HttpResponse>),
+    CreateBucketError(#[from] Box<SdkError<CreateBucketError, HttpResponse>>),
 
     #[error("Put object error: {0}")]
-    PutObjectError(#[from] SdkError<PutObjectError, HttpResponse>),
+    PutObjectError(#[from] Box<SdkError<PutObjectError, HttpResponse>>),
 
     #[error("Get object error: {0}")]
-    GetObjectError(#[from] SdkError<GetObjectError, HttpResponse>),
+    GetObjectError(#[from] Box<SdkError<GetObjectError, HttpResponse>>),
 
     #[error("Get object failed to read body: {0}")]
     GetObjectReadBodyError(#[from] ByteStreamError),
@@ -30,6 +30,24 @@ pub enum StorageError {
 
     #[error("I/O error: {0}")]
     IoError(#[from] std::io::Error),
+}
+
+impl From<SdkError<CreateBucketError, HttpResponse>> for StorageError {
+    fn from(err: SdkError<CreateBucketError, HttpResponse>) -> Self {
+        StorageError::CreateBucketError(Box::new(err))
+    }
+}
+
+impl From<SdkError<PutObjectError, HttpResponse>> for StorageError {
+    fn from(err: SdkError<PutObjectError, HttpResponse>) -> Self {
+        StorageError::PutObjectError(Box::new(err))
+    }
+}
+
+impl From<SdkError<GetObjectError, HttpResponse>> for StorageError {
+    fn from(err: SdkError<GetObjectError, HttpResponse>) -> Self {
+        StorageError::GetObjectError(Box::new(err))
+    }
 }
 
 #[derive(Clone)]
@@ -47,7 +65,7 @@ impl ObjectStore {
             Err(SdkError::ServiceError(err))
                 if err.err().is_bucket_already_exists()
                     || err.err().is_bucket_already_owned_by_you() => {},
-            Err(err) => return Err(StorageError::CreateBucketError(err)),
+            Err(err) => return Err(StorageError::CreateBucketError(Box::new(err))),
         }
 
         Ok(Self {
@@ -72,7 +90,7 @@ impl ObjectStore {
             .await
         {
             Ok(_) => Ok(()),
-            Err(err) => Err(StorageError::PutObjectError(err)),
+            Err(err) => Err(StorageError::PutObjectError(Box::new(err))),
         }
     }
 
@@ -93,7 +111,7 @@ impl ObjectStore {
                         return Err(StorageError::NotFound(key));
                     }
                 }
-                return Err(StorageError::GetObjectError(err));
+                return Err(StorageError::GetObjectError(Box::new(err)));
             },
         };
 

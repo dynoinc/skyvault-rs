@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            WITH updated_runs AS (\n                UPDATE runs\n                SET deleted_at = NOW()\n                WHERE id = ANY($1)\n                AND deleted_at IS NULL\n                RETURNING id\n            )\n            SELECT COUNT(*) FROM updated_runs\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "da6941013f9902a2393e9bdcfaa74ffba670c1011a14df508ddadb139a241b4e"
+}
