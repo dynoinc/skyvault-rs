@@ -161,6 +161,7 @@ impl ReaderService for MyReader {
         for table_response in wal_response.into_inner().tables {
             let table_name = table_response.table_name;
             let items = table_response.items;
+            let prefix_len = table_name.len() + 1;
 
             let mut table_response = proto::TableReadBatchResponse {
                 table_name,
@@ -171,7 +172,7 @@ impl ReaderService for MyReader {
                 match item.result {
                     Some(proto::get_from_wal_item::Result::Value(value)) => {
                         table_response.items.push(proto::GetBatchItem {
-                            key: item.key,
+                            key: item.key[prefix_len..].to_string(),
                             value,
                         });
                     },
