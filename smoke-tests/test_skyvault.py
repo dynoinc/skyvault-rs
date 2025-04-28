@@ -118,9 +118,17 @@ def trigger_compaction(stub):
     """Sends a KickOffWALCompaction request."""
     request = skyvault_pb2.KickOffWALCompactionRequest()
     response = stub.KickOffWALCompaction(request, timeout=20)
-    # Add a small delay to allow compaction process to potentially start
-    time.sleep(5)
-    return response
+    
+    # Wait for compaction job to complete with timeout
+    start_time = time.time()
+    while time.time() - start_time < 5:
+        status_request = skyvault_pb2.GetJobStatusRequest(job_id=response.job_id)
+        status_response = stub.GetJobStatus(status_request, timeout=10)
+        if status_response.status == "completed":
+            return response
+        time.sleep(0.5)
+    
+    raise TimeoutError("Compaction job did not complete within 5 seconds")
 
 
 #

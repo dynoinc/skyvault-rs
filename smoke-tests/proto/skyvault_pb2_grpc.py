@@ -243,6 +243,11 @@ class OrchestratorServiceStub(object):
                 request_serializer=proto_dot_skyvault__pb2.KickOffWALCompactionRequest.SerializeToString,
                 response_deserializer=proto_dot_skyvault__pb2.KickOffWALCompactionResponse.FromString,
                 _registered_method=True)
+        self.GetJobStatus = channel.unary_unary(
+                '/skyvault.OrchestratorService/GetJobStatus',
+                request_serializer=proto_dot_skyvault__pb2.GetJobStatusRequest.SerializeToString,
+                response_deserializer=proto_dot_skyvault__pb2.GetJobStatusResponse.FromString,
+                _registered_method=True)
 
 
 class OrchestratorServiceServicer(object):
@@ -267,6 +272,12 @@ class OrchestratorServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def GetJobStatus(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_OrchestratorServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -284,6 +295,11 @@ def add_OrchestratorServiceServicer_to_server(servicer, server):
                     servicer.KickOffWALCompaction,
                     request_deserializer=proto_dot_skyvault__pb2.KickOffWALCompactionRequest.FromString,
                     response_serializer=proto_dot_skyvault__pb2.KickOffWALCompactionResponse.SerializeToString,
+            ),
+            'GetJobStatus': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetJobStatus,
+                    request_deserializer=proto_dot_skyvault__pb2.GetJobStatusRequest.FromString,
+                    response_serializer=proto_dot_skyvault__pb2.GetJobStatusResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -368,6 +384,33 @@ class OrchestratorService(object):
             '/skyvault.OrchestratorService/KickOffWALCompaction',
             proto_dot_skyvault__pb2.KickOffWALCompactionRequest.SerializeToString,
             proto_dot_skyvault__pb2.KickOffWALCompactionResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetJobStatus(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/skyvault.OrchestratorService/GetJobStatus',
+            proto_dot_skyvault__pb2.GetJobStatusRequest.SerializeToString,
+            proto_dot_skyvault__pb2.GetJobStatusResponse.FromString,
             options,
             channel_credentials,
             insecure,

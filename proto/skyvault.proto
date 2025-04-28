@@ -82,12 +82,22 @@ service OrchestratorService {
   rpc ListRuns (ListRunsRequest) returns (ListRunsResponse);
   rpc DumpChangelog (DumpChangelogRequest) returns (DumpChangelogResponse);
   rpc KickOffWALCompaction (KickOffWALCompactionRequest) returns (KickOffWALCompactionResponse);
+  rpc GetJobStatus (GetJobStatusRequest) returns (GetJobStatusResponse);
 }
 
 message KickOffWALCompactionRequest {
 }
 
 message KickOffWALCompactionResponse {
+  int64 job_id = 1;
+}
+
+message GetJobStatusRequest {
+  int64 job_id = 1;
+}
+
+message GetJobStatusResponse {
+  string status = 1;
 }
 
 message ListRunsRequest {

@@ -103,8 +103,22 @@ class KickOffWALCompactionRequest(_message.Message):
     def __init__(self) -> None: ...
 
 class KickOffWALCompactionResponse(_message.Message):
-    __slots__ = ()
-    def __init__(self) -> None: ...
+    __slots__ = ("job_id",)
+    JOB_ID_FIELD_NUMBER: _ClassVar[int]
+    job_id: int
+    def __init__(self, job_id: _Optional[int] = ...) -> None: ...
+
+class GetJobStatusRequest(_message.Message):
+    __slots__ = ("job_id",)
+    JOB_ID_FIELD_NUMBER: _ClassVar[int]
+    job_id: int
+    def __init__(self, job_id: _Optional[int] = ...) -> None: ...
+
+class GetJobStatusResponse(_message.Message):
+    __slots__ = ("status",)
+    STATUS_FIELD_NUMBER: _ClassVar[int]
+    status: str
+    def __init__(self, status: _Optional[str] = ...) -> None: ...
 
 class ListRunsRequest(_message.Message):
     __slots__ = ()

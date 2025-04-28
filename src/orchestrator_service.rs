@@ -7,8 +7,8 @@ use crate::forest::{Forest, ForestError};
 use crate::metadata::{JobParams, MetadataStore};
 use crate::proto::orchestrator_service_server::OrchestratorService;
 use crate::proto::{
-    self, DumpChangelogRequest, DumpChangelogResponse, KickOffWalCompactionRequest,
-    KickOffWalCompactionResponse, ListRunsRequest, ListRunsResponse,
+    self, DumpChangelogRequest, DumpChangelogResponse, GetJobStatusRequest, GetJobStatusResponse,
+    KickOffWalCompactionRequest, KickOffWalCompactionResponse, ListRunsRequest, ListRunsResponse,
 };
 
 #[derive(Clone)]
@@ -230,11 +230,27 @@ impl OrchestratorService for MyOrchestrator {
         &self,
         _request: Request<KickOffWalCompactionRequest>,
     ) -> Result<Response<KickOffWalCompactionResponse>, Status> {
-        if let Err(e) = self.metadata.schedule_wal_compaction().await {
-            tracing::error!("Failed to schedule WAL compaction: {}", e);
-            return Err(Status::internal(e.to_string()));
-        }
+        let job_id = match self.metadata.schedule_wal_compaction().await {
+            Ok(job_id) => job_id,
+            Err(e) => {
+                tracing::error!("Failed to schedule WAL compaction: {}", e);
+                return Err(Status::internal(e.to_string()));
+            },
+        };
 
-        Ok(Response::new(KickOffWalCompactionResponse {}))
+        Ok(Response::new(KickOffWalCompactionResponse { job_id }))
+    }
+
+    async fn get_job_status(
+        &self,
+        _request: Request<GetJobStatusRequest>,
+    ) -> Result<Response<GetJobStatusResponse>, Status> {
+        let job_id = _request.into_inner().job_id;
+        let status = match self.metadata.get_job_status(job_id).await {
+            Ok(status) => status,
+            Err(e) => return Err(Status::internal(e.to_string())),
+        };
+
+        Ok(Response::new(GetJobStatusResponse { status }))
     }
 }

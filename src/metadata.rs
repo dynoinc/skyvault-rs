@@ -146,7 +146,9 @@ pub trait MetadataStoreTrait: Send + Sync + 'static {
         run_ids: Vec<String>,
     ) -> Result<HashMap<String, RunMetadata>, MetadataError>;
 
-    async fn schedule_wal_compaction(&self) -> Result<(), MetadataError>;
+    async fn schedule_wal_compaction(&self) -> Result<i64, MetadataError>;
+
+    async fn get_job_status(&self, job_id: i64) -> Result<String, MetadataError>;
 
     async fn get_pending_jobs(&self) -> Result<Vec<(i64, JobParams)>, MetadataError>;
 
@@ -412,7 +414,7 @@ impl MetadataStoreTrait for PostgresMetadataStore {
             .collect())
     }
 
-    async fn schedule_wal_compaction(&self) -> Result<(), MetadataError> {
+    async fn schedule_wal_compaction(&self) -> Result<i64, MetadataError> {
         let mut transaction = self.pg_pool.begin().await?;
 
         // Check if there's already a wal_compaction job in pending or running state
@@ -427,23 +429,41 @@ impl MetadataStoreTrait for PostgresMetadataStore {
         .fetch_optional(&mut *transaction)
         .await?;
 
-        // Only insert if no existing job was found
-        if existing_job.is_none() {
-            sqlx::query!(
+        // Get job_id from existing job or create a new one
+        let job_id = if let Some(job) = existing_job {
+            job.id
+        } else {
+            let result = sqlx::query!(
                 r#"
                 INSERT INTO jobs (typ, job)
                 VALUES ($1, $2)
+                RETURNING id
                 "#,
                 "wal_compaction",
                 serde_json::to_value(JobParams::WALCompaction)?
             )
-            .execute(&mut *transaction)
+            .fetch_one(&mut *transaction)
             .await?;
-        }
+
+            result.id
+        };
 
         transaction.commit().await?;
 
-        Ok(())
+        Ok(job_id)
+    }
+
+    async fn get_job_status(&self, job_id: i64) -> Result<String, MetadataError> {
+        let row = sqlx::query!(
+            r#"
+            SELECT status FROM jobs WHERE id = $1
+            "#,
+            job_id
+        )
+        .fetch_one(&self.pg_pool)
+        .await?;
+
+        Ok(row.status)
     }
 
     async fn get_pending_jobs(&self) -> Result<Vec<(i64, JobParams)>, MetadataError> {
