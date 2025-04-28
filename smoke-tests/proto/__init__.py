@@ -1,6 +1,7 @@
 import sys
 import pathlib
 
+
 def _compile_proto():
     """Compiles Protocol Buffer files if the generated Python modules don't exist."""
     import grpc_tools.protoc
@@ -9,13 +10,11 @@ def _compile_proto():
     script_dir = pathlib.Path(__file__).parent.resolve()  # proto/
     smoke_tests_dir = script_dir.parent  # smoke-tests/
     project_root = smoke_tests_dir.parent  # skyvault-rs/
-    proto_dir = project_root / "proto"  # proto/ in project root
-    proto_file = proto_dir / "skyvault.proto"
     generated_dir = script_dir.parent
 
     # Include path for the directory containing skyvault.proto
     proto_include_proj = f"-I{project_root.resolve()}"
-    
+
     # Include path for google/protobuf/empty.proto
     try:
         protobuf_include_path = (
@@ -34,21 +33,24 @@ def _compile_proto():
         f"--pyi_out={generated_dir.resolve()}",  # Generate .pyi stub files
         f"--grpc_python_out={generated_dir.resolve()}",
         # Use absolute path to the proto file since it's outside smoke-tests
-        f"proto/skyvault.proto",
+        "proto/skyvault.proto",
     ]
 
     # Compile proto files
     exit_code = grpc_tools.protoc.main(command)
-    
+
     if exit_code != 0:
-        print(f"Error: protoc command failed with exit code {exit_code}", file=sys.stderr)
+        print(
+            f"Error: protoc command failed with exit code {exit_code}", file=sys.stderr
+        )
         return False
-    
+
     return True
+
 
 # Compile proto on import
 _proto_compiled = _compile_proto()
 
 # Clean up namespace
 del _compile_proto
-del _proto_compiled 
+del _proto_compiled
