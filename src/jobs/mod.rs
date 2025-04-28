@@ -28,4 +28,4 @@ pub async fn execute(
     match job_params {
         JobParams::WALCompaction => execute_wal_compaction(metadata_store, object_store).await,
     }
-} 
+}

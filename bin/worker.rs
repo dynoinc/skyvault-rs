@@ -1,9 +1,10 @@
+use std::sync::Arc;
+
 use anyhow::Result;
 use aws_sdk_s3::Client as S3Client;
 use clap::Parser;
 use rustls::crypto::aws_lc_rs;
 use skyvault::{jobs, metadata, storage};
-use std::sync::Arc;
 use tracing::info;
 use tracing::level_filters::LevelFilter;
 

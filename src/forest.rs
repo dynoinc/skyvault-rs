@@ -50,9 +50,7 @@ impl Forest {
 
         let run_ids = wal_runs.into_iter().collect::<Vec<_>>();
         let run_metadatas = metadata_store.get_run_metadata_batch(run_ids).await?;
-        let mut wal: Vec<metadata::RunMetadata> = run_metadatas
-            .into_values()
-            .collect();
+        let mut wal: Vec<metadata::RunMetadata> = run_metadatas.into_values().collect();
 
         wal.sort_by(|a, b| {
             match (&a.belongs_to, &b.belongs_to) {

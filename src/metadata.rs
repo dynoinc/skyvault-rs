@@ -115,12 +115,10 @@ struct Job {
 
 #[async_trait::async_trait]
 pub trait MetadataStoreTrait: Send + Sync + 'static {
-    async fn get_changelog_snapshot(
-        &self,
-    ) -> Result<(Vec<ChangelogEntry>, i64), MetadataError>;
+    async fn get_changelog_snapshot(&self) -> Result<(Vec<ChangelogEntry>, i64), MetadataError>;
 
     type ChangelogStream: Stream<Item = Result<ChangelogEntry, MetadataError>> + Send + 'static;
-    
+
     async fn get_changelog(
         &self,
     ) -> Result<(Vec<ChangelogEntry>, Self::ChangelogStream), MetadataError>;
@@ -151,7 +149,13 @@ pub trait MetadataStoreTrait: Send + Sync + 'static {
     async fn get_job(&self, job_id: i64) -> Result<JobParams, MetadataError>;
 }
 
-pub type MetadataStore = Arc<dyn MetadataStoreTrait<ChangelogStream = Pin<Box<dyn Stream<Item = Result<ChangelogEntry, MetadataError>> + Send + 'static>>>>;
+pub type MetadataStore = Arc<
+    dyn MetadataStoreTrait<
+        ChangelogStream = Pin<
+            Box<dyn Stream<Item = Result<ChangelogEntry, MetadataError>> + Send + 'static>,
+        >,
+    >,
+>;
 
 #[derive(Clone)]
 pub struct PostgresMetadataStore {
@@ -176,9 +180,7 @@ impl PostgresMetadataStore {
 #[async_trait::async_trait]
 impl MetadataStoreTrait for PostgresMetadataStore {
     /// Fetches all existing changelog entries and returns them as a vector.
-    async fn get_changelog_snapshot(
-        &self,
-    ) -> Result<(Vec<ChangelogEntry>, i64), MetadataError> {
+    async fn get_changelog_snapshot(&self) -> Result<(Vec<ChangelogEntry>, i64), MetadataError> {
         let entries = sqlx::query_as!(
             ChangelogEntryWithID,
             "SELECT * FROM changelog ORDER BY id ASC"
@@ -190,18 +192,19 @@ impl MetadataStoreTrait for PostgresMetadataStore {
         Ok((entries.into_iter().map(|e| e.changes).collect(), last_id))
     }
 
-    type ChangelogStream = Pin<Box<dyn Stream<Item = Result<ChangelogEntry, MetadataError>> + Send + 'static>>;
-    
+    type ChangelogStream =
+        Pin<Box<dyn Stream<Item = Result<ChangelogEntry, MetadataError>> + Send + 'static>>;
+
     /// Returns a snapshot of existing changelog entries and a stream of new entries.
     /// The stream continuously polls for new entries after reaching the end of the snapshot.
     async fn get_changelog(
         &self,
     ) -> Result<(Vec<ChangelogEntry>, Self::ChangelogStream), MetadataError> {
         let (snapshot, mut last_id) = self.get_changelog_snapshot().await?;
-        
+
         // Clone pg_pool to avoid lifetime issues
         let pg_pool = self.pg_pool.clone();
-        
+
         let stream = stream! {
             loop {
                 let new_entries = sqlx::query_as!(
