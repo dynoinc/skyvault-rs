@@ -130,12 +130,17 @@ message RunMetadata {
 
   oneof belongs_to {
     int64 wal_seqno = 2;
-    string table_name = 3;
+    TableTree table_tree = 3;
   };
 
   oneof stats {
     StatsV1 stats_v1 = 1001;
   }
+}
+
+message TableTree {
+  string table_name = 1;
+  uint64 level = 2;
 }
 
 message StatsV1 {

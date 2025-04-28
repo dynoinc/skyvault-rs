@@ -34,15 +34,15 @@ pub enum MetadataError {
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub enum BelongsTo {
     WalSeqNo(i64),
-    TableName(String),
+    TableTree(String, u64),
 }
 
 impl From<BelongsTo> for proto::run_metadata::BelongsTo {
     fn from(belongs_to: BelongsTo) -> Self {
         match belongs_to {
             BelongsTo::WalSeqNo(seq_no) => proto::run_metadata::BelongsTo::WalSeqno(seq_no),
-            BelongsTo::TableName(table_name) => {
-                proto::run_metadata::BelongsTo::TableName(table_name)
+            BelongsTo::TableTree(table_name, level) => {
+                proto::run_metadata::BelongsTo::TableTree(proto::TableTree { table_name, level })
             },
         }
     }

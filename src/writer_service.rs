@@ -127,8 +127,10 @@ impl WriterService for MyWriter {
 
         let mut ops: Vec<crate::runs::WriteOperation> = Vec::new();
         for mut table in req.into_inner().tables.drain(..) {
-            if table.table_name.is_empty() {
-                return Err(Status::invalid_argument("Table name cannot be empty"));
+            if table.table_name.is_empty() || table.table_name.contains(".") {
+                return Err(Status::invalid_argument(
+                    "Table name cannot be empty or contain a dot",
+                ));
             }
 
             for item in table.items.drain(..) {

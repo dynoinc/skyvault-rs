@@ -202,6 +202,10 @@ pub async fn execute_wal_compaction(
         }
     }
 
+    if wal_runs.is_empty() {
+        return Ok(());
+    }
+
     let run_ids = wal_runs.into_iter().collect::<Vec<_>>();
     let run_metadatas = metadata_store.get_run_metadata_batch(run_ids).await?;
     let run_ids_and_seqno = run_metadatas
@@ -209,7 +213,7 @@ pub async fn execute_wal_compaction(
         .map(|metadata| {
             (metadata.id.clone(), match metadata.belongs_to {
                 BelongsTo::WalSeqNo(seqno) => seqno,
-                BelongsTo::TableName(_) => {
+                BelongsTo::TableTree(_, _) => {
                     panic!("Run ID {} belongs to table, not WAL", metadata.id)
                 },
             })
@@ -252,15 +256,11 @@ pub async fn execute_wal_compaction(
     object_store.put_run(&run_id, run_data).await?;
 
     let compacted = run_metadatas.keys().cloned().collect::<Vec<_>>();
-    let smallest_seq_no = run_metadatas
-        .values()
-        .map(|metadata| match metadata.belongs_to {
-            BelongsTo::WalSeqNo(seqno) => seqno,
-            BelongsTo::TableName(_) => {
-                panic!("Run ID {} belongs to table, not WAL", metadata.id)
-            },
-        })
+    let smallest_seq_no = run_ids_and_seqno
+        .iter()
+        .map(|(_, seqno)| seqno)
         .min()
+        .cloned()
         .unwrap();
 
     metadata_store

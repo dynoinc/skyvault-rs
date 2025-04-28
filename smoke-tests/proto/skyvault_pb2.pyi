@@ -155,16 +155,24 @@ class ChangelogEntryV1(_message.Message):
     def __init__(self, runs_added: _Optional[_Iterable[str]] = ..., runs_removed: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class RunMetadata(_message.Message):
-    __slots__ = ("id", "wal_seqno", "table_name", "stats_v1")
+    __slots__ = ("id", "wal_seqno", "table_tree", "stats_v1")
     ID_FIELD_NUMBER: _ClassVar[int]
     WAL_SEQNO_FIELD_NUMBER: _ClassVar[int]
-    TABLE_NAME_FIELD_NUMBER: _ClassVar[int]
+    TABLE_TREE_FIELD_NUMBER: _ClassVar[int]
     STATS_V1_FIELD_NUMBER: _ClassVar[int]
     id: str
     wal_seqno: int
-    table_name: str
+    table_tree: TableTree
     stats_v1: StatsV1
-    def __init__(self, id: _Optional[str] = ..., wal_seqno: _Optional[int] = ..., table_name: _Optional[str] = ..., stats_v1: _Optional[_Union[StatsV1, _Mapping]] = ...) -> None: ...
+    def __init__(self, id: _Optional[str] = ..., wal_seqno: _Optional[int] = ..., table_tree: _Optional[_Union[TableTree, _Mapping]] = ..., stats_v1: _Optional[_Union[StatsV1, _Mapping]] = ...) -> None: ...
+
+class TableTree(_message.Message):
+    __slots__ = ("table_name", "level")
+    TABLE_NAME_FIELD_NUMBER: _ClassVar[int]
+    LEVEL_FIELD_NUMBER: _ClassVar[int]
+    table_name: str
+    level: int
+    def __init__(self, table_name: _Optional[str] = ..., level: _Optional[int] = ...) -> None: ...
 
 class StatsV1(_message.Message):
     __slots__ = ("min_key", "max_key", "size_bytes", "item_count")
