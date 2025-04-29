@@ -1,4 +1,4 @@
-FROM rust:latest as builder
+FROM rust:latest AS builder
 
 # Install protobuf compiler and dependencies for sccache
 RUN apt-get update && apt-get install -y protobuf-compiler pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
@@ -23,7 +23,7 @@ RUN cargo build
 RUN rm -rf src bin proto target/debug/deps/skyvault* target/debug/deps/worker*
 COPY . .
 
-ENV SQLX_OFFLINE true
+ENV SQLX_OFFLINE=true
 RUN cargo build
 
 # Runtime stage

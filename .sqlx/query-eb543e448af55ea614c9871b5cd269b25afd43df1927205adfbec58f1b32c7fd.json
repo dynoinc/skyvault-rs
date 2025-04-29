@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                INSERT INTO runs (id, belongs_to, stats)\n                SELECT * FROM UNNEST($1::text[], $2::jsonb[], $3::jsonb[])\n                ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "TextArray",
+        "JsonbArray",
+        "JsonbArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "eb543e448af55ea614c9871b5cd269b25afd43df1927205adfbec58f1b32c7fd"
+}

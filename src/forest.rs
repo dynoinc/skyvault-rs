@@ -17,10 +17,16 @@ pub enum ForestError {
     Internal(String),
 }
 
+#[derive(Default, Clone)]
+pub struct Table {
+    pub buffer: BTreeMap<i64, metadata::RunMetadata>,
+    pub tree: BTreeMap<u64, BTreeMap<String, metadata::RunMetadata>>,
+}
+
 #[derive(Clone)]
 pub struct State {
     pub wal: BTreeMap<i64, metadata::RunMetadata>,
-    pub tables: HashMap<String, BTreeMap<u64, BTreeMap<String, metadata::RunMetadata>>>,
+    pub tables: HashMap<String, Table>,
 }
 
 /// Forest maintains an in-memory map of all runs.
@@ -53,7 +59,7 @@ impl Forest {
         let run_ids = runs.into_iter().collect::<Vec<_>>();
         let run_metadatas = metadata_store.get_run_metadata_batch(run_ids).await?;
         let mut wal = BTreeMap::new();
-        let mut tables = HashMap::new();
+        let mut tables: HashMap<String, Table> = HashMap::new();
 
         for run_metadata in run_metadatas.into_values() {
             let min_key = match run_metadata.stats {
@@ -64,11 +70,20 @@ impl Forest {
                 metadata::BelongsTo::WalSeqNo(seq_no) => {
                     wal.insert(seq_no, run_metadata);
                 },
+                metadata::BelongsTo::TableBuffer(ref table_name, seq_no) => {
+                    tables
+                        .entry(table_name.clone())
+                        .or_default()
+                        .buffer
+                        .insert(seq_no, run_metadata);
+                },
                 metadata::BelongsTo::TableTree(ref table_name, level) => {
-                    tables.entry(table_name.clone())
-                        .or_insert_with(BTreeMap::new)
+                    tables
+                        .entry(table_name.clone())
+                        .or_default()
+                        .tree
                         .entry(level)
-                        .or_insert_with(BTreeMap::new)
+                        .or_default()
                         .insert(min_key, run_metadata);
                 },
             }
@@ -140,14 +155,18 @@ impl Forest {
 
         // Remove runs that are no longer present
         new_state.wal.retain(|_, m| !runs_removed.contains(&m.id));
-        for (_, table_levels) in new_state.tables.iter_mut() {
-            for (_, table_entries) in table_levels.iter_mut() {
+        for table in new_state.tables.values_mut() {
+            table.buffer.retain(|_, m| !runs_removed.contains(&m.id));
+            for table_entries in table.tree.values_mut() {
                 table_entries.retain(|_, m| !runs_removed.contains(&m.id));
             }
-
-            table_levels.retain(|_, table_entries| !table_entries.is_empty());
+            table
+                .tree
+                .retain(|_, table_entries| !table_entries.is_empty());
         }
-        new_state.tables.retain(|_, table_levels| !table_levels.is_empty());
+        new_state
+            .tables
+            .retain(|_, table| !table.buffer.is_empty() || !table.tree.is_empty());
 
         // Add new runs
         for new_run in new_runs.into_values() {
@@ -155,17 +174,28 @@ impl Forest {
                 metadata::BelongsTo::WalSeqNo(seq_no) => {
                     new_state.wal.insert(seq_no, new_run);
                 },
+                metadata::BelongsTo::TableBuffer(ref table_name, seq_no) => {
+                    new_state
+                        .tables
+                        .entry(table_name.clone())
+                        .or_default()
+                        .buffer
+                        .insert(seq_no, new_run);
+                },
                 metadata::BelongsTo::TableTree(ref table_name, level) => {
                     let min_key = match new_run.stats {
                         runs::Stats::StatsV1(ref stats) => stats.min_key.clone(),
                     };
 
-                    new_state.tables.entry(table_name.clone())
-                        .or_insert_with(BTreeMap::new)
+                    new_state
+                        .tables
+                        .entry(table_name.clone())
+                        .or_default()
+                        .tree
                         .entry(level)
-                        .or_insert_with(BTreeMap::new)
+                        .or_default()
                         .insert(min_key, new_run);
-                }
+                },
             }
         }
 

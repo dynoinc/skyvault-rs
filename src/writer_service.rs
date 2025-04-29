@@ -99,7 +99,7 @@ impl MyWriter {
         storage: &storage::ObjectStore,
         batch: Vec<Vec<crate::runs::WriteOperation>>,
     ) -> Result<(), WriterServiceError> {
-        let run_id = ulid::Ulid::new().to_string();
+        let run_id = crate::runs::RunId(ulid::Ulid::new().to_string());
         let sorted_ops = batch
             .into_iter()
             .flat_map(|req| req.into_iter())
@@ -108,7 +108,7 @@ impl MyWriter {
 
         let ops_stream = futures::stream::iter(sorted_ops.into_values().map(Ok));
         let (data, stats) = crate::runs::build_run(ops_stream).await?;
-        storage.put_run(&run_id, data).await?;
+        storage.put_run(run_id.clone(), data).await?;
 
         metadata.append_wal(run_id, stats).await?;
         Ok(())

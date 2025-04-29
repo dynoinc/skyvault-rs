@@ -3,7 +3,6 @@ import subprocess
 import re
 import time
 import sys
-import atexit
 import pytest
 
 from proto import skyvault_pb2
@@ -44,22 +43,9 @@ def service_connection():
     try:
         grpc.channel_ready_future(channel).result(timeout=10)
     except grpc.FutureTimeoutError:
-        tunnel_process.terminate()
         pytest.fail("Failed to connect to gRPC service")
 
-    # Cleanup function to terminate tunnel process
-    def cleanup():
-        tunnel_process.terminate()
-        tunnel_process.wait()
-
-    # Register cleanup
-    atexit.register(cleanup)
-
     yield channel
-
-    # Cleanup after tests
-    cleanup()
-    atexit.unregister(cleanup)
 
 
 @pytest.fixture(scope="session")
@@ -91,13 +77,23 @@ def perform_write(stub, table_name, key, value_bytes):
     return stub.WriteBatch(request, timeout=15)
 
 
+def perform_read(stub, table_name, key, expected_value_bytes):
+    """Sends a GetBatch request."""
+    table_request = skyvault_pb2.TableGetBatchRequest(table_name=table_name, keys=[key])
+    request = skyvault_pb2.GetBatchRequest(tables=[table_request])
+    response = stub.GetBatch(request, timeout=15)
+    if response.tables and response.tables[0].table_name == table_name:
+        items = {item.key: item.value for item in response.tables[0].items}
+        if key in items and items[key] == expected_value_bytes:
+            return True
+    return False
+
+
 def perform_read_with_retry(
     stub, table_name, key, expected_value_bytes, retries=30, delay=1
 ):
     """Attempts to read a key, retrying until the expected value is found or retries run out."""
-    table_request = skyvault_pb2.TableReadBatchRequest(
-        table_name=table_name, keys=[key]
-    )
+    table_request = skyvault_pb2.TableGetBatchRequest(table_name=table_name, keys=[key])
     request = skyvault_pb2.GetBatchRequest(tables=[table_request])
 
     for attempt in range(retries):
@@ -178,13 +174,14 @@ def test_write_compact_read(stubs):
 
     # Trigger compaction
     trigger_compaction(orchestrator_stub)
+    time.sleep(5)  # Wait for readers to pick up the new compaction
 
     # Verify second key is still readable after compaction
-    assert perform_read_with_retry(reader_stub, TABLE_NAME, KEY_TWO, VALUE_TWO), (
+    assert perform_read(reader_stub, TABLE_NAME, KEY_TWO, VALUE_TWO), (
         f"Failed to read back key '{KEY_TWO}' after compaction"
     )
 
     # Verify first key is also still readable after compaction
-    assert perform_read_with_retry(reader_stub, TABLE_NAME, KEY_ONE, VALUE_ONE), (
+    assert perform_read(reader_stub, TABLE_NAME, KEY_ONE, VALUE_ONE), (
         f"Failed to read back key '{KEY_ONE}' after compaction"
     )

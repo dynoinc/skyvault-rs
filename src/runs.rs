@@ -1,3 +1,4 @@
+use std::fmt::{self, Display};
 use std::io::Cursor;
 
 use byteorder::{BigEndian, ReadBytesExt};
@@ -9,6 +10,15 @@ use crate::proto;
 // Type aliases for clarity
 pub type Key = String;
 pub type Value = Vec<u8>;
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub struct RunId(pub String);
+
+impl Display for RunId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
 
 // Represents write operations to be included in a run
 #[derive(Debug, Clone, PartialEq, Eq)]

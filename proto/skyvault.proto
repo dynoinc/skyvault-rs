@@ -30,23 +30,26 @@ message WriteBatchResponse {}
 // READER
 service ReaderService {
   rpc GetBatch (GetBatchRequest) returns (GetBatchResponse);
+
+  // internal APIs
   rpc GetFromWAL (GetFromWALRequest) returns (GetFromWALResponse);
+  rpc GetFromRun (GetFromRunRequest) returns (GetFromRunResponse);
 }
 
 message GetBatchRequest {
-  repeated TableReadBatchRequest tables = 1;
+  repeated TableGetBatchRequest tables = 1;
 }
 
-message TableReadBatchRequest {
+message TableGetBatchRequest {
   string table_name = 1;
   repeated string keys = 2;
 }
 
 message GetBatchResponse {
-  repeated TableReadBatchResponse tables = 1;
+  repeated TableGetBatchResponse tables = 1;
 }
 
-message TableReadBatchResponse {
+message TableGetBatchResponse {
   string table_name = 1;
   repeated GetBatchItem items = 2;
 }
@@ -57,19 +60,23 @@ message GetBatchItem {
 }
 
 message GetFromWALRequest {
-  repeated TableReadBatchRequest tables = 1;
+  repeated string keys = 1;
 }
 
 message GetFromWALResponse {
-  repeated TableGetFromWALResponse tables = 1;
+  repeated GetFromRunItem items = 1;
 }
 
-message TableGetFromWALResponse {
-  string table_name = 1;
-  repeated GetFromWALItem items = 2;
+message GetFromRunRequest {
+  string run_id = 1;
+  repeated string keys = 2;
 }
 
-message GetFromWALItem {
+message GetFromRunResponse {
+  repeated GetFromRunItem items = 1;
+}
+
+message GetFromRunItem {
   string key = 1;
   oneof result {
     bytes value = 2;
@@ -129,13 +136,19 @@ message RunMetadata {
   string id = 1;
 
   oneof belongs_to {
-    int64 wal_seqno = 2;
-    TableTree table_tree = 3;
+    int64 wal_seq_no = 2;
+    TableBuffer table_buffer = 3;
+    TableTree table_tree = 4;
   };
 
   oneof stats {
     StatsV1 stats_v1 = 1001;
   }
+}
+
+message TableBuffer {
+  string table_name = 1;
+  int64 seq_no = 2;
 }
 
 message TableTree {

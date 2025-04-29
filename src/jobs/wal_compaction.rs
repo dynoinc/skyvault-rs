@@ -8,7 +8,7 @@ use tokio::sync::mpsc;
 
 use super::JobError;
 use crate::metadata::{BelongsTo, ChangelogEntry, MetadataStore};
-use crate::runs::{RunError, WriteOperation};
+use crate::runs::{RunError, Stats, WriteOperation};
 use crate::storage::ObjectStore;
 
 #[derive(Eq, PartialEq)]
@@ -202,29 +202,26 @@ pub async fn execute_wal_compaction(
         }
     }
 
-    if wal_runs.is_empty() {
-        return Ok(());
-    }
-
     let run_ids = wal_runs.into_iter().collect::<Vec<_>>();
     let run_metadatas = metadata_store.get_run_metadata_batch(run_ids).await?;
-    let run_ids_and_seqno = run_metadatas
+    let run_ids_and_seq_no = run_metadatas
         .values()
-        .map(|metadata| {
-            (metadata.id.clone(), match metadata.belongs_to {
-                BelongsTo::WalSeqNo(seqno) => seqno,
-                BelongsTo::TableTree(_, _) => {
-                    panic!("Run ID {} belongs to table, not WAL", metadata.id)
-                },
-            })
+        .filter_map(|metadata| match metadata.belongs_to {
+            BelongsTo::WalSeqNo(seq_no) => Some((metadata.id.clone(), seq_no)),
+            BelongsTo::TableBuffer(_, _) => None,
+            BelongsTo::TableTree(_, _) => None,
         })
         .collect::<Vec<_>>();
 
-    let count = run_ids_and_seqno.len();
-    let run_data = stream::iter(run_ids_and_seqno.clone())
+    if run_ids_and_seq_no.is_empty() {
+        return Ok(());
+    }
+
+    let count = run_ids_and_seq_no.len();
+    let run_data = stream::iter(run_ids_and_seq_no.clone())
         .map(|(run_id, _)| {
             let store = object_store.clone();
-            async move { store.get_run(&run_id).await.map_err(JobError::Storage) }
+            async move { store.get_run(run_id).await.map_err(JobError::Storage) }
         })
         .buffered(count)
         .try_collect::<Vec<_>>()
@@ -234,7 +231,7 @@ pub async fn execute_wal_compaction(
         .into_iter()
         .enumerate()
         .map(|(i, byte_stream)| {
-            let (_, seqno) = run_ids_and_seqno[i];
+            let (_, seq_no) = run_ids_and_seq_no[i];
             let bytes_stream = stream::unfold(byte_stream, |mut bs| {
                 Box::pin(async move {
                     match bs.try_next().await {
@@ -245,33 +242,128 @@ pub async fn execute_wal_compaction(
                 })
             });
 
-            (seqno, crate::runs::read_run_stream(bytes_stream))
+            (seq_no, crate::runs::read_run_stream(bytes_stream))
         })
         .collect::<Vec<_>>();
 
     let merged_stream = merge_run_streams(run_streams);
 
-    let (run_data, stats) = crate::runs::build_run(merged_stream).await?;
-    let run_id = ulid::Ulid::new().to_string();
-    object_store.put_run(&run_id, run_data).await?;
+    // Vector to collect (run_id, table_name, stats) for each table
+    let mut table_runs = Vec::new();
+
+    // Current table state: (table_name, sender, task)
+    type TableState = (
+        String,
+        mpsc::Sender<Result<WriteOperation, RunError>>,
+        tokio::task::JoinHandle<Result<(crate::runs::RunId, Stats), JobError>>,
+    );
+    let mut current_state: Option<TableState> = None;
+
+    // Process stream one operation at a time
+    let mut stream = Box::pin(merged_stream);
+    while let Some(result) = stream.next().await {
+        let op = result?;
+
+        // Parse key in format "table_name.key"
+        let (table_name, _) = op.key().split_once('.').ok_or_else(|| {
+            JobError::InvalidInput(format!(
+                "Key does not follow 'table_name.key' format: {}",
+                op.key()
+            ))
+        })?;
+
+        let table_name = table_name.to_string();
+        let table_prefix_len = table_name.len() + 1;
+        let op = match op {
+            WriteOperation::Put(mut key, value) => {
+                WriteOperation::Put(key.split_off(table_prefix_len), value)
+            },
+            WriteOperation::Delete(mut key) => {
+                WriteOperation::Delete(key.split_off(table_prefix_len))
+            },
+        };
+
+        // If table changed, finalize the previous table and start a new one
+        if current_state
+            .as_ref()
+            .map(|(current_table, _, _)| current_table.as_str())
+            != Some(&table_name)
+        {
+            // Close previous state if any
+            if let Some((old_table, sender, task)) = current_state.take() {
+                // Close channel
+                drop(sender);
+
+                // Wait for task to complete
+                if let Ok((run_id, stats)) = task
+                    .await
+                    .map_err(|e| JobError::Internal(format!("Table task failed: {}", e)))?
+                {
+                    // Add the completed run to our results
+                    table_runs.push((run_id, old_table, stats));
+                }
+            }
+
+            // Create channel for the new table
+            let (tx, rx) = mpsc::channel(100);
+
+            // Create stream from receiver
+            let rx_stream = stream::unfold(rx, |mut rx| {
+                Box::pin(async move { rx.recv().await.map(|item| (item, rx)) })
+            });
+
+            // Start task to build run for this table
+            let object_store_clone = object_store.clone();
+            let task = tokio::spawn(async move {
+                // Build run from stream
+                let (run_data, stats) = crate::runs::build_run(rx_stream)
+                    .await
+                    .map_err(JobError::Run)?;
+                let run_id = crate::runs::RunId(ulid::Ulid::new().to_string());
+
+                // Persist run
+                object_store_clone
+                    .put_run(run_id.clone(), run_data)
+                    .await
+                    .map_err(JobError::Storage)?;
+
+                Ok((run_id, stats))
+            });
+
+            // Save new state
+            current_state = Some((table_name.to_string(), tx, task));
+        }
+
+        // Send operation to current table's channel
+        if let Some((_, sender, _)) = &current_state {
+            if sender.send(Ok(op)).await.is_err() {
+                return Err(JobError::Internal(
+                    "Failed to send operation to table channel".into(),
+                ));
+            }
+        }
+    }
+
+    // Close final state if any
+    if let Some((old_table, sender, task)) = current_state.take() {
+        // Close channel
+        drop(sender);
+
+        // Wait for task to complete
+        if let Ok((run_id, stats)) = task
+            .await
+            .map_err(|e| JobError::Internal(format!("Table task failed: {}", e)))?
+        {
+            // Add the completed run to our results
+            table_runs.push((run_id, old_table, stats));
+        }
+    }
 
     let compacted = run_metadatas.keys().cloned().collect::<Vec<_>>();
-    let smallest_seq_no = run_ids_and_seqno
-        .iter()
-        .map(|(_, seqno)| seqno)
-        .min()
-        .cloned()
-        .unwrap();
-
     metadata_store
-        .append_compaction(
-            job_id,
-            compacted,
-            run_id,
-            BelongsTo::WalSeqNo(smallest_seq_no),
-            stats,
-        )
+        .append_wal_compaction(job_id, compacted, table_runs)
         .await?;
+
     Ok(())
 }
 

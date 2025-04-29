@@ -53,8 +53,8 @@ impl From<SdkError<GetObjectError, HttpResponse>> for StorageError {
 
 #[async_trait]
 pub trait ObjectStoreTrait: Send + Sync + 'static {
-    async fn put_run(&self, run_id: &str, data: Bytes) -> Result<(), StorageError>;
-    async fn get_run(&self, run_id: &str) -> Result<ByteStream, StorageError>;
+    async fn put_run(&self, run_id: crate::runs::RunId, data: Bytes) -> Result<(), StorageError>;
+    async fn get_run(&self, run_id: crate::runs::RunId) -> Result<ByteStream, StorageError>;
 }
 
 pub type ObjectStore = Arc<dyn ObjectStoreTrait>;
@@ -86,7 +86,7 @@ impl S3ObjectStore {
 
 #[async_trait]
 impl ObjectStoreTrait for S3ObjectStore {
-    async fn put_run(&self, run_id: &str, data: Bytes) -> Result<(), StorageError> {
+    async fn put_run(&self, run_id: crate::runs::RunId, data: Bytes) -> Result<(), StorageError> {
         let byte_stream = ByteStream::from(data);
 
         match self
@@ -104,7 +104,7 @@ impl ObjectStoreTrait for S3ObjectStore {
         }
     }
 
-    async fn get_run(&self, run_id: &str) -> Result<ByteStream, StorageError> {
+    async fn get_run(&self, run_id: crate::runs::RunId) -> Result<ByteStream, StorageError> {
         let key = format!("runs/{}", run_id);
         let response = match self
             .client
@@ -135,7 +135,7 @@ pub struct StorageCache {
     storage: ObjectStore,
 
     /// In-memory cache of run data
-    cache: Arc<RwLock<HashMap<String, Arc<Vec<u8>>>>>,
+    cache: Arc<RwLock<HashMap<crate::runs::RunId, Arc<Vec<u8>>>>>,
 }
 
 impl StorageCache {
@@ -148,23 +148,23 @@ impl StorageCache {
     }
 
     /// Get run data from cache or storage if not cached
-    pub async fn get_run(&self, run_id: &str) -> Result<Arc<Vec<u8>>, StorageError> {
+    pub async fn get_run(&self, run_id: crate::runs::RunId) -> Result<Arc<Vec<u8>>, StorageError> {
         // First check if the run is in the cache
         {
             let cache = self.cache.read().unwrap();
-            if let Some(run_data) = cache.get(run_id) {
+            if let Some(run_data) = cache.get(&run_id) {
                 return Ok(run_data.clone());
             }
         }
 
         // Not in cache, fetch from storage
-        let run_stream = self.storage.get_run(run_id).await?;
+        let run_stream = self.storage.get_run(run_id.clone()).await?;
         let run_data = Arc::new(run_stream.collect().await?.to_vec());
 
         // Update cache
         {
             let mut cache = self.cache.write().unwrap();
-            cache.insert(run_id.to_string(), run_data.clone());
+            cache.insert(run_id, run_data.clone());
         }
 
         Ok(run_data)

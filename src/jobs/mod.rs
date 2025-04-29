@@ -16,6 +16,12 @@ pub enum JobError {
 
     #[error("Run error: {0}")]
     Run(#[from] RunError),
+
+    #[error("Invalid input: {0}")]
+    InvalidInput(String),
+
+    #[error("Internal error: {0}")]
+    Internal(String),
 }
 
 pub async fn execute(

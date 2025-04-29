@@ -34,22 +34,30 @@ pub enum MetadataError {
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub enum BelongsTo {
     WalSeqNo(i64),
+    TableBuffer(String, i64),
     TableTree(String, u64),
 }
 
 impl From<BelongsTo> for proto::run_metadata::BelongsTo {
     fn from(belongs_to: BelongsTo) -> Self {
         match belongs_to {
-            BelongsTo::WalSeqNo(seq_no) => proto::run_metadata::BelongsTo::WalSeqno(seq_no),
+            BelongsTo::WalSeqNo(seq_no) => proto::run_metadata::BelongsTo::WalSeqNo(seq_no),
+            BelongsTo::TableBuffer(table_name, seq_no) => {
+                proto::run_metadata::BelongsTo::TableBuffer(proto::TableBuffer {
+                    table_name,
+                    seq_no,
+                })
+            },
             BelongsTo::TableTree(table_name, level) => {
                 proto::run_metadata::BelongsTo::TableTree(proto::TableTree { table_name, level })
             },
         }
     }
 }
+
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct RunMetadata {
-    pub id: String,
+    pub id: crate::runs::RunId,
     pub belongs_to: BelongsTo,
     pub stats: crate::runs::Stats,
 }
@@ -57,7 +65,7 @@ pub struct RunMetadata {
 impl From<RunMetadata> for proto::RunMetadata {
     fn from(metadata: RunMetadata) -> Self {
         proto::RunMetadata {
-            id: metadata.id,
+            id: metadata.id.to_string(),
             belongs_to: Some(metadata.belongs_to.into()),
             stats: Some(metadata.stats.into()),
         }
@@ -65,15 +73,15 @@ impl From<RunMetadata> for proto::RunMetadata {
 }
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 pub struct ChangelogEntryV1 {
-    pub runs_added: Vec<String>,
-    pub runs_removed: Vec<String>,
+    pub runs_added: Vec<crate::runs::RunId>,
+    pub runs_removed: Vec<crate::runs::RunId>,
 }
 
 impl From<ChangelogEntryV1> for proto::ChangelogEntryV1 {
     fn from(entry: ChangelogEntryV1) -> Self {
         proto::ChangelogEntryV1 {
-            runs_added: entry.runs_added,
-            runs_removed: entry.runs_removed,
+            runs_added: entry.runs_added.iter().map(|id| id.to_string()).collect(),
+            runs_removed: entry.runs_removed.iter().map(|id| id.to_string()).collect(),
         }
     }
 }
@@ -128,23 +136,21 @@ pub trait MetadataStoreTrait: Send + Sync + 'static {
 
     async fn append_wal(
         &self,
-        run_id: String,
+        run_id: crate::runs::RunId,
         stats: crate::runs::Stats,
     ) -> Result<(), MetadataError>;
 
-    async fn append_compaction(
+    async fn append_wal_compaction(
         &self,
         job_id: i64,
-        compacted: Vec<String>,
-        new_run_id: String,
-        belongs_to: BelongsTo,
-        new_stats: crate::runs::Stats,
+        compacted: Vec<crate::runs::RunId>,
+        new_table_runs: Vec<(crate::runs::RunId, String, crate::runs::Stats)>,
     ) -> Result<(), MetadataError>;
 
     async fn get_run_metadata_batch(
         &self,
-        run_ids: Vec<String>,
-    ) -> Result<HashMap<String, RunMetadata>, MetadataError>;
+        run_ids: Vec<crate::runs::RunId>,
+    ) -> Result<HashMap<crate::runs::RunId, RunMetadata>, MetadataError>;
 
     async fn schedule_wal_compaction(&self) -> Result<i64, MetadataError>;
 
@@ -235,7 +241,7 @@ impl MetadataStoreTrait for PostgresMetadataStore {
 
     async fn append_wal(
         &self,
-        run_id: String,
+        run_id: crate::runs::RunId,
         stats: crate::runs::Stats,
     ) -> Result<(), MetadataError> {
         loop {
@@ -264,7 +270,7 @@ impl MetadataStoreTrait for PostgresMetadataStore {
                 INSERT INTO runs (id, belongs_to, stats)
                 VALUES ($1, $2, $3)
                 "#,
-                run_id,
+                run_id.to_string(),
                 serde_json::to_value(BelongsTo::WalSeqNo(changelog_entry.id))?,
                 serde_json::to_value(stats.clone())?
             )
@@ -288,17 +294,16 @@ impl MetadataStoreTrait for PostgresMetadataStore {
         Ok(())
     }
 
-    async fn append_compaction(
+    async fn append_wal_compaction(
         &self,
         job_id: i64,
-        compacted: Vec<String>,
-        new_run_id: String,
-        belongs_to: BelongsTo,
-        new_stats: crate::runs::Stats,
+        compacted: Vec<crate::runs::RunId>,
+        new_table_runs: Vec<(crate::runs::RunId, String, crate::runs::Stats)>,
     ) -> Result<(), MetadataError> {
         let mut transaction = self.pg_pool.begin().await?;
 
         // Mark all compacted runs as deleted in a single query and get the count of updated rows
+        let compacted_strings: Vec<String> = compacted.iter().map(|id| id.to_string()).collect();
         let result = sqlx::query!(
             r#"
             WITH updated_runs AS (
@@ -310,7 +315,7 @@ impl MetadataStoreTrait for PostgresMetadataStore {
             )
             SELECT COUNT(*) FROM updated_runs
             "#,
-            &compacted as &[String]
+            &compacted_strings
         )
         .fetch_one(&mut *transaction)
         .await?;
@@ -346,7 +351,7 @@ impl MetadataStoreTrait for PostgresMetadataStore {
             )));
         }
 
-        sqlx::query_as!(
+        let changelog_entry = sqlx::query_as!(
             ChangelogEntryWithID,
             r#"
             INSERT INTO changelog (changes)
@@ -354,24 +359,46 @@ impl MetadataStoreTrait for PostgresMetadataStore {
             RETURNING *
             "#,
             serde_json::to_value(ChangelogEntry::V1(ChangelogEntryV1 {
-                runs_added: vec![new_run_id.clone()],
+                runs_added: new_table_runs.iter().map(|(id, _, _)| id.clone()).collect(),
                 runs_removed: compacted,
             }))?
         )
         .fetch_one(&mut *transaction)
         .await?;
 
-        sqlx::query!(
-            r#"
-            INSERT INTO runs (id, belongs_to, stats)
-            VALUES ($1, $2, $3)
-            "#,
-            new_run_id,
-            serde_json::to_value(belongs_to)?,
-            serde_json::to_value(new_stats.clone())?
-        )
-        .execute(&mut *transaction)
-        .await?;
+        // Use unnest to insert multiple runs in a single query
+        if !new_table_runs.is_empty() {
+            let ids: Vec<String> = new_table_runs
+                .iter()
+                .map(|(id, _, _)| id.to_string())
+                .collect();
+            let belongs_to_values: Vec<serde_json::Value> = new_table_runs
+                .iter()
+                .map(|(_, table_name, _)| {
+                    serde_json::to_value(BelongsTo::TableBuffer(
+                        table_name.clone(),
+                        changelog_entry.id,
+                    ))
+                    .unwrap_or_default()
+                })
+                .collect();
+            let stats_values: Vec<serde_json::Value> = new_table_runs
+                .iter()
+                .map(|(_, _, stats)| serde_json::to_value(stats).unwrap_or_default())
+                .collect();
+
+            sqlx::query!(
+                r#"
+                INSERT INTO runs (id, belongs_to, stats)
+                SELECT * FROM UNNEST($1::text[], $2::jsonb[], $3::jsonb[])
+                "#,
+                &ids,
+                &belongs_to_values,
+                &stats_values
+            )
+            .execute(&mut *transaction)
+            .await?;
+        }
 
         transaction.commit().await?;
 
@@ -380,14 +407,15 @@ impl MetadataStoreTrait for PostgresMetadataStore {
 
     async fn get_run_metadata_batch(
         &self,
-        run_ids: Vec<String>,
-    ) -> Result<HashMap<String, RunMetadata>, MetadataError> {
+        run_ids: Vec<crate::runs::RunId>,
+    ) -> Result<HashMap<crate::runs::RunId, RunMetadata>, MetadataError> {
+        let run_ids_strings: Vec<String> = run_ids.iter().map(|id| id.to_string()).collect();
         let rows = sqlx::query!(
             r#"
             SELECT id, belongs_to, stats
             FROM runs WHERE id = ANY($1)
             "#,
-            &run_ids as &[String]
+            &run_ids_strings
         )
         .fetch_all(&self.pg_pool)
         .await?;
@@ -401,7 +429,7 @@ impl MetadataStoreTrait for PostgresMetadataStore {
                     serde_json::from_value(row.stats).map_err(MetadataError::JsonSerdeError)?;
 
                 Ok(RunMetadata {
-                    id: row.id,
+                    id: crate::runs::RunId(row.id),
                     belongs_to,
                     stats,
                 })
