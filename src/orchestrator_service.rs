@@ -65,7 +65,7 @@ impl MyOrchestrator {
             // If total size of WALs exceeds 100MB, schedule a job to compact the WALs
             let total_size = state
                 .wal
-                .iter()
+                .values()
                 .map(|r| match &r.stats {
                     crate::runs::Stats::StatsV1(stats) => stats.size_bytes,
                 })
@@ -208,7 +208,7 @@ impl OrchestratorService for MyOrchestrator {
         _request: Request<ListRunsRequest>,
     ) -> Result<Response<ListRunsResponse>, Status> {
         let state = self.forest.get_state();
-        let runs: Vec<proto::RunMetadata> = state.wal.iter().cloned().map(|r| r.into()).collect();
+        let runs: Vec<proto::RunMetadata> = state.wal.values().cloned().map(|r| r.into()).collect();
         Ok(Response::new(ListRunsResponse { runs }))
     }
 

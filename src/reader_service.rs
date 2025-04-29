@@ -202,7 +202,7 @@ impl ReaderService for MyReader {
                 items: vec![],
             };
 
-            for wal in forest_state.wal.iter() {
+            for wal in forest_state.wal.values().rev() {
                 if remaining_keys.is_empty() {
                     break;
                 }

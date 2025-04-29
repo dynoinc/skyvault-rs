@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use futures::{Stream, StreamExt, pin_mut};
@@ -6,6 +6,7 @@ use thiserror::Error;
 use tracing::{debug, error};
 
 use crate::metadata::{self, ChangelogEntry, MetadataError, MetadataStore};
+use crate::runs;
 
 #[derive(Error, Debug)]
 pub enum ForestError {
@@ -18,7 +19,8 @@ pub enum ForestError {
 
 #[derive(Clone)]
 pub struct State {
-    pub wal: Vec<metadata::RunMetadata>,
+    pub wal: BTreeMap<i64, metadata::RunMetadata>,
+    pub tables: HashMap<String, BTreeMap<u64, BTreeMap<String, metadata::RunMetadata>>>,
 }
 
 /// Forest maintains an in-memory map of all runs.
@@ -34,37 +36,47 @@ impl Forest {
     pub async fn new(metadata_store: MetadataStore) -> Result<Self, ForestError> {
         let (snapshot, stream) = metadata_store.get_changelog().await?;
 
-        let mut wal_runs = HashSet::new();
+        let mut runs = HashSet::new();
         for entry in snapshot {
             match entry {
                 ChangelogEntry::V1(v1) => {
                     for run_id in v1.runs_added {
-                        wal_runs.insert(run_id);
+                        runs.insert(run_id);
                     }
                     for run_id in v1.runs_removed {
-                        wal_runs.remove(&run_id);
+                        runs.remove(&run_id);
                     }
                 },
             }
         }
 
-        let run_ids = wal_runs.into_iter().collect::<Vec<_>>();
+        let run_ids = runs.into_iter().collect::<Vec<_>>();
         let run_metadatas = metadata_store.get_run_metadata_batch(run_ids).await?;
-        let mut wal: Vec<metadata::RunMetadata> = run_metadatas.into_values().collect();
+        let mut wal = BTreeMap::new();
+        let mut tables = HashMap::new();
 
-        wal.sort_by(|a, b| {
-            match (&a.belongs_to, &b.belongs_to) {
-                (metadata::BelongsTo::WalSeqNo(a_seq), metadata::BelongsTo::WalSeqNo(b_seq)) => {
-                    b_seq.cmp(a_seq)
+        for run_metadata in run_metadatas.into_values() {
+            let min_key = match run_metadata.stats {
+                runs::Stats::StatsV1(ref stats) => stats.min_key.clone(),
+            };
+
+            match run_metadata.belongs_to {
+                metadata::BelongsTo::WalSeqNo(seq_no) => {
+                    wal.insert(seq_no, run_metadata);
                 },
-                // Handle other cases (though they shouldn't occur for WAL runs)
-                _ => std::cmp::Ordering::Equal,
+                metadata::BelongsTo::TableTree(ref table_name, level) => {
+                    tables.entry(table_name.clone())
+                        .or_insert_with(BTreeMap::new)
+                        .entry(level)
+                        .or_insert_with(BTreeMap::new)
+                        .insert(min_key, run_metadata);
+                },
             }
-        });
+        }
 
         let forest = Self {
             metadata_store,
-            state: Arc::new(Mutex::new(Arc::new(State { wal }))),
+            state: Arc::new(Mutex::new(Arc::new(State { wal, tables }))),
         };
 
         // Start processing changelog in a background task
@@ -124,25 +136,38 @@ impl Forest {
             .await?;
 
         let mut state = self.state.lock().unwrap();
-        let mut new_wal: Vec<metadata::RunMetadata> = Arc::make_mut(&mut state)
-            .wal
-            .iter()
-            .filter(|run| !runs_removed.contains(&run.id))
-            .cloned()
-            .chain(new_runs.into_values())
-            .collect();
+        let new_state = Arc::make_mut(&mut state);
 
-        new_wal.sort_by(|a, b| {
-            match (&a.belongs_to, &b.belongs_to) {
-                (metadata::BelongsTo::WalSeqNo(a_seq), metadata::BelongsTo::WalSeqNo(b_seq)) => {
-                    b_seq.cmp(a_seq)
-                },
-                // Handle other cases (though they shouldn't occur for WAL runs)
-                _ => std::cmp::Ordering::Equal,
+        // Remove runs that are no longer present
+        new_state.wal.retain(|_, m| !runs_removed.contains(&m.id));
+        for (_, table_levels) in new_state.tables.iter_mut() {
+            for (_, table_entries) in table_levels.iter_mut() {
+                table_entries.retain(|_, m| !runs_removed.contains(&m.id));
             }
-        });
 
-        *state = Arc::new(State { wal: new_wal });
+            table_levels.retain(|_, table_entries| !table_entries.is_empty());
+        }
+        new_state.tables.retain(|_, table_levels| !table_levels.is_empty());
+
+        // Add new runs
+        for new_run in new_runs.into_values() {
+            match new_run.belongs_to {
+                metadata::BelongsTo::WalSeqNo(seq_no) => {
+                    new_state.wal.insert(seq_no, new_run);
+                },
+                metadata::BelongsTo::TableTree(ref table_name, level) => {
+                    let min_key = match new_run.stats {
+                        runs::Stats::StatsV1(ref stats) => stats.min_key.clone(),
+                    };
+
+                    new_state.tables.entry(table_name.clone())
+                        .or_insert_with(BTreeMap::new)
+                        .entry(level)
+                        .or_insert_with(BTreeMap::new)
+                        .insert(min_key, new_run);
+                }
+            }
+        }
 
         Ok(())
     }
