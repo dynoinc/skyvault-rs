@@ -3,6 +3,7 @@
 use std::net::SocketAddr;
 
 use clap::Parser;
+use proto::cache_service_server::CacheServiceServer;
 use proto::orchestrator_service_server::OrchestratorServiceServer;
 use proto::reader_service_server::ReaderServiceServer;
 use proto::writer_service_server::WriterServiceServer;
@@ -16,6 +17,7 @@ pub mod proto {
         tonic::include_file_descriptor_set!("skyvault_descriptor");
 }
 
+pub mod cache_service;
 pub mod orchestrator_service;
 pub mod reader_service;
 pub mod writer_service;
@@ -68,6 +70,10 @@ pub enum ServerError {
     /// Errors from the Orchestrator component.
     #[error("Orchestrator error: {0}")]
     Orchestrator(#[from] orchestrator_service::OrchestratorError),
+
+    /// Errors from the Cache component.
+    #[error("Cache error: {0}")]
+    Cache(#[from] cache_service::CacheServiceError),
 }
 
 pub async fn server(
@@ -85,12 +91,18 @@ pub async fn server(
         )
         .await;
 
-    let reader =
-        reader_service::MyReader::new(metadata.clone(), storage.clone(), config.grpc_addr.port())
-            .await?;
+    let reader = reader_service::MyReader::new(metadata.clone(), config.grpc_addr.port()).await?;
     health_reporter
         .set_service_status(
             proto::reader_service_server::SERVICE_NAME,
+            ServingStatus::Serving,
+        )
+        .await;
+
+    let cache = cache_service::MyCache::new(storage.clone()).await?;
+    health_reporter
+        .set_service_status(
+            proto::cache_service_server::SERVICE_NAME,
             ServingStatus::Serving,
         )
         .await;
@@ -112,6 +124,7 @@ pub async fn server(
     Server::builder()
         .add_service(WriterServiceServer::new(writer))
         .add_service(ReaderServiceServer::new(reader))
+        .add_service(CacheServiceServer::new(cache))
         .add_service(OrchestratorServiceServer::new(orchestrator))
         .add_service(health_service)
         .add_service(reflection_service)

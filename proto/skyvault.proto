@@ -27,13 +27,31 @@ message WriteBatchItem {
 
 message WriteBatchResponse {}
 
+// CACHE
+service CacheService {
+  rpc GetFromRun (GetFromRunRequest) returns (GetFromRunResponse);
+}
+
+message GetFromRunRequest {
+  repeated string run_ids = 1;
+  repeated string keys = 2;
+}
+
+message GetFromRunResponse {
+  repeated GetFromRunItem items = 1;
+}
+
+message GetFromRunItem {
+  string key = 1;
+  oneof result {
+    bytes value = 2;
+    google.protobuf.Empty deleted = 3;
+  }
+}
+
 // READER
 service ReaderService {
   rpc GetBatch (GetBatchRequest) returns (GetBatchResponse);
-
-  // internal APIs
-  rpc GetFromWAL (GetFromWALRequest) returns (GetFromWALResponse);
-  rpc GetFromRun (GetFromRunRequest) returns (GetFromRunResponse);
 }
 
 message GetBatchRequest {
@@ -57,31 +75,6 @@ message TableGetBatchResponse {
 message GetBatchItem {
   string key = 1;
   bytes value = 2;
-}
-
-message GetFromWALRequest {
-  repeated string keys = 1;
-}
-
-message GetFromWALResponse {
-  repeated GetFromRunItem items = 1;
-}
-
-message GetFromRunRequest {
-  string run_id = 1;
-  repeated string keys = 2;
-}
-
-message GetFromRunResponse {
-  repeated GetFromRunItem items = 1;
-}
-
-message GetFromRunItem {
-  string key = 1;
-  oneof result {
-    bytes value = 2;
-    google.protobuf.Empty deleted = 3;
-  }
 }
 
 // ORCHESTRATOR

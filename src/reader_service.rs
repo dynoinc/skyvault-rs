@@ -11,10 +11,9 @@ use crate::consistent_hashring::ConsistentHashRing;
 use crate::forest::{Forest, ForestError};
 use crate::metadata::MetadataStore;
 use crate::pod_watcher::{self, PodChange, PodWatcherError};
-use crate::proto::reader_service_client::ReaderServiceClient;
+use crate::proto;
+use crate::proto::cache_service_client::CacheServiceClient;
 use crate::proto::reader_service_server::ReaderService;
-use crate::storage::{ObjectStore, StorageCache};
-use crate::{proto, runs};
 
 #[derive(Debug, Error)]
 pub enum ReaderServiceError {
@@ -32,21 +31,14 @@ pub struct MyReader {
     // Metadata
     forest: Forest,
 
-    // Cache
-    storage_cache: StorageCache,
-    consistent_hashring: Arc<Mutex<ConsistentHashRing<String>>>,
-
-    // Connection
+    // Connections
     port: u16,
-    connections: Arc<Mutex<HashMap<String, ReaderServiceClient<Channel>>>>,
+    connections: Arc<Mutex<HashMap<String, CacheServiceClient<Channel>>>>,
+    consistent_hashring: Arc<Mutex<ConsistentHashRing<String>>>,
 }
 
 impl MyReader {
-    pub async fn new(
-        metadata: MetadataStore,
-        storage: ObjectStore,
-        port: u16,
-    ) -> Result<Self, ReaderServiceError> {
+    pub async fn new(metadata: MetadataStore, port: u16) -> Result<Self, ReaderServiceError> {
         let forest = Forest::new(metadata).await?;
 
         let pods_stream = pod_watcher::watch().await?;
@@ -73,9 +65,7 @@ impl MyReader {
             }
         });
 
-        let storage_cache = StorageCache::new(storage);
         Ok(Self {
-            storage_cache,
             forest,
             consistent_hashring,
             connections,
@@ -86,7 +76,7 @@ impl MyReader {
     async fn get_connection(
         &self,
         pod: &str,
-    ) -> Result<ReaderServiceClient<Channel>, ReaderServiceError> {
+    ) -> Result<CacheServiceClient<Channel>, ReaderServiceError> {
         // First check if connection exists
         {
             let connections = self.connections.lock().unwrap();
@@ -97,7 +87,7 @@ impl MyReader {
 
         // Connection not found, create a new one outside the lock
         let addr = format!("http://{}:{}", pod, self.port);
-        let conn = match ReaderServiceClient::connect(addr).await {
+        let conn = match CacheServiceClient::connect(addr).await {
             Ok(conn) => conn,
             Err(e) => return Err(ReaderServiceError::ConnectionError(e)),
         };
@@ -113,11 +103,12 @@ impl MyReader {
 
     async fn table_get_batch_run(
         &self,
+        routing_key: String,
         request: Request<proto::GetFromRunRequest>,
     ) -> Result<Response<proto::GetFromRunResponse>, Status> {
         let run_pod = {
             let consistent_hashring = self.consistent_hashring.lock().unwrap();
-            consistent_hashring.get_node(&request.get_ref().run_id)
+            consistent_hashring.get_node(&routing_key)
         };
 
         let run_pod = match run_pod {
@@ -138,40 +129,11 @@ impl MyReader {
         run_conn.get_from_run(request).await
     }
 
-    async fn table_get_batch_wal(
-        &self,
-        request: Request<proto::GetFromWalRequest>,
-    ) -> Result<Response<proto::GetFromWalResponse>, Status> {
-        // For WAL we send all requests to same pod.
-        let wal_pod = {
-            let consistent_hashring = self.consistent_hashring.lock().unwrap();
-            consistent_hashring.get_node(&"wal")
-        };
-
-        let wal_pod = match wal_pod {
-            Some(pod) => pod,
-            None => return Err(Status::internal("No reader service pods available")),
-        };
-
-        let mut wal_conn = match self.get_connection(&wal_pod).await {
-            Ok(conn) => conn,
-            Err(e) => {
-                return Err(Status::internal(format!(
-                    "No connection to reader service pod for WAL: {}",
-                    e
-                )));
-            },
-        };
-
-        wal_conn.get_from_wal(request).await
-    }
-
     async fn table_get_batch(
         &self,
+        forest_state: Arc<crate::forest::State>,
         request: Request<proto::TableGetBatchRequest>,
     ) -> Result<Response<proto::TableGetBatchResponse>, Status> {
-        let forest_state = self.forest.get_state();
-
         let request = request.into_inner();
         let table_name = request.table_name;
         let table_prefix_len = table_name.len() + 1;
@@ -179,7 +141,13 @@ impl MyReader {
         let mut responses = Vec::new();
         if !forest_state.wal.is_empty() {
             // Make WAL request
-            let wal_request = proto::GetFromWalRequest {
+            let wal_request = proto::GetFromRunRequest {
+                run_ids: forest_state
+                    .wal
+                    .values()
+                    .rev()
+                    .map(|r| r.id.to_string())
+                    .collect(),
                 keys: request
                     .keys
                     .iter()
@@ -188,7 +156,7 @@ impl MyReader {
             };
 
             let wal_response_fut = self
-                .table_get_batch_wal(Request::new(wal_request))
+                .table_get_batch_run("wal".to_string(), Request::new(wal_request))
                 .map(|r| {
                     r.map(|r| {
                         r.into_inner()
@@ -210,12 +178,12 @@ impl MyReader {
                 let run_id = run_metadata.id.clone();
 
                 let run_request = proto::GetFromRunRequest {
-                    run_id: run_id.to_string(),
+                    run_ids: vec![run_id.to_string()],
                     keys: request.keys.clone(),
                 };
 
                 let run_response_fut = self
-                    .table_get_batch_run(Request::new(run_request))
+                    .table_get_batch_run(run_id.to_string(), Request::new(run_request))
                     .map(|r| r.map(|r| r.into_inner().items));
 
                 responses.push(run_response_fut.boxed());
@@ -260,13 +228,12 @@ impl ReaderService for MyReader {
         &self,
         request: Request<proto::GetBatchRequest>,
     ) -> Result<Response<proto::GetBatchResponse>, Status> {
+        let forest_state = self.forest.get_state();
         let tables = request.into_inner().tables;
 
-        let responses = futures::future::join_all(
-            tables
-                .into_iter()
-                .map(|table_request| self.table_get_batch(Request::new(table_request))),
-        )
+        let responses = futures::future::join_all(tables.into_iter().map(|table_request| {
+            self.table_get_batch(forest_state.clone(), Request::new(table_request))
+        }))
         .await;
 
         let mut response = proto::GetBatchResponse::default();
@@ -279,92 +246,6 @@ impl ReaderService for MyReader {
                 Err(status) => {
                     return Err(status);
                 },
-            }
-        }
-
-        Ok(Response::new(response))
-    }
-
-    async fn get_from_wal(
-        &self,
-        request: Request<proto::GetFromWalRequest>,
-    ) -> Result<Response<proto::GetFromWalResponse>, Status> {
-        let forest_state = self.forest.get_state();
-
-        let mut response = proto::GetFromWalResponse::default();
-        let mut remaining_keys = request.into_inner().keys;
-
-        for wal in forest_state.wal.values().rev() {
-            if remaining_keys.is_empty() {
-                break;
-            }
-
-            let run = match self.storage_cache.get_run(wal.id.clone()).await {
-                Ok(run) => run,
-                Err(e) => {
-                    return Err(Status::internal(format!(
-                        "Error getting run {}: {}",
-                        wal.id, e
-                    )));
-                },
-            };
-
-            remaining_keys.retain(|key| match runs::search_run(run.as_ref(), key.as_str()) {
-                runs::SearchResult::Found(value) => {
-                    response.items.push(proto::GetFromRunItem {
-                        key: key.clone(),
-                        result: Some(proto::get_from_run_item::Result::Value(value)),
-                    });
-
-                    false
-                },
-                runs::SearchResult::Tombstone => {
-                    response.items.push(proto::GetFromRunItem {
-                        key: key.clone(),
-                        result: Some(proto::get_from_run_item::Result::Deleted(())),
-                    });
-
-                    false
-                },
-                runs::SearchResult::NotFound => true,
-            });
-        }
-
-        Ok(Response::new(response))
-    }
-
-    async fn get_from_run(
-        &self,
-        request: Request<proto::GetFromRunRequest>,
-    ) -> Result<Response<proto::GetFromRunResponse>, Status> {
-        let run_id = crate::runs::RunId(request.get_ref().run_id.clone());
-        let run = match self.storage_cache.get_run(run_id).await {
-            Ok(run) => run,
-            Err(e) => {
-                return Err(Status::internal(format!(
-                    "Error getting run {}: {}",
-                    request.get_ref().run_id,
-                    e
-                )));
-            },
-        };
-
-        let mut response = proto::GetFromRunResponse::default();
-        for key in request.into_inner().keys {
-            match runs::search_run(run.as_ref(), key.as_str()) {
-                runs::SearchResult::Found(value) => {
-                    response.items.push(proto::GetFromRunItem {
-                        key,
-                        result: Some(proto::get_from_run_item::Result::Value(value)),
-                    });
-                },
-                runs::SearchResult::Tombstone => {
-                    response.items.push(proto::GetFromRunItem {
-                        key,
-                        result: Some(proto::get_from_run_item::Result::Deleted(())),
-                    });
-                },
-                runs::SearchResult::NotFound => {},
             }
         }
 
