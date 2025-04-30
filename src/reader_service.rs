@@ -188,6 +188,38 @@ impl MyReader {
 
                 responses.push(run_response_fut.boxed());
             }
+
+            for (_, run_metadatas) in table.tree.iter() {
+                let mut keys_by_run = HashMap::new();
+
+                for key in request.keys.iter() {
+                    if let Some((_, run_metadata)) = run_metadatas
+                        .range::<str, _>((
+                            std::ops::Bound::Unbounded,
+                            std::ops::Bound::Included(key.as_str()),
+                        ))
+                        .next_back()
+                    {
+                        keys_by_run
+                            .entry(run_metadata.id.clone())
+                            .or_insert_with(Vec::new)
+                            .push(key.clone());
+                    }
+                }
+
+                for (run_id, keys) in keys_by_run {
+                    let run_request = proto::GetFromRunRequest {
+                        run_ids: vec![run_id.to_string()],
+                        keys,
+                    };
+
+                    let run_response_fut = self
+                        .table_get_batch_run(run_id.to_string(), Request::new(run_request))
+                        .map(|r| r.map(|r| r.into_inner().items));
+
+                    responses.push(run_response_fut.boxed());
+                }
+            }
         }
 
         let responses = futures::future::join_all(responses).await;

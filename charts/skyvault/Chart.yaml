@@ -1,5 +1,5 @@
 apiVersion: v2
-name: Skyvault
+name: skyvault
 description: A Helm chart for Skyvault and its dependencies
 
 # A chart can be either an 'application' or a 'library' chart.

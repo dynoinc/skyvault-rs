@@ -21,7 +21,7 @@ deployments:
   instance1:
     enabled: true
     instanceName: "primary"
-    replicaCount: 2
+    replicaCount: 1
     resources:
       limits:
         cpu: 500m
@@ -39,7 +39,7 @@ deployments:
       
   # Second instance example with different config
   instance2:
-    enabled: true
+    enabled: false
     instanceName: "secondary"
     replicaCount: 1
     resources:

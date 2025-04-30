@@ -29,19 +29,11 @@ pub struct State {
     pub tables: HashMap<String, Table>,
 }
 
-/// Forest maintains an in-memory map of all runs.
-/// It streams the changelog from metadata store and loads run metadata for runs.
-#[derive(Clone)]
-pub struct Forest {
-    metadata_store: MetadataStore,
-    state: Arc<Mutex<Arc<State>>>,
-}
-
-impl Forest {
-    /// Creates a new Forest instance and starts the changelog stream processor.
-    pub async fn new(metadata_store: MetadataStore) -> Result<Self, ForestError> {
-        let (snapshot, stream) = metadata_store.get_changelog().await?;
-
+impl State {
+    pub async fn from_snapshot(
+        metadata_store: MetadataStore,
+        snapshot: Vec<ChangelogEntry>,
+    ) -> Result<Self, ForestError> {
         let mut runs = HashSet::new();
         for entry in snapshot {
             match entry {
@@ -89,9 +81,26 @@ impl Forest {
             }
         }
 
+        Ok(Self { wal, tables })
+    }
+}
+
+/// Forest maintains an in-memory map of all runs.
+/// It streams the changelog from metadata store and loads run metadata for runs.
+#[derive(Clone)]
+pub struct Forest {
+    metadata_store: MetadataStore,
+    state: Arc<Mutex<Arc<State>>>,
+}
+
+impl Forest {
+    /// Creates a new Forest instance and starts the changelog stream processor.
+    pub async fn new(metadata_store: MetadataStore) -> Result<Self, ForestError> {
+        let (snapshot, stream) = metadata_store.get_changelog().await?;
+        let state = State::from_snapshot(metadata_store.clone(), snapshot).await?;
         let forest = Self {
             metadata_store,
-            state: Arc::new(Mutex::new(Arc::new(State { wal, tables }))),
+            state: Arc::new(Mutex::new(Arc::new(state))),
         };
 
         // Start processing changelog in a background task

@@ -1,15 +1,20 @@
+use crate::forest::ForestError;
 use crate::metadata::{JobParams, MetadataError, MetadataStore};
 use crate::runs::RunError;
 use crate::storage::{ObjectStore, StorageError};
 
+mod table_buffer_compaction;
 mod wal_compaction;
 
-pub use wal_compaction::execute_wal_compaction;
+mod k_way;
 
 #[derive(Debug, thiserror::Error)]
 pub enum JobError {
     #[error("Metadata error: {0}")]
     Metadata(#[from] MetadataError),
+
+    #[error("Forest error: {0}")]
+    Forest(#[from] ForestError),
 
     #[error("Storage error: {0}")]
     Storage(#[from] StorageError),
@@ -33,7 +38,10 @@ pub async fn execute(
 
     match job_params {
         JobParams::WALCompaction => {
-            execute_wal_compaction(metadata_store, object_store, job_id).await
+            wal_compaction::execute(metadata_store, object_store, job_id).await
+        },
+        JobParams::TableBufferCompaction(table_name) => {
+            table_buffer_compaction::execute(metadata_store, object_store, job_id, table_name).await
         },
     }
 }

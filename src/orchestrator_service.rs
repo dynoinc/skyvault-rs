@@ -7,8 +7,10 @@ use crate::forest::{Forest, ForestError};
 use crate::metadata::{JobParams, MetadataStore};
 use crate::proto::orchestrator_service_server::OrchestratorService;
 use crate::proto::{
-    self, DumpChangelogRequest, DumpChangelogResponse, GetJobStatusRequest, GetJobStatusResponse,
-    KickOffWalCompactionRequest, KickOffWalCompactionResponse, ListRunsRequest, ListRunsResponse,
+    self, DumpChangelogRequest, DumpChangelogResponse, DumpForestRequest, DumpForestResponse,
+    GetJobStatusRequest, GetJobStatusResponse, KickOffTableBufferCompactionRequest,
+    KickOffTableBufferCompactionResponse, KickOffWalCompactionRequest,
+    KickOffWalCompactionResponse,
 };
 
 #[derive(Clone)]
@@ -63,7 +65,7 @@ impl MyOrchestrator {
             let state = self.forest.get_state();
 
             // If total size of WALs exceeds 100MB, schedule a job to compact the WALs
-            let total_size = state
+            let total_wal_size = state
                 .wal
                 .values()
                 .map(|r| match &r.stats {
@@ -71,14 +73,38 @@ impl MyOrchestrator {
                 })
                 .sum::<u64>();
 
-            if total_size > 100_000_000 {
+            if total_wal_size > 100_000_000 {
                 tracing::info!(
-                    "Total size of WALs {} exceeds 100MB, scheduling compaction",
-                    total_size
+                    "Total size of WALs {total_wal_size} exceeds 100MB, scheduling compaction",
                 );
 
                 if let Err(e) = self.metadata.schedule_wal_compaction().await {
                     tracing::error!("Failed to schedule WAL compaction: {}", e);
+                }
+            }
+
+            for (table_name, table) in state.tables.iter() {
+                let total_buffer_size = table
+                    .buffer
+                    .values()
+                    .map(|r| match &r.stats {
+                        crate::runs::Stats::StatsV1(stats) => stats.size_bytes,
+                    })
+                    .sum::<u64>();
+
+                if total_buffer_size > 100_000_000 {
+                    tracing::info!(
+                        "{table_name} table total size of buffer {total_buffer_size} exceeds \
+                         100MB, scheduling compaction"
+                    );
+
+                    if let Err(e) = self
+                        .metadata
+                        .schedule_table_buffer_compaction(table_name.to_string())
+                        .await
+                    {
+                        tracing::error!("Failed to schedule table buffer compaction: {}", e);
+                    }
                 }
             }
 
@@ -98,6 +124,18 @@ impl MyOrchestrator {
                         if let Err(e) = self.create_k8s_job(id.to_string(), "wal-compaction").await
                         {
                             tracing::error!("Failed to create k8s job for WAL compaction: {}", e);
+                        }
+                    },
+                    (id, JobParams::TableBufferCompaction(_)) => {
+                        tracing::info!("Kicking off table buffer compaction job with ID: {}", id);
+                        if let Err(e) = self
+                            .create_k8s_job(id.to_string(), "table-buffer-compaction")
+                            .await
+                        {
+                            tracing::error!(
+                                "Failed to create k8s job for table buffer compaction: {}",
+                                e
+                            );
                         }
                     },
                 }
@@ -203,13 +241,36 @@ impl MyOrchestrator {
 
 #[tonic::async_trait]
 impl OrchestratorService for MyOrchestrator {
-    async fn list_runs(
+    async fn dump_forest(
         &self,
-        _request: Request<ListRunsRequest>,
-    ) -> Result<Response<ListRunsResponse>, Status> {
+        _request: Request<DumpForestRequest>,
+    ) -> Result<Response<DumpForestResponse>, Status> {
         let state = self.forest.get_state();
-        let runs: Vec<proto::RunMetadata> = state.wal.values().cloned().map(|r| r.into()).collect();
-        Ok(Response::new(ListRunsResponse { runs }))
+
+        let mut response = DumpForestResponse {
+            wal: state.wal.values().cloned().map(|r| r.into()).collect(),
+            tables: vec![],
+        };
+
+        for (table_name, table) in state.tables.iter() {
+            let mut table_response = proto::Table {
+                name: table_name.clone(),
+                buffer: table.buffer.values().cloned().map(|r| r.into()).collect(),
+                levels: vec![],
+            };
+
+            for (level, level_data) in table.tree.iter() {
+                let level_response = proto::TableLevel {
+                    level: *level,
+                    tree: level_data.values().cloned().map(|r| r.into()).collect(),
+                };
+
+                table_response.levels.push(level_response);
+            }
+
+            response.tables.push(table_response);
+        }
+        Ok(Response::new(response))
     }
 
     async fn dump_changelog(
@@ -239,6 +300,28 @@ impl OrchestratorService for MyOrchestrator {
         };
 
         Ok(Response::new(KickOffWalCompactionResponse { job_id }))
+    }
+
+    async fn kick_off_table_buffer_compaction(
+        &self,
+        request: Request<KickOffTableBufferCompactionRequest>,
+    ) -> Result<Response<KickOffTableBufferCompactionResponse>, Status> {
+        let table_name = request.into_inner().table_name;
+        let job_id = match self
+            .metadata
+            .schedule_table_buffer_compaction(table_name)
+            .await
+        {
+            Ok(job_id) => job_id,
+            Err(e) => {
+                tracing::error!("Failed to schedule table buffer compaction: {}", e);
+                return Err(Status::internal(e.to_string()));
+            },
+        };
+
+        Ok(Response::new(KickOffTableBufferCompactionResponse {
+            job_id,
+        }))
     }
 
     async fn get_job_status(

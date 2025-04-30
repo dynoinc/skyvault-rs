@@ -79,9 +79,12 @@ message GetBatchItem {
 
 // ORCHESTRATOR
 service OrchestratorService {
-  rpc ListRuns (ListRunsRequest) returns (ListRunsResponse);
+  rpc DumpForest (DumpForestRequest) returns (DumpForestResponse);
   rpc DumpChangelog (DumpChangelogRequest) returns (DumpChangelogResponse);
+
   rpc KickOffWALCompaction (KickOffWALCompactionRequest) returns (KickOffWALCompactionResponse);
+  rpc KickOffTableBufferCompaction (KickOffTableBufferCompactionRequest) returns (KickOffTableBufferCompactionResponse);
+
   rpc GetJobStatus (GetJobStatusRequest) returns (GetJobStatusResponse);
 }
 
@@ -89,6 +92,14 @@ message KickOffWALCompactionRequest {
 }
 
 message KickOffWALCompactionResponse {
+  int64 job_id = 1;
+}
+
+message KickOffTableBufferCompactionRequest {
+  string table_name = 1;
+}
+
+message KickOffTableBufferCompactionResponse {
   int64 job_id = 1;
 }
 
@@ -100,11 +111,23 @@ message GetJobStatusResponse {
   string status = 1;
 }
 
-message ListRunsRequest {
+message DumpForestRequest {
 }
 
-message ListRunsResponse {
-  repeated RunMetadata runs = 1;
+message DumpForestResponse {
+  repeated RunMetadata wal = 1;
+  repeated Table tables = 2;
+}
+
+message Table {
+  string name = 1;
+  repeated RunMetadata buffer = 2;
+  repeated TableLevel levels = 3;
+}
+
+message TableLevel {
+  uint64 level = 1;
+  repeated RunMetadata tree = 2;
 }
 
 message DumpChangelogRequest {

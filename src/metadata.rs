@@ -117,11 +117,7 @@ pub struct ChangelogEntryWithID {
 #[derive(serde::Serialize, serde::Deserialize)]
 pub enum JobParams {
     WALCompaction,
-}
-
-#[derive(serde::Serialize, serde::Deserialize)]
-struct Job {
-    params: JobParams,
+    TableBufferCompaction(String),
 }
 
 #[async_trait::async_trait]
@@ -147,12 +143,24 @@ pub trait MetadataStoreTrait: Send + Sync + 'static {
         new_table_runs: Vec<(crate::runs::RunId, String, crate::runs::Stats)>,
     ) -> Result<(), MetadataError>;
 
+    async fn append_table_compaction(
+        &self,
+        job_id: i64,
+        compacted: Vec<crate::runs::RunId>,
+        new_run: RunMetadata,
+    ) -> Result<(), MetadataError>;
+
     async fn get_run_metadata_batch(
         &self,
         run_ids: Vec<crate::runs::RunId>,
     ) -> Result<HashMap<crate::runs::RunId, RunMetadata>, MetadataError>;
 
     async fn schedule_wal_compaction(&self) -> Result<i64, MetadataError>;
+
+    async fn schedule_table_buffer_compaction(
+        &self,
+        table_name: String,
+    ) -> Result<i64, MetadataError>;
 
     async fn get_job_status(&self, job_id: i64) -> Result<String, MetadataError>;
 
@@ -302,7 +310,6 @@ impl MetadataStoreTrait for PostgresMetadataStore {
     ) -> Result<(), MetadataError> {
         let mut transaction = self.pg_pool.begin().await?;
 
-        // Mark all compacted runs as deleted in a single query and get the count of updated rows
         let compacted_strings: Vec<String> = compacted.iter().map(|id| id.to_string()).collect();
         let result = sqlx::query!(
             r#"
@@ -405,6 +412,94 @@ impl MetadataStoreTrait for PostgresMetadataStore {
         Ok(())
     }
 
+    async fn append_table_compaction(
+        &self,
+        job_id: i64,
+        compacted: Vec<crate::runs::RunId>,
+        new_run: RunMetadata,
+    ) -> Result<(), MetadataError> {
+        let mut transaction = self.pg_pool.begin().await?;
+
+        let compacted_strings: Vec<String> = compacted.iter().map(|id| id.to_string()).collect();
+        let result = sqlx::query!(
+            r#"
+            WITH updated_runs AS (
+                UPDATE runs
+                SET deleted_at = NOW()
+                WHERE id = ANY($1)
+                AND deleted_at IS NULL
+                RETURNING id
+            )
+            SELECT COUNT(*) FROM updated_runs
+            "#,
+            &compacted_strings
+        )
+        .fetch_one(&mut *transaction)
+        .await?;
+
+        // Check if we updated exactly the number of runs we expected to
+        if result.count.unwrap_or(0) as usize != compacted.len() {
+            return Err(MetadataError::AlreadyDeleted(
+                "Some runs were already marked as deleted".to_string(),
+            ));
+        }
+
+        // Mark the job as completed if it's pending
+        let job_result = sqlx::query!(
+            r#"
+            WITH updated_jobs AS (
+                UPDATE jobs
+                SET status = 'completed'
+                WHERE id = $1 AND status = 'pending'
+                RETURNING id
+            )
+            SELECT COUNT(*) FROM updated_jobs
+            "#,
+            job_id
+        )
+        .fetch_one(&mut *transaction)
+        .await?;
+
+        // Check if we updated exactly one job
+        if job_result.count.unwrap_or(0) != 1 {
+            return Err(MetadataError::InvalidJobState(format!(
+                "Job {} is not in pending state",
+                job_id
+            )));
+        }
+
+        sqlx::query_as!(
+            ChangelogEntryWithID,
+            r#"
+            INSERT INTO changelog (changes)
+            VALUES ($1)
+            RETURNING *
+            "#,
+            serde_json::to_value(ChangelogEntry::V1(ChangelogEntryV1 {
+                runs_added: vec![new_run.id.clone()],
+                runs_removed: compacted,
+            }))?
+        )
+        .fetch_one(&mut *transaction)
+        .await?;
+
+        sqlx::query!(
+            r#"
+            INSERT INTO runs (id, belongs_to, stats)
+            VALUES ($1, $2, $3)
+            "#,
+            new_run.id.to_string(),
+            serde_json::to_value(new_run.belongs_to)?,
+            serde_json::to_value(new_run.stats)?
+        )
+        .execute(&mut *transaction)
+        .await?;
+
+        transaction.commit().await?;
+
+        Ok(())
+    }
+
     async fn get_run_metadata_batch(
         &self,
         run_ids: Vec<crate::runs::RunId>,
@@ -469,6 +564,48 @@ impl MetadataStoreTrait for PostgresMetadataStore {
                 "#,
                 "wal_compaction",
                 serde_json::to_value(JobParams::WALCompaction)?
+            )
+            .fetch_one(&mut *transaction)
+            .await?;
+
+            result.id
+        };
+
+        transaction.commit().await?;
+
+        Ok(job_id)
+    }
+
+    async fn schedule_table_buffer_compaction(
+        &self,
+        table_name: String,
+    ) -> Result<i64, MetadataError> {
+        let mut transaction = self.pg_pool.begin().await?;
+
+        // Check if there's already a table_buffer_compaction job in pending or running state
+        let existing_job = sqlx::query!(
+            r#"
+            SELECT id FROM jobs 
+            WHERE typ = $1 AND status IN ('pending', 'running')
+            LIMIT 1
+            "#,
+            "table_buffer_compaction"
+        )
+        .fetch_optional(&mut *transaction)
+        .await?;
+
+        // Get job_id from existing job or create a new one
+        let job_id = if let Some(job) = existing_job {
+            job.id
+        } else {
+            let result = sqlx::query!(
+                r#"
+                INSERT INTO jobs (typ, job)
+                VALUES ($1, $2)
+                RETURNING id
+                "#,
+                "table_buffer_compaction",
+                serde_json::to_value(JobParams::TableBufferCompaction(table_name))?
             )
             .fetch_one(&mut *transaction)
             .await?;
@@ -551,6 +688,9 @@ mod tests {
         // Verify the job parameters match WALCompaction
         match job_params {
             JobParams::WALCompaction => {},
+            JobParams::TableBufferCompaction(_) => {
+                panic!("Expected WALCompaction job, got TableBufferCompaction");
+            },
         }
 
         // Schedule another job - should not create a duplicate
