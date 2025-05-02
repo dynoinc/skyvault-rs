@@ -1,5 +1,8 @@
-Dockerfile
-justfile
-charts/
-target/
 .git/
+charts/
+clippy.toml
+Dockerfile
+docs/
+LICENSE
+README.md
+target/

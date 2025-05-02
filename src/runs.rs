@@ -59,6 +59,7 @@ pub enum RunError {
 const CURRENT_VERSION: u8 = 1;
 const MARKER_PUT: u8 = 0x01;
 const MARKER_DELETE: u8 = 0x00;
+const MAX_RUN_SIZE_BYTES: u64 = 128 * 1024 * 1024; // 128 MiB
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct StatsV1 {
@@ -92,87 +93,127 @@ impl From<Stats> for proto::run_metadata::Stats {
     }
 }
 
-/// Builds a run from a stream of sorted write operations
+/// Builds multiple runs from a stream of sorted write operations, splitting
+/// runs when they reach approximately MAX_RUN_SIZE_BYTES.
 ///
-/// Returns a tuple of (serialized run data, stats)
+/// Returns a stream yielding tuples of (serialized run data, stats)
 ///
 /// # Errors
 ///
-/// Returns an error if:
-/// - The input stream is empty
+/// Yields an error if:
 /// - The operations are not sorted by key
-/// - There's an I/O error during serialization
-pub async fn build_run<S>(operations: S) -> Result<(Bytes, Stats), RunError>
+/// - There's an I/O error during serialization or reading the input stream
+pub fn build_runs<S>(mut operations: S) -> impl Stream<Item = Result<(Bytes, Stats), RunError>>
 where
     S: Stream<Item = Result<WriteOperation, RunError>> + Unpin + Send + Sync + 'static,
 {
-    let mut min_key: Option<String> = None;
-    let mut max_key: Option<String> = None;
-    let mut item_count: u64 = 0;
-    let mut size_bytes: u64 = 1; // Start with 1 byte for version
-    let mut last_key: Option<String> = None;
+    async_stream::stream! {
+        let mut min_key: Option<String> = None;
+        let mut max_key: Option<String> = None;
+        let mut item_count: u64 = 0;
+        let mut current_run_data: Vec<u8> = Vec::new();
+        let mut current_run_size_bytes: u64 = 0;
+        let mut last_key: Option<String> = None;
+        let mut first_op_in_run = true;
 
-    // Start with version header
-    let mut result = Vec::new();
-    result.push(CURRENT_VERSION);
+        while let Some(op_result) = operations.next().await {
+            let op = match op_result {
+                Ok(op) => op,
+                Err(e) => {
+                    yield Err(e); // Propagate error from the input stream
+                    return;
+                }
+            };
+            let current_key = op.key().to_string();
 
-    let mut operations = Box::pin(operations);
+            // Check if keys are sorted across the entire input stream
+            if let Some(ref last) = last_key {
+                if current_key <= *last {
+                    yield Err(RunError::Format(
+                        "Operations must be sorted by key".to_string(),
+                    ));
+                    return;
+                }
+            }
+            last_key = Some(current_key.clone());
 
-    while let Some(op) = operations.next().await {
-        let op = op?;
-        let current_key = op.key().to_string();
+            // Calculate the size this operation would add
+            let op_size = match &op {
+                WriteOperation::Put(key, value) => {
+                    1 + 4 + key.len() as u64 + 4 + value.len() as u64
+                },
+                WriteOperation::Delete(key) => {
+                    1 + 4 + key.len() as u64
+                },
+            };
 
-        // Check if keys are sorted
-        if let Some(ref last) = last_key {
-            if current_key <= *last {
-                return Err(RunError::Format(
-                    "Operations must be sorted by key".to_string(),
-                ));
+            // If this is the first operation in a *new* run, account for the version byte.
+            let size_with_op = if first_op_in_run {
+                current_run_size_bytes + 1 + op_size
+            } else {
+                current_run_size_bytes + op_size
+            };
+
+            // Check if adding this operation exceeds the size limit AND we have items already
+            if !first_op_in_run && size_with_op > MAX_RUN_SIZE_BYTES {
+                // Finalize and yield the current run
+                let stats = Stats::StatsV1(StatsV1 {
+                    min_key: min_key.take().unwrap(), // Should always have a value if item_count > 0
+                    max_key: max_key.take().unwrap(), // Should always have a value if item_count > 0
+                    size_bytes: current_run_size_bytes,
+                    item_count,
+                });
+                yield Ok((Bytes::from(current_run_data), stats));
+
+                // Reset state for the next run
+                current_run_data = Vec::new();
+                current_run_size_bytes = 0;
+                item_count = 0;
+                // min_key and max_key already taken.
+                first_op_in_run = true;
+                // The current 'op' will be the first in the new run. Recalculate its size contribution below.
+            }
+
+            // Add operation to the current run
+            if first_op_in_run {
+                current_run_data.push(CURRENT_VERSION);
+                current_run_size_bytes += 1; // Version byte
+                min_key = Some(current_key.clone()); // Set min_key for the new run
+                first_op_in_run = false;
+            }
+
+            max_key = Some(current_key.clone()); // Update max_key for the current run
+            item_count += 1;
+            current_run_size_bytes += op_size; // Add actual operation size
+
+            // Serialize the operation into the current run's buffer
+            match &op {
+                WriteOperation::Put(key, value) => {
+                    current_run_data.push(MARKER_PUT);
+                    current_run_data.extend_from_slice(&(key.len() as u32).to_be_bytes());
+                    current_run_data.extend_from_slice(key.as_bytes());
+                    current_run_data.extend_from_slice(&(value.len() as u32).to_be_bytes());
+                    current_run_data.extend_from_slice(value);
+                },
+                WriteOperation::Delete(key) => {
+                    current_run_data.push(MARKER_DELETE);
+                    current_run_data.extend_from_slice(&(key.len() as u32).to_be_bytes());
+                    current_run_data.extend_from_slice(key.as_bytes());
+                },
             }
         }
 
-        // Update stats
-        if min_key.is_none() {
-            min_key = Some(current_key.clone());
-        }
-        max_key = Some(current_key.clone());
-        last_key = Some(current_key);
-        item_count += 1;
-
-        // Serialize the operation
-        match &op {
-            WriteOperation::Put(key, value) => {
-                result.push(MARKER_PUT);
-                result.extend_from_slice(&(key.len() as u32).to_be_bytes());
-                result.extend_from_slice(key.as_bytes());
-                result.extend_from_slice(&(value.len() as u32).to_be_bytes());
-                result.extend_from_slice(value);
-
-                size_bytes += 1 + 4 + key.len() as u64 + 4 + value.len() as u64;
-            },
-            WriteOperation::Delete(key) => {
-                result.push(MARKER_DELETE);
-                result.extend_from_slice(&(key.len() as u32).to_be_bytes());
-                result.extend_from_slice(key.as_bytes());
-
-                size_bytes += 1 + 4 + key.len() as u64;
-            },
+        // Yield the last run if it contains any data
+        if item_count > 0 {
+            let stats = Stats::StatsV1(StatsV1 {
+                min_key: min_key.unwrap(),
+                max_key: max_key.unwrap(),
+                size_bytes: current_run_size_bytes,
+                item_count,
+            });
+            yield Ok((Bytes::from(current_run_data), stats));
         }
     }
-
-    // Check if any operations were processed
-    if item_count == 0 {
-        return Err(RunError::EmptyInput);
-    }
-
-    let stats = Stats::StatsV1(StatsV1 {
-        min_key: min_key.unwrap(),
-        max_key: max_key.unwrap(),
-        size_bytes,
-        item_count,
-    });
-
-    Ok((Bytes::from(result), stats))
 }
 
 /// Searches for a key within a serialized run (v1).
@@ -432,9 +473,15 @@ mod tests {
             WriteOperation::Put("banana".to_string(), value("yellow")),
         ];
 
-        let (data, stats) = build_run(stream::iter(ops.into_iter().map(Ok)))
-            .await
-            .unwrap();
+        let results: Vec<Result<(Bytes, Stats), RunError>> =
+            build_runs(stream::iter(ops.into_iter().map(Ok)))
+                .collect()
+                .await;
+
+        // Assert exactly one run was produced for this small input
+        assert_eq!(results.len(), 1);
+        let (data, stats) = results.into_iter().next().unwrap().unwrap();
+
         match stats {
             Stats::StatsV1(stats) => {
                 assert_eq!(stats.min_key, "apple");
@@ -457,15 +504,20 @@ mod tests {
             WriteOperation::Put("apple".to_string(), value("green")),
             WriteOperation::Put("apple".to_string(), value("red")),
         ];
-        let result = build_run(stream::iter(ops.into_iter().map(Ok))).await;
-        assert!(matches!(result, Err(RunError::Format(_))));
+        let results: Vec<_> = build_runs(stream::iter(ops.into_iter().map(Ok)))
+            .collect()
+            .await;
+        assert_eq!(results.len(), 1); // Expect one item, which is an error
+        assert!(matches!(results[0], Err(RunError::Format(_))));
     }
 
     #[tokio::test]
     async fn test_create_run_empty_input() {
         let ops: Vec<WriteOperation> = vec![];
-        let result = build_run(stream::iter(ops.into_iter().map(Ok))).await;
-        assert!(matches!(result, Err(RunError::EmptyInput)));
+        let results: Vec<_> = build_runs(stream::iter(ops.into_iter().map(Ok)))
+            .collect()
+            .await;
+        assert!(results.is_empty());
     }
 
     #[tokio::test]
@@ -475,9 +527,11 @@ mod tests {
             WriteOperation::Put("banana".to_string(), value("yellow")),
             WriteOperation::Put("cherry".to_string(), value("red")),
         ];
-        let (data, _) = build_run(stream::iter(ops.into_iter().map(Ok)))
-            .await
-            .unwrap();
+        let results: Vec<_> = build_runs(stream::iter(ops.into_iter().map(Ok)))
+            .collect()
+            .await;
+        assert_eq!(results.len(), 1);
+        let (data, _) = results.into_iter().next().unwrap().unwrap();
 
         assert_eq!(
             search_run(&data, "banana"),
@@ -500,9 +554,11 @@ mod tests {
             WriteOperation::Delete("banana".to_string()),
             WriteOperation::Put("cherry".to_string(), value("red")),
         ];
-        let (data, _) = build_run(stream::iter(ops.into_iter().map(Ok)))
-            .await
-            .unwrap();
+        let results: Vec<_> = build_runs(stream::iter(ops.into_iter().map(Ok)))
+            .collect()
+            .await;
+        assert_eq!(results.len(), 1);
+        let (data, _) = results.into_iter().next().unwrap().unwrap();
 
         assert_eq!(search_run(&data, "banana"), SearchResult::Tombstone);
         assert_eq!(
@@ -517,9 +573,11 @@ mod tests {
             WriteOperation::Put("banana".to_string(), value("yellow")),
             WriteOperation::Put("date".to_string(), value("brown")),
         ];
-        let (data, _) = build_run(stream::iter(ops.into_iter().map(Ok)))
-            .await
-            .unwrap();
+        let results: Vec<_> = build_runs(stream::iter(ops.into_iter().map(Ok)))
+            .collect()
+            .await;
+        assert_eq!(results.len(), 1);
+        let (data, _) = results.into_iter().next().unwrap().unwrap();
 
         // Key too small
         assert_eq!(search_run(&data, "apple"), SearchResult::NotFound);
@@ -549,25 +607,121 @@ mod tests {
             WriteOperation::Put("apple".to_string(), value("red")),
             WriteOperation::Put("banana".to_string(), value("yellow")),
         ];
-
-        // Test with various iterator types
-
-        // Using into_iter()
         let ops_copy = ops.clone();
-        let (data1, _) = build_run(stream::iter(ops_copy.into_iter().map(Ok)))
-            .await
-            .unwrap();
+        let results1: Vec<_> = build_runs(stream::iter(ops_copy.into_iter().map(Ok)))
+            .collect()
+            .await;
+        assert_eq!(results1.len(), 1);
+        let (data1, _) = results1.into_iter().next().unwrap().unwrap();
 
         // Using an array
         let array_ops = [
             WriteOperation::Put("apple".to_string(), value("red")),
             WriteOperation::Put("banana".to_string(), value("yellow")),
         ];
-        let (data2, _) = build_run(stream::iter(array_ops.into_iter().map(Ok)))
-            .await
-            .unwrap();
+        let results2: Vec<_> = build_runs(stream::iter(array_ops.into_iter().map(Ok)))
+            .collect()
+            .await;
+        assert_eq!(results2.len(), 1);
+        let (data2, _) = results2.into_iter().next().unwrap().unwrap();
 
         // All should produce the same serialized data
         assert_eq!(data1, data2);
+    }
+
+    // Add a new test case for splitting runs
+    #[tokio::test]
+    async fn test_create_multiple_runs_due_to_size() {
+        // Temporarily override MAX_RUN_SIZE_BYTES for this test scope - this requires more setup.
+        // For now, let's simulate by assuming each op exceeds a hypothetical small limit.
+        // A more robust test would involve actually setting a low limit, maybe via config or
+        // feature flag.
+
+        // Simulating the logic with a very small conceptual limit (e.g., 30 bytes).
+        // Version byte (1)
+        // Run 1: apple (1+4+5+4+3=17) -> Total = 1 + 17 = 18. Below limit.
+        // Run 2: banana (1+4+6+4+6=21). Would exceed limit (18+21=39). Start new run.
+        //        New Run 2: version(1) + banana(21) = 22. Below limit.
+        // Run 3: cherry (1+4+6+4+4=19). Would exceed limit (22+19=41). Start new run.
+        //        New Run 3: version(1) + cherry(19) = 20.
+
+        // Create a larger stream to test the actual 128MB limit splitting (this will be slow/large)
+        // We need a helper to generate large-ish data.
+        fn generate_op(key_prefix: &str, index: usize, size: usize) -> WriteOperation {
+            let key = format!("{}_{:010}", key_prefix, index);
+            let value = vec![0u8; size]; // Generate a value of specified size
+            WriteOperation::Put(key, value)
+        }
+
+        const OP_SIZE: usize = 1024 * 1024; // ~1MB per operation value
+        const OPS_PER_RUN_APPROX: usize = (MAX_RUN_SIZE_BYTES as usize) / OP_SIZE;
+
+        let mut large_ops = Vec::new();
+        // Generate enough ops to create at least two runs
+        for i in 0..(OPS_PER_RUN_APPROX + 50) {
+            // Key size adds a bit, value size is dominant
+            let overhead = 1 + 4 + format!("{}_{:010}", "key", i).len() + 4;
+            large_ops.push(generate_op("key", i, OP_SIZE - overhead)); // Adjust value size to make op roughly OP_SIZE
+        }
+
+        let stream = stream::iter(large_ops.into_iter().map(Ok));
+        let results: Vec<Result<(Bytes, Stats), RunError>> = build_runs(stream).collect().await;
+
+        // Assert that more than one run was produced
+        assert!(
+            results.len() > 1,
+            "Expected multiple runs, got {}",
+            results.len()
+        );
+
+        // Basic sanity checks on the yielded runs
+        let mut previous_max_key: Option<String> = None;
+        for (i, result) in results.iter().enumerate() {
+            match result {
+                Ok((_data, stats)) => {
+                    match stats {
+                        Stats::StatsV1(s) => {
+                            println!(
+                                "Run {}: min={}, max={}, count={}, size={}",
+                                i, s.min_key, s.max_key, s.item_count, s.size_bytes
+                            );
+                            // Check size is close to the limit (except maybe the last one)
+                            if i < results.len() - 1 {
+                                assert!(
+                                    s.size_bytes <= MAX_RUN_SIZE_BYTES,
+                                    "Run {} size {} exceeded limit {}",
+                                    i,
+                                    s.size_bytes,
+                                    MAX_RUN_SIZE_BYTES
+                                );
+                                // Check it's reasonably full (e.g., > 90%? - this might be too
+                                // strict depending on op sizes)
+                                // assert!(s.size_bytes > (MAX_RUN_SIZE_BYTES * 9 / 10));
+                            } else {
+                                assert!(
+                                    s.size_bytes <= MAX_RUN_SIZE_BYTES,
+                                    "Last run size {} exceeded limit {}",
+                                    s.size_bytes,
+                                    MAX_RUN_SIZE_BYTES
+                                );
+                            }
+
+                            // Check keys are sorted across runs
+                            if let Some(ref prev_max) = previous_max_key {
+                                assert!(
+                                    s.min_key > *prev_max,
+                                    "Run {} min_key {} is not > previous max_key {}",
+                                    i,
+                                    s.min_key,
+                                    prev_max
+                                );
+                            }
+                            previous_max_key = Some(s.max_key.clone());
+                        },
+                    }
+                },
+                Err(e) => panic!("Unexpected error in run stream: {:?}", e),
+            }
+        }
     }
 }

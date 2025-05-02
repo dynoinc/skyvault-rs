@@ -115,16 +115,36 @@ pub async fn execute(
 
             // Create stream from receiver
             let rx_stream = stream::unfold(rx, |mut rx| {
-                Box::pin(async move { rx.recv().await.map(|item| (item, rx)) })
-            });
+                Box::pin(async move {
+                    rx.recv()
+                        .await
+                        .map(|item: Result<WriteOperation, RunError>| (item, rx))
+                })
+            })
+            .map(|item_result| {
+                item_result.map_err(|e| RunError::Format(format!("Channel receive error: {}", e)))
+            }); // Handle channel error -> RunError::Format
 
             // Start task to build run for this table
             let object_store_clone = object_store.clone();
             let task = tokio::spawn(async move {
                 // Build run from stream
-                let (run_data, stats) = crate::runs::build_run(rx_stream)
+                // build_runs returns a stream. For now, collect it and expect exactly one run.
+                let results: Vec<_> = crate::runs::build_runs(rx_stream)
+                    .try_collect()
                     .await
                     .map_err(JobError::Run)?;
+
+                if results.len() != 1 {
+                    // This might indicate an issue with compaction logic or an unexpected large run
+                    return Err(JobError::Internal(format!(
+                        "WAL compaction expected exactly one output run for table, got {}",
+                        results.len()
+                    )));
+                }
+                // Panic if the stream was empty, which shouldn't happen after the check above.
+                let (run_data, stats) = results.into_iter().next().unwrap();
+
                 let run_id = crate::runs::RunId(ulid::Ulid::new().to_string());
 
                 // Persist run

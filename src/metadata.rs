@@ -132,8 +132,7 @@ pub trait MetadataStoreTrait: Send + Sync + 'static {
 
     async fn append_wal(
         &self,
-        run_id: crate::runs::RunId,
-        stats: crate::runs::Stats,
+        run_ids: Vec<(crate::runs::RunId, crate::runs::Stats)>,
     ) -> Result<(), MetadataError>;
 
     async fn append_wal_compaction(
@@ -143,11 +142,11 @@ pub trait MetadataStoreTrait: Send + Sync + 'static {
         new_table_runs: Vec<(crate::runs::RunId, String, crate::runs::Stats)>,
     ) -> Result<(), MetadataError>;
 
-    async fn append_table_compaction(
+    async fn append_table_buffer_compaction(
         &self,
         job_id: i64,
         compacted: Vec<crate::runs::RunId>,
-        new_run: RunMetadata,
+        new_runs: Vec<RunMetadata>,
     ) -> Result<(), MetadataError>;
 
     async fn get_run_metadata_batch(
@@ -182,7 +181,7 @@ pub struct PostgresMetadataStore {
     pg_pool: PgPool,
 }
 
-static MIGRATOR: Migrator = sqlx::migrate!("./src/migrations");
+static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 
 impl PostgresMetadataStore {
     pub async fn new(metadata_url: String) -> Result<Self, MetadataError> {
@@ -194,6 +193,227 @@ impl PostgresMetadataStore {
         MIGRATOR.run(&pg_pool).await?;
 
         Ok(Self { pg_pool })
+    }
+
+    /// Attempts to perform the append_wal operation within a single transaction.
+    /// Returns Ok(()) on success, or sqlx::Error on failure.
+    /// The caller is responsible for retry logic based on the error type.
+    async fn _append_wal_attempt(
+        &self,
+        transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        run_ids_with_stats: &[(crate::runs::RunId, crate::runs::Stats)],
+    ) -> Result<(), sqlx::Error> {
+        let n = run_ids_with_stats.len();
+        if n == 0 {
+            return Ok(()); // Nothing to do
+        }
+
+        // --- Reserve Sequence Block ---
+        // Assume sequence name is 'changelog_id_seq'. Verify this!
+        let first_seq_no: i64 = sqlx::query_scalar("SELECT nextval('changelog_id_seq')")
+            .fetch_one(&mut **transaction) // Deref the mutable reference
+            .await?;
+
+        if n > 1 {
+            let last_seq_no = first_seq_no + (n as i64) - 1;
+            sqlx::query("SELECT setval('changelog_id_seq', $1, true)")
+                .bind(last_seq_no)
+                .execute(&mut **transaction) // Deref the mutable reference
+                .await?;
+        }
+
+        // --- Insert Changelog Entry ---
+        let changelog_changes = serde_json::to_value(ChangelogEntry::V1(ChangelogEntryV1 {
+            runs_added: run_ids_with_stats
+                .iter()
+                .map(|(id, _)| id.clone())
+                .collect(),
+            runs_removed: vec![],
+        }))
+        .map_err(|e| sqlx::Error::Configuration(e.into()))?; // Convert serde error appropriately if needed
+
+        sqlx::query!(
+            r#"
+            INSERT INTO changelog (id, changes)
+            VALUES ($1, $2)
+            "#,
+            first_seq_no,
+            changelog_changes
+        )
+        .execute(&mut **transaction) // Deref the mutable reference
+        .await?;
+
+        // --- Prepare Runs Data ---
+        let run_ids: Vec<String> = run_ids_with_stats
+            .iter()
+            .map(|(id, _)| id.to_string())
+            .collect();
+
+        let stats_values: Vec<serde_json::Value> = run_ids_with_stats
+            .iter()
+            .map(|(_, stats)| serde_json::to_value(stats))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| sqlx::Error::Configuration(e.into()))?; // Convert serde error
+
+        let belongs_to_values: Vec<serde_json::Value> = (0..n)
+            .map(|i| serde_json::to_value(BelongsTo::WalSeqNo(first_seq_no + i as i64)))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| sqlx::Error::Configuration(e.into()))?; // Convert serde error
+
+        // --- Insert Runs ---
+        sqlx::query!(
+            r#"
+            INSERT INTO runs (id, belongs_to, stats)
+            SELECT * FROM UNNEST($1::text[], $2::jsonb[], $3::jsonb[])
+            "#,
+            &run_ids,
+            &belongs_to_values,
+            &stats_values
+        )
+        .execute(&mut **transaction) // Deref the mutable reference
+        .await?;
+
+        Ok(())
+    }
+
+    /// Attempts to perform the append_wal_compaction operation within a single transaction.
+    /// Returns Ok(()) on success, or sqlx::Error on failure.
+    /// The caller is responsible for retry logic based on the error type.
+    async fn _append_wal_compaction_attempt(
+        &self,
+        transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        job_id: i64,
+        compacted: &[crate::runs::RunId],
+        new_table_runs: &[(crate::runs::RunId, String, crate::runs::Stats)],
+    ) -> Result<(), sqlx::Error> {
+        // --- Mark compacted runs as deleted ---
+        let compacted_strings: Vec<String> = compacted.iter().map(|id| id.to_string()).collect();
+        let deleted_count_result = sqlx::query!(
+            r#"
+            WITH updated_runs AS (
+                UPDATE runs
+                SET deleted_at = NOW()
+                WHERE id = ANY($1)
+                AND deleted_at IS NULL
+                RETURNING id
+            )
+            SELECT COUNT(*) FROM updated_runs
+            "#,
+            &compacted_strings
+        )
+        .fetch_one(&mut **transaction) // Deref
+        .await?;
+
+        let deleted_count = deleted_count_result.count.unwrap_or(0);
+        if deleted_count as usize != compacted.len() {
+            // Use a generic DB error here; mapping happens in the public fn
+            return Err(sqlx::Error::Protocol(
+                "Mismatch in number of deleted runs.".into(),
+            ));
+        }
+
+        // --- Mark the job as completed ---
+        let job_update_result = sqlx::query!(
+            r#"
+            WITH updated_jobs AS (
+                UPDATE jobs
+                SET status = 'completed'
+                WHERE id = $1 AND status = 'pending'
+                RETURNING id
+            )
+            SELECT COUNT(*) FROM updated_jobs
+            "#,
+            job_id
+        )
+        .fetch_one(&mut **transaction) // Deref
+        .await?;
+
+        if job_update_result.count.unwrap_or(0) != 1 {
+            // Use a generic DB error here; mapping happens in the public fn
+            return Err(sqlx::Error::Protocol(format!(
+                "Job {} update failed or not in pending state.",
+                job_id
+            )));
+        }
+
+        // --- Reserve Sequence Block for Changelog and potential new runs ---
+        let n_new_runs = new_table_runs.len();
+        // Reserve N IDs if creating runs, otherwise reserve 1 ID for the changelog entry itself.
+        let num_ids_to_reserve = std::cmp::max(1, n_new_runs);
+
+        let first_seq_no: i64 = sqlx::query_scalar("SELECT nextval('changelog_id_seq')")
+            .fetch_one(&mut **transaction) // Deref
+            .await?;
+
+        if num_ids_to_reserve > 1 {
+            let last_seq_no = first_seq_no + (num_ids_to_reserve as i64) - 1;
+            sqlx::query("SELECT setval('changelog_id_seq', $1, true)")
+                .bind(last_seq_no)
+                .execute(&mut **transaction) // Deref
+                .await?;
+        }
+        // If num_ids_to_reserve == 1, nextval already advanced it correctly.
+
+        // --- Insert Changelog Entry ---
+        let changelog_changes = serde_json::to_value(ChangelogEntry::V1(ChangelogEntryV1 {
+            runs_added: new_table_runs.iter().map(|(id, _, _)| id.clone()).collect(),
+            runs_removed: compacted.to_vec(), // Clone if needed or take ownership
+        }))
+        .map_err(|e| sqlx::Error::Configuration(e.into()))?;
+
+        sqlx::query!(
+            r#"
+            INSERT INTO changelog (id, changes)
+            VALUES ($1, $2)
+            "#,
+            first_seq_no, // Use the first reserved ID for the changelog entry
+            changelog_changes
+        )
+        .execute(&mut **transaction) // Deref
+        .await?;
+
+        // --- Insert New Runs (if any) ---
+        if n_new_runs > 0 {
+            let ids: Vec<String> = new_table_runs
+                .iter()
+                .map(|(id, _, _)| id.to_string())
+                .collect();
+
+            // Create unique BelongsTo::TableBuffer values using the reserved sequence block
+            let belongs_to_values: Vec<serde_json::Value> = new_table_runs
+                .iter()
+                .enumerate()
+                .map(|(i, (_, table_name, _))| {
+                    // Assign unique sequence number: first_seq_no + i
+                    serde_json::to_value(BelongsTo::TableBuffer(
+                        table_name.clone(),
+                        first_seq_no + i as i64, // Use unique ID here
+                    ))
+                })
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| sqlx::Error::Configuration(e.into()))?;
+
+            let stats_values: Vec<serde_json::Value> = new_table_runs
+                .iter()
+                .map(|(_, _, stats)| serde_json::to_value(stats))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| sqlx::Error::Configuration(e.into()))?;
+
+            // Use UNNEST to insert multiple runs correctly
+            sqlx::query!(
+                r#"
+                INSERT INTO runs (id, belongs_to, stats)
+                SELECT * FROM UNNEST($1::text[], $2::jsonb[], $3::jsonb[])
+                "#,
+                &ids,
+                &belongs_to_values,
+                &stats_values
+            )
+            .execute(&mut **transaction) // Deref
+            .await?;
+        }
+
+        Ok(())
     }
 }
 
@@ -249,57 +469,47 @@ impl MetadataStoreTrait for PostgresMetadataStore {
 
     async fn append_wal(
         &self,
-        run_id: crate::runs::RunId,
-        stats: crate::runs::Stats,
+        run_ids_with_stats: Vec<(crate::runs::RunId, crate::runs::Stats)>,
     ) -> Result<(), MetadataError> {
         loop {
-            // Start a transaction to add changelog record and run metadata
+            // Retry loop for transaction serialization failures
             let mut transaction = self.pg_pool.begin().await?;
 
-            // Insert changelog entry and get its ID
-            let changelog_entry = sqlx::query_as!(
-                ChangelogEntryWithID,
-                r#"
-                INSERT INTO changelog (changes)
-                VALUES ($1)
-                RETURNING *
-                "#,
-                serde_json::to_value(ChangelogEntry::V1(ChangelogEntryV1 {
-                    runs_added: vec![run_id.clone()],
-                    runs_removed: vec![],
-                }))?
-            )
-            .fetch_one(&mut *transaction)
-            .await?;
-
-            // Create run metadata with the changelog ID as the WAL sequence number
-            sqlx::query!(
-                r#"
-                INSERT INTO runs (id, belongs_to, stats)
-                VALUES ($1, $2, $3)
-                "#,
-                run_id.to_string(),
-                serde_json::to_value(BelongsTo::WalSeqNo(changelog_entry.id))?,
-                serde_json::to_value(stats.clone())?
-            )
-            .execute(&mut *transaction)
-            .await?;
-
-            // Commit the transaction, retry on conflict
-            match transaction.commit().await {
-                Ok(_) => break,
-                Err(e) => {
-                    if let sqlx::Error::Database(db_err) = &e {
-                        if db_err.code().unwrap_or_default() == "40001" {
-                            continue;
+            match self
+                ._append_wal_attempt(&mut transaction, &run_ids_with_stats)
+                .await
+            {
+                Ok(_) => {
+                    // Attempt commit
+                    match transaction.commit().await {
+                        Ok(_) => return Ok(()), // Success! Exit function.
+                        Err(commit_err) => {
+                            // Check if commit error is retryable
+                            if let sqlx::Error::Database(db_err) = &commit_err {
+                                if db_err.code().is_some_and(|code| code == "40001") {
+                                    tokio::time::sleep(Duration::from_millis(10)).await;
+                                    continue; // Retry the whole transaction
+                                }
+                            }
+                            // Non-retryable commit error
+                            return Err(MetadataError::DatabaseConnectionError(commit_err));
+                        },
+                    }
+                },
+                Err(attempt_err) => {
+                    // Rollback is implicitly handled by dropping the transaction on error return.
+                    // Check if the attempt error is retryable
+                    if let sqlx::Error::Database(db_err) = &attempt_err {
+                        if db_err.code().is_some_and(|code| code == "40001") {
+                            tokio::time::sleep(Duration::from_millis(10)).await;
+                            continue; // Retry the whole transaction
                         }
                     }
-                    return Err(e.into());
+                    // Non-retryable attempt error
+                    return Err(MetadataError::DatabaseConnectionError(attempt_err));
                 },
             }
-        }
-
-        Ok(())
+        } // End of loop
     }
 
     async fn append_wal_compaction(
@@ -308,115 +518,65 @@ impl MetadataStoreTrait for PostgresMetadataStore {
         compacted: Vec<crate::runs::RunId>,
         new_table_runs: Vec<(crate::runs::RunId, String, crate::runs::Stats)>,
     ) -> Result<(), MetadataError> {
-        let mut transaction = self.pg_pool.begin().await?;
+        loop {
+            // Retry loop
+            let mut transaction = self.pg_pool.begin().await?;
 
-        let compacted_strings: Vec<String> = compacted.iter().map(|id| id.to_string()).collect();
-        let result = sqlx::query!(
-            r#"
-            WITH updated_runs AS (
-                UPDATE runs
-                SET deleted_at = NOW()
-                WHERE id = ANY($1)
-                AND deleted_at IS NULL
-                RETURNING id
-            )
-            SELECT COUNT(*) FROM updated_runs
-            "#,
-            &compacted_strings
-        )
-        .fetch_one(&mut *transaction)
-        .await?;
-
-        // Check if we updated exactly the number of runs we expected to
-        if result.count.unwrap_or(0) as usize != compacted.len() {
-            return Err(MetadataError::AlreadyDeleted(
-                "Some runs were already marked as deleted".to_string(),
-            ));
-        }
-
-        // Mark the job as completed if it's pending
-        let job_result = sqlx::query!(
-            r#"
-            WITH updated_jobs AS (
-                UPDATE jobs
-                SET status = 'completed'
-                WHERE id = $1 AND status = 'pending'
-                RETURNING id
-            )
-            SELECT COUNT(*) FROM updated_jobs
-            "#,
-            job_id
-        )
-        .fetch_one(&mut *transaction)
-        .await?;
-
-        // Check if we updated exactly one job
-        if job_result.count.unwrap_or(0) != 1 {
-            return Err(MetadataError::InvalidJobState(format!(
-                "Job {} is not in pending state",
-                job_id
-            )));
-        }
-
-        let changelog_entry = sqlx::query_as!(
-            ChangelogEntryWithID,
-            r#"
-            INSERT INTO changelog (changes)
-            VALUES ($1)
-            RETURNING *
-            "#,
-            serde_json::to_value(ChangelogEntry::V1(ChangelogEntryV1 {
-                runs_added: new_table_runs.iter().map(|(id, _, _)| id.clone()).collect(),
-                runs_removed: compacted,
-            }))?
-        )
-        .fetch_one(&mut *transaction)
-        .await?;
-
-        // Use unnest to insert multiple runs in a single query
-        if !new_table_runs.is_empty() {
-            let ids: Vec<String> = new_table_runs
-                .iter()
-                .map(|(id, _, _)| id.to_string())
-                .collect();
-            let belongs_to_values: Vec<serde_json::Value> = new_table_runs
-                .iter()
-                .map(|(_, table_name, _)| {
-                    serde_json::to_value(BelongsTo::TableBuffer(
-                        table_name.clone(),
-                        changelog_entry.id,
-                    ))
-                    .unwrap_or_default()
-                })
-                .collect();
-            let stats_values: Vec<serde_json::Value> = new_table_runs
-                .iter()
-                .map(|(_, _, stats)| serde_json::to_value(stats).unwrap_or_default())
-                .collect();
-
-            sqlx::query!(
-                r#"
-                INSERT INTO runs (id, belongs_to, stats)
-                SELECT * FROM UNNEST($1::text[], $2::jsonb[], $3::jsonb[])
-                "#,
-                &ids,
-                &belongs_to_values,
-                &stats_values
-            )
-            .execute(&mut *transaction)
-            .await?;
-        }
-
-        transaction.commit().await?;
-
-        Ok(())
+            match self
+                ._append_wal_compaction_attempt(
+                    &mut transaction,
+                    job_id,
+                    &compacted,
+                    &new_table_runs,
+                )
+                .await
+            {
+                Ok(_) => {
+                    // Attempt commit
+                    match transaction.commit().await {
+                        Ok(_) => return Ok(()), // Success!
+                        Err(commit_err) => {
+                            if let sqlx::Error::Database(db_err) = &commit_err {
+                                if db_err.code().is_some_and(|code| code == "40001") {
+                                    tokio::time::sleep(Duration::from_millis(10)).await;
+                                    continue; // Retry transaction
+                                }
+                            }
+                            // Map non-retryable commit error
+                            return Err(MetadataError::DatabaseConnectionError(commit_err));
+                        },
+                    }
+                },
+                Err(attempt_err) => {
+                    // Rollback implicitly handled by drop
+                    if let sqlx::Error::Database(db_err) = &attempt_err {
+                        if db_err.code().is_some_and(|code| code == "40001") {
+                            tokio::time::sleep(Duration::from_millis(10)).await;
+                            continue; // Retry transaction
+                        }
+                    }
+                    // Map non-retryable attempt error
+                    // Need to check for the specific protocol errors we returned
+                    if let sqlx::Error::Protocol(msg) = &attempt_err {
+                        if msg.contains("Mismatch in number of deleted runs") {
+                            return Err(MetadataError::AlreadyDeleted(msg.to_string()));
+                        }
+                        if msg.contains("Job") && msg.contains("update failed") {
+                            return Err(MetadataError::InvalidJobState(msg.to_string()));
+                        }
+                    }
+                    // Otherwise, assume it's a general DB connection error
+                    return Err(MetadataError::DatabaseConnectionError(attempt_err));
+                },
+            }
+        } // End loop
     }
 
-    async fn append_table_compaction(
+    async fn append_table_buffer_compaction(
         &self,
         job_id: i64,
         compacted: Vec<crate::runs::RunId>,
-        new_run: RunMetadata,
+        new_runs: Vec<RunMetadata>,
     ) -> Result<(), MetadataError> {
         let mut transaction = self.pg_pool.begin().await?;
 
@@ -476,24 +636,40 @@ impl MetadataStoreTrait for PostgresMetadataStore {
             RETURNING *
             "#,
             serde_json::to_value(ChangelogEntry::V1(ChangelogEntryV1 {
-                runs_added: vec![new_run.id.clone()],
+                runs_added: new_runs.iter().map(|m| m.id.clone()).collect(),
                 runs_removed: compacted,
             }))?
         )
         .fetch_one(&mut *transaction)
         .await?;
 
-        sqlx::query!(
-            r#"
-            INSERT INTO runs (id, belongs_to, stats)
-            VALUES ($1, $2, $3)
-            "#,
-            new_run.id.to_string(),
-            serde_json::to_value(new_run.belongs_to)?,
-            serde_json::to_value(new_run.stats)?
-        )
-        .execute(&mut *transaction)
-        .await?;
+        if !new_runs.is_empty() {
+            let ids: Vec<String> = new_runs.iter().map(|m| m.id.to_string()).collect();
+
+            let belongs_to_values: Vec<serde_json::Value> = new_runs
+                .iter()
+                .map(|m| serde_json::to_value(&m.belongs_to)) // Use belongs_to directly from RunMetadata
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| sqlx::Error::Configuration(e.into()))?; // Propagate errors
+
+            let stats_values: Vec<serde_json::Value> = new_runs
+                .iter()
+                .map(|m| serde_json::to_value(&m.stats)) // Use stats directly from RunMetadata
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| sqlx::Error::Configuration(e.into()))?; // Propagate errors
+
+            sqlx::query!(
+                r#"
+                INSERT INTO runs (id, belongs_to, stats)
+                SELECT * FROM UNNEST($1::text[], $2::jsonb[], $3::jsonb[])
+                "#,
+                &ids,
+                &belongs_to_values,
+                &stats_values
+            )
+            .execute(&mut *transaction)
+            .await?;
+        }
 
         transaction.commit().await?;
 

@@ -1,5 +1,8 @@
 default: check
 
+sqlx:
+    sqlx database setup
+
 check:
     cargo fmt --all
     cargo clippy -- -D warnings

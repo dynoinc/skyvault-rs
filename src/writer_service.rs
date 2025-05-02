@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use futures::TryStreamExt;
 use thiserror::Error;
 use tonic::{Request, Response, Status};
 
@@ -99,7 +100,6 @@ impl MyWriter {
         storage: &storage::ObjectStore,
         batch: Vec<Vec<crate::runs::WriteOperation>>,
     ) -> Result<(), WriterServiceError> {
-        let run_id = crate::runs::RunId(ulid::Ulid::new().to_string());
         let sorted_ops = batch
             .into_iter()
             .flat_map(|req| req.into_iter())
@@ -107,10 +107,16 @@ impl MyWriter {
             .collect::<BTreeMap<_, _>>();
 
         let ops_stream = futures::stream::iter(sorted_ops.into_values().map(Ok));
-        let (data, stats) = crate::runs::build_run(ops_stream).await?;
-        storage.put_run(run_id.clone(), data).await?;
+        let wal_runs: Vec<_> = crate::runs::build_runs(ops_stream).try_collect().await?;
 
-        metadata.append_wal(run_id, stats).await?;
+        let mut wal_run_ids = Vec::new();
+        for (run_data, stats) in wal_runs {
+            let run_id = crate::runs::RunId(ulid::Ulid::new().to_string());
+            storage.put_run(run_id.clone(), run_data).await?;
+            wal_run_ids.push((run_id, stats));
+        }
+
+        metadata.append_wal(wal_run_ids).await?;
         Ok(())
     }
 }

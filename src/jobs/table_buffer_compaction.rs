@@ -98,10 +98,31 @@ pub async fn execute(
     }
 
     let merged_stream = k_way::merge(run_streams);
-    let (run_data, stats) = crate::runs::build_run(merged_stream).await?;
+    let run_stream = crate::runs::build_runs(merged_stream);
 
-    let run_id = crate::runs::RunId(ulid::Ulid::new().to_string());
-    object_store.put_run(run_id.clone(), run_data).await?;
+    let mut new_runs = Vec::new();
+
+    tokio::pin!(run_stream);
+    while let Some(result) = run_stream.try_next().await? {
+        let (run_data, stats) = result;
+        let run_id = crate::runs::RunId(ulid::Ulid::new().to_string());
+
+        // Store the run immediately
+        object_store.put_run(run_id.clone(), run_data).await?;
+
+        // Collect the run ID and stats
+        new_runs.push(crate::metadata::RunMetadata {
+            id: run_id,
+            belongs_to: crate::metadata::BelongsTo::TableTree(table_name.clone(), 0),
+            stats,
+        });
+    }
+
+    if new_runs.is_empty() {
+        return Err(JobError::Internal(
+            "No runs were generated during compaction".into(),
+        ));
+    }
 
     let compacted = table
         .buffer
@@ -117,12 +138,7 @@ pub async fn execute(
         .collect();
 
     metadata_store
-        .append_table_compaction(job_id, compacted, crate::metadata::RunMetadata {
-            id: run_id,
-            belongs_to: crate::metadata::BelongsTo::TableTree(table_name, 0),
-            stats,
-        })
+        .append_table_buffer_compaction(job_id, compacted, new_runs)
         .await?;
-
     Ok(())
 }
