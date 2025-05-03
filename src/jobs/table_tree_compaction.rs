@@ -3,7 +3,7 @@ use futures::stream::{self, BoxStream, StreamExt, TryStreamExt};
 
 use super::JobError;
 use crate::forest::State;
-use crate::jobs::k_way;
+use crate::k_way;
 use crate::metadata::{self, MetadataStore};
 use crate::runs::{RunError, RunId, Stats, StatsV1, WriteOperation};
 use crate::storage::ObjectStore;

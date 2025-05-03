@@ -35,6 +35,27 @@ impl WriteOperation {
     }
 }
 
+impl From<proto::GetFromRunItem> for WriteOperation {
+    fn from(op: proto::GetFromRunItem) -> Self {
+        match op.result {
+            Some(proto::get_from_run_item::Result::Value(v)) => WriteOperation::Put(op.key, v),
+            Some(proto::get_from_run_item::Result::Deleted(_)) => WriteOperation::Delete(op.key),
+            None => panic!("Invalid GetFromRunItem: no result"),
+        }
+    }
+}
+
+impl Into<proto::GetFromRunItem> for WriteOperation {
+    fn into(self) -> proto::GetFromRunItem {
+        proto::GetFromRunItem {
+            key: self.key().to_string(),
+            result: match self {
+                WriteOperation::Put(_, value) => Some(proto::get_from_run_item::Result::Value(value)),
+                WriteOperation::Delete(_) => Some(proto::get_from_run_item::Result::Deleted(())),
+            },
+        }
+    }
+}
 // Result of searching within a run
 #[derive(Debug, PartialEq, Eq)]
 pub enum SearchResult {

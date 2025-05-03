@@ -7,8 +7,6 @@ mod table_buffer_compaction;
 mod table_tree_compaction;
 mod wal_compaction;
 
-mod k_way;
-
 #[derive(Debug, thiserror::Error)]
 pub enum JobError {
     #[error("Metadata error: {0}")]

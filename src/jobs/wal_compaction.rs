@@ -5,7 +5,7 @@ use tokio::sync::mpsc;
 
 use super::JobError;
 use crate::forest::State;
-use crate::jobs::k_way;
+use crate::k_way;
 use crate::metadata::{self, MetadataStore, TableName};
 use crate::runs::{RunError, Stats, WriteOperation};
 use crate::storage::ObjectStore;

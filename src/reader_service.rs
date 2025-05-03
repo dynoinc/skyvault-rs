@@ -14,6 +14,8 @@ use crate::pod_watcher::{self, PodChange, PodWatcherError};
 use crate::proto;
 use crate::proto::cache_service_client::CacheServiceClient;
 use crate::proto::reader_service_server::ReaderService;
+use crate::runs::Stats;
+use crate::runs::WriteOperation;
 
 #[derive(Debug, Error)]
 pub enum ReaderServiceError {
@@ -127,6 +129,34 @@ impl MyReader {
         };
 
         run_conn.get_from_run(request).await
+    }
+
+    async fn table_scan_run(
+        &self,
+        routing_key: String,
+        request: Request<proto::ScanFromRunRequest>,
+    ) -> Result<Response<proto::ScanFromRunResponse>, Status> {
+        let scan_pod = {
+            let consistent_hashring = self.consistent_hashring.lock().unwrap();
+            consistent_hashring.get_node(&routing_key)
+        };
+
+        let scan_pod = match scan_pod {
+            Some(pod) => pod,
+            None => return Err(Status::internal("No reader service pods available")),
+        };
+
+        let mut scan_conn = match self.get_connection(&scan_pod).await {
+            Ok(conn) => conn,
+            Err(e) => {
+                return Err(Status::internal(format!(
+                    "No connection to reader service pod for scan: {}",
+                    e
+                )));
+            },
+        };
+
+        scan_conn.scan_from_run(request).await
     }
 
     async fn table_get_batch(
@@ -252,6 +282,138 @@ impl MyReader {
                 .collect(),
         }))
     }
+
+    async fn table_scan(
+        &self,
+        forest_state: Arc<crate::forest::State>,
+        request: proto::ScanRequest,
+    ) -> Result<proto::ScanResponse, Status> {
+        let table_name = metadata::TableName::from(request.table_name);
+        let table_prefix_len = table_name.len() + 1;
+
+        let mut responses = Vec::new();
+        if !forest_state.wal.is_empty() {
+            let wal_request = proto::ScanFromRunRequest {
+                run_ids: forest_state.wal.values().rev().map(|r| r.id.to_string()).collect(),
+                exclusive_start_key: format!("{table_name}.{}", &request.exclusive_start_key),
+                max_results: request.max_results,
+            };
+
+            let wal_response_fut = self
+                .table_scan_run("wal".to_string(), Request::new(wal_request))
+                .map(|r| r.map(|r| r.into_inner().items.into_iter().map(|mut item| {
+                    proto::GetFromRunItem {
+                        key: item.key.split_off(table_prefix_len),
+                        result: item.result,
+                    }
+                }).collect()));
+
+            responses.push(wal_response_fut.boxed());
+        }
+
+        if let Some(table) = forest_state.tables.get(&table_name) {
+            for (_, run_metadata) in table.buffer.iter().rev() {
+                let run_id = run_metadata.id.clone();
+
+                let run_request = proto::ScanFromRunRequest {
+                    run_ids: vec![run_id.to_string()],
+                    exclusive_start_key: request.exclusive_start_key.clone(),
+                    max_results: request.max_results,
+                };
+
+                let run_response_fut = self
+                    .table_scan_run(run_id.to_string(), Request::new(run_request))
+                    .map(|r| r.map(|r| r.into_inner().items));
+
+                responses.push(run_response_fut.boxed());
+            }
+
+            for (_, run_metadatas) in table.tree.iter() {
+                // Find the first run metadata that can include keys starting after the exclusive start key
+                let run_metadata_entry = run_metadatas
+                    .values()
+                    .filter(|run_metadata| {
+                        match &run_metadata.stats {
+                            Stats::StatsV1(stats) => {
+                                // A run might contain keys greater than the exclusive_start_key
+                                // if its maximum key is greater than the exclusive_start_key.
+                                stats.max_key > request.exclusive_start_key
+                            },
+                        }
+                    })
+                    .next();
+
+                if let Some(run_metadata) = run_metadata_entry {
+                    let run_id = run_metadata.id.clone();
+
+                    let run_request = proto::ScanFromRunRequest {
+                        run_ids: vec![run_id.to_string()],
+                        exclusive_start_key: request.exclusive_start_key.clone(),
+                        max_results: request.max_results,
+                    };
+
+                    let run_response_fut = self
+                        .table_scan_run(run_id.to_string(), Request::new(run_request))
+                        .map(|r| r.map(|r| r.into_inner().items));
+
+                    responses.push(run_response_fut.boxed());
+                }
+            }
+        }
+
+        let responses = futures::future::join_all(responses).await;
+
+        let mut streams_to_merge = Vec::new();
+        for (index, response) in responses.into_iter().enumerate() {
+            match response {
+                Ok(items) => {
+                    // Convert Vec<proto::GetFromRunItem> to Stream<Item = Result<WriteOperation, RunError>>
+                    // Filter out items with None result and map others to WriteOperation
+                    let stream = futures::stream::iter(items.into_iter().map(|item| {
+                        Ok(item.into())
+                    }));
+
+                    // Assign priority: Higher index (later stages like tree runs) gets lower SeqNo.
+                    // usize::MAX ensures WAL (index 0) gets the highest priority.
+                    let seq_no = metadata::SeqNo::from(i64::MAX - index as i64);
+                    // Box the stream as they are of different underlying types now
+                    streams_to_merge.push((seq_no, stream.boxed()));
+                }
+                Err(e) => {
+                    // Propagate the gRPC error from individual run scans
+                    error!("Error scanning run: {}", e);
+                    return Err(Status::internal(format!("Error scanning run: {}", e)));
+                }
+            }
+        }
+
+        // Merge the streams using k-way merge
+        // The merge function handles key ordering and uses SeqNo to pick the latest version per key.
+        let merged_stream = crate::k_way::merge(streams_to_merge);
+
+        // Process the merged stream: filter out deletes, handle potential errors from merge, take max results
+        let merged_items = merged_stream
+            .filter_map(|result| async move {
+                match result {
+                    // Keep Put operations and convert them to ScanItem
+                    Ok(WriteOperation::Put(key, value)) => Some(proto::ScanItem { key, value }),
+                    // Filter out Delete operations
+                    Ok(WriteOperation::Delete(_)) => None,
+                    // Log errors from the merge process itself (should be rare)
+                    Err(e) => {
+                        panic!("Error during k-way merge stream processing: {}", e);
+                    }
+                }
+            })
+            .take(request.max_results as usize) // Limit the number of results
+            .collect::<Vec<_>>()
+            .await;
+
+        // Construct the final response
+        Ok(proto::ScanResponse {
+            items: merged_items,
+        })
+    }
 }
 
 #[tonic::async_trait]
@@ -296,8 +458,15 @@ impl ReaderService for MyReader {
 
     async fn scan(
         &self,
-        _request: Request<proto::ScanRequest>,
+        request: Request<proto::ScanRequest>,
     ) -> Result<Response<proto::ScanResponse>, Status> {
-        todo!()
+        if request.get_ref().max_results == 0 || request.get_ref().max_results > 10_000 {
+            return Err(Status::invalid_argument("max_results must be between 1 and 10000"));
+        }
+
+        let forest_state = self.forest.get_state();
+        let request = request.into_inner();
+        let response = self.table_scan(forest_state, request).await?;
+        Ok(Response::new(response))
     }
 }

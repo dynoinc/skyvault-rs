@@ -135,7 +135,7 @@ pub struct StorageCache {
     storage: ObjectStore,
 
     /// In-memory cache of run data
-    cache: Arc<RwLock<HashMap<crate::runs::RunId, Arc<Vec<u8>>>>>,
+    cache: Arc<RwLock<HashMap<crate::runs::RunId, Bytes>>>,
 }
 
 impl StorageCache {
@@ -148,7 +148,7 @@ impl StorageCache {
     }
 
     /// Get run data from cache or storage if not cached
-    pub async fn get_run(&self, run_id: crate::runs::RunId) -> Result<Arc<Vec<u8>>, StorageError> {
+    pub async fn get_run(&self, run_id: crate::runs::RunId) -> Result<Bytes, StorageError> {
         // First check if the run is in the cache
         {
             let cache = self.cache.read().unwrap();
@@ -159,7 +159,7 @@ impl StorageCache {
 
         // Not in cache, fetch from storage
         let run_stream = self.storage.get_run(run_id.clone()).await?;
-        let run_data = Arc::new(run_stream.collect().await?.to_vec());
+        let run_data = bytes::Bytes::from(run_stream.collect().await?.to_vec());
 
         // Update cache
         {
