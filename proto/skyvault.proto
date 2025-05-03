@@ -89,10 +89,16 @@ service OrchestratorService {
   rpc GetJobStatus (GetJobStatusRequest) returns (GetJobStatusResponse);
 }
 
+message TableTreeCompaction {
+  string table_name = 1;
+  uint64 level = 2;
+}
+
 message KickOffJobRequest {
   oneof job {
     bool wal_compaction = 1;
     string table_buffer_compaction = 2;
+    TableTreeCompaction table_tree_compaction = 3;
   }
 }
 

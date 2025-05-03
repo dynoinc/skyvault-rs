@@ -12,7 +12,6 @@ CREATE TABLE IF NOT EXISTS changelog (
 
 CREATE TABLE IF NOT EXISTS jobs (
     id BIGSERIAL PRIMARY KEY,
-    typ TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending',
     job JSONB NOT NULL DEFAULT '{}',
     output JSONB NOT NULL DEFAULT '{}'

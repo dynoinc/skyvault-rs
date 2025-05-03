@@ -61,7 +61,7 @@ pub async fn execute(
         })
         .collect::<Vec<_>>();
 
-    if let Some(level0) = table.tree.get(&metadata::Level::from(0)) {
+    if let Some(level0) = table.tree.get(&metadata::Level::zero()) {
         let object_store_clone = object_store.clone();
         let level0_run_ids: Vec<_> = level0.values().map(|m| m.id.clone()).collect();
 
@@ -94,6 +94,7 @@ pub async fn execute(
             })
             .flatten();
 
+        // Add this at seq_no 0, so it has the lowest priority
         run_streams.push((metadata::SeqNo::from(0), Box::pin(level0_streams)));
     }
 
@@ -115,7 +116,7 @@ pub async fn execute(
             id: run_id,
             belongs_to: crate::metadata::BelongsTo::TableTree(
                 table_name.clone(),
-                metadata::Level::from(0),
+                metadata::Level::zero(),
             ),
             stats,
         });
@@ -134,14 +135,14 @@ pub async fn execute(
         .chain(
             table
                 .tree
-                .get(&metadata::Level::from(0))
+                .get(&metadata::Level::zero())
                 .into_iter()
                 .flat_map(|level0| level0.iter().map(|(_, metadata)| metadata.id.clone())),
         )
         .collect();
 
     metadata_store
-        .append_table_buffer_compaction(job_id, compacted, new_runs)
+        .append_table_compaction(job_id, compacted, new_runs)
         .await?;
     Ok(())
 }

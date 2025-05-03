@@ -3,7 +3,7 @@ use thiserror::Error;
 use tonic::{Request, Response, Status};
 
 use crate::forest::{Forest, ForestError};
-use crate::metadata::{JobParams, MetadataStore, TableName};
+use crate::metadata::{JobParams, Level, MetadataStore, TableName};
 use crate::proto::orchestrator_service_server::OrchestratorService;
 use crate::proto::{
     self, DumpChangelogRequest, DumpChangelogResponse, DumpForestRequest, DumpForestResponse,
@@ -76,7 +76,7 @@ impl MyOrchestrator {
                     "Total size of WALs {total_wal_size} exceeds 100MB, scheduling compaction",
                 );
 
-                if let Err(e) = self.metadata.schedule_wal_compaction().await {
+                if let Err(e) = self.metadata.schedule_job(JobParams::WALCompaction).await {
                     tracing::error!("Failed to schedule WAL compaction: {}", e);
                 }
             }
@@ -98,11 +98,41 @@ impl MyOrchestrator {
 
                     if let Err(e) = self
                         .metadata
-                        .schedule_table_buffer_compaction(table_name.clone())
+                        .schedule_job(JobParams::TableBufferCompaction(table_name.clone()))
                         .await
                     {
                         tracing::error!("Failed to schedule table buffer compaction: {}", e);
                     }
+                }
+
+                let mut max_level_size = 1_000_000_000;
+                for (level, runs) in table.tree.iter() {
+                    let total_level_size = runs
+                        .values()
+                        .map(|r| match &r.stats {
+                            crate::runs::Stats::StatsV1(stats) => stats.size_bytes,
+                        })
+                        .sum::<u64>();
+
+                    if total_level_size > max_level_size {
+                        tracing::info!(
+                            "Level {level} size {total_level_size} exceeds max level size \
+                             {max_level_size}, scheduling compaction"
+                        );
+
+                        if let Err(e) = self
+                            .metadata
+                            .schedule_job(JobParams::TableTreeCompaction(
+                                table_name.clone(),
+                                *level,
+                            ))
+                            .await
+                        {
+                            tracing::error!("Failed to schedule table tree compaction: {}", e);
+                        }
+                    }
+
+                    max_level_size *= 10;
                 }
             }
 
@@ -132,6 +162,18 @@ impl MyOrchestrator {
                         {
                             tracing::error!(
                                 "Failed to create k8s job for table buffer compaction: {}",
+                                e
+                            );
+                        }
+                    },
+                    (id, JobParams::TableTreeCompaction(_, _)) => {
+                        tracing::info!("Kicking off table tree compaction job with ID: {}", id);
+                        if let Err(e) = self
+                            .create_k8s_job(id.to_string(), "table-tree-compaction")
+                            .await
+                        {
+                            tracing::error!(
+                                "Failed to create k8s job for table tree compaction: {}",
                                 e
                             );
                         }
@@ -291,11 +333,21 @@ impl OrchestratorService for MyOrchestrator {
     ) -> Result<Response<KickOffJobResponse>, Status> {
         let r = match request.into_inner().job {
             Some(proto::kick_off_job_request::Job::WalCompaction(true)) => {
-                self.metadata.schedule_wal_compaction().await
+                self.metadata.schedule_job(JobParams::WALCompaction).await
             },
             Some(proto::kick_off_job_request::Job::TableBufferCompaction(table_name)) => {
                 self.metadata
-                    .schedule_table_buffer_compaction(TableName::from(table_name))
+                    .schedule_job(JobParams::TableBufferCompaction(TableName::from(
+                        table_name,
+                    )))
+                    .await
+            },
+            Some(proto::kick_off_job_request::Job::TableTreeCompaction(table_tree_compaction)) => {
+                self.metadata
+                    .schedule_job(JobParams::TableTreeCompaction(
+                        TableName::from(table_tree_compaction.table_name),
+                        Level::from(table_tree_compaction.level),
+                    ))
                     .await
             },
             _ => return Err(Status::invalid_argument("Invalid job type")),

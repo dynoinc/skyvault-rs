@@ -56,10 +56,11 @@ pub enum RunError {
     EmptyInput,
 }
 
-const CURRENT_VERSION: u8 = 1;
-const MARKER_PUT: u8 = 0x01;
-const MARKER_DELETE: u8 = 0x00;
-const MAX_RUN_SIZE_BYTES: u64 = 128 * 1024 * 1024; // 128 MiB
+pub const MAX_RUN_SIZE_BYTES: u64 = 10 * 1024 * 1024; // 10 MB
+pub const CURRENT_VERSION: u8 = 1;
+
+const MARKER_PUT: u8 = 1;
+const MARKER_DELETE: u8 = 2;
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct StatsV1 {
@@ -105,7 +106,7 @@ impl From<Stats> for proto::run_metadata::Stats {
 /// - There's an I/O error during serialization or reading the input stream
 pub fn build_runs<S>(mut operations: S) -> impl Stream<Item = Result<(Bytes, Stats), RunError>>
 where
-    S: Stream<Item = Result<WriteOperation, RunError>> + Unpin + Send + Sync + 'static,
+    S: Stream<Item = Result<WriteOperation, RunError>> + Unpin + Send + 'static,
 {
     async_stream::stream! {
         let mut min_key: Option<String> = None;

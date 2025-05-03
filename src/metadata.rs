@@ -94,6 +94,27 @@ impl Display for SeqNo {
 )]
 pub struct Level(u64);
 
+impl Level {
+    pub fn max() -> Self {
+        // 0 - 100MB
+        // 1 - 1GB
+        // 2 - 10GB
+        // 3 - 100GB
+        // 4 - 1TB
+        // 5 - 10TB
+        // 6 - 100TB (order of scale we want to support)
+        Level(6)
+    }
+
+    pub fn zero() -> Self {
+        Level(0)
+    }
+
+    pub fn next(&self) -> Self {
+        Level(self.0 + 1)
+    }
+}
+
 impl From<u64> for Level {
     fn from(value: u64) -> Self {
         Level(value)
@@ -103,6 +124,12 @@ impl From<u64> for Level {
 impl From<Level> for u64 {
     fn from(value: Level) -> Self {
         value.0
+    }
+}
+
+impl Display for Level {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
     }
 }
 
@@ -216,10 +243,11 @@ pub struct ChangelogEntryWithID {
     pub changes: ChangelogEntry,
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub enum JobParams {
     WALCompaction,
     TableBufferCompaction(TableName),
+    TableTreeCompaction(TableName, Level),
 }
 
 pub enum JobStatus {
@@ -260,7 +288,7 @@ pub trait MetadataStoreTrait: Send + Sync + 'static {
         new_table_runs: Vec<(crate::runs::RunId, TableName, crate::runs::Stats)>,
     ) -> Result<SeqNo, MetadataError>;
 
-    async fn append_table_buffer_compaction(
+    async fn append_table_compaction(
         &self,
         job_id: JobId,
         compacted: Vec<crate::runs::RunId>,
@@ -272,12 +300,7 @@ pub trait MetadataStoreTrait: Send + Sync + 'static {
         run_ids: Vec<crate::runs::RunId>,
     ) -> Result<HashMap<crate::runs::RunId, RunMetadata>, MetadataError>;
 
-    async fn schedule_wal_compaction(&self) -> Result<JobId, MetadataError>;
-
-    async fn schedule_table_buffer_compaction(
-        &self,
-        table_name: TableName,
-    ) -> Result<JobId, MetadataError>;
+    async fn schedule_job(&self, job_params: JobParams) -> Result<JobId, MetadataError>;
 
     async fn get_job_status(&self, job_id: JobId) -> Result<JobStatus, MetadataError>;
 
@@ -710,7 +733,7 @@ impl MetadataStoreTrait for PostgresMetadataStore {
         } // End loop
     }
 
-    async fn append_table_buffer_compaction(
+    async fn append_table_compaction(
         &self,
         job_id: JobId,
         compacted: Vec<crate::runs::RunId>,
@@ -840,17 +863,17 @@ impl MetadataStoreTrait for PostgresMetadataStore {
             .collect())
     }
 
-    async fn schedule_wal_compaction(&self) -> Result<JobId, MetadataError> {
+    async fn schedule_job(&self, job_params: JobParams) -> Result<JobId, MetadataError> {
         let mut transaction = self.pg_pool.begin().await?;
 
-        // Check if there's already a wal_compaction job in pending or running state
+        // Check if there's already a job in pending or running state
         let existing_job = sqlx::query!(
             r#"
             SELECT id FROM jobs 
-            WHERE typ = $1 AND status IN ('pending', 'running')
+            WHERE status IN ('pending', 'running') AND job = $1
             LIMIT 1
             "#,
-            "wal_compaction"
+            serde_json::to_value(job_params.clone())?
         )
         .fetch_optional(&mut *transaction)
         .await?;
@@ -861,54 +884,11 @@ impl MetadataStoreTrait for PostgresMetadataStore {
         } else {
             let result = sqlx::query!(
                 r#"
-                INSERT INTO jobs (typ, job)
-                VALUES ($1, $2)
+                INSERT INTO jobs (job)
+                VALUES ($1)
                 RETURNING id
                 "#,
-                "wal_compaction",
-                serde_json::to_value(JobParams::WALCompaction)?
-            )
-            .fetch_one(&mut *transaction)
-            .await?;
-
-            result.id
-        };
-
-        transaction.commit().await?;
-
-        Ok(JobId::from(job_id))
-    }
-
-    async fn schedule_table_buffer_compaction(
-        &self,
-        table_name: TableName,
-    ) -> Result<JobId, MetadataError> {
-        let mut transaction = self.pg_pool.begin().await?;
-
-        // Check if there's already a table_buffer_compaction job in pending or running state
-        let existing_job = sqlx::query!(
-            r#"
-            SELECT id FROM jobs 
-            WHERE typ = $1 AND status IN ('pending', 'running')
-            LIMIT 1
-            "#,
-            "table_buffer_compaction"
-        )
-        .fetch_optional(&mut *transaction)
-        .await?;
-
-        // Get job_id from existing job or create a new one
-        let job_id = if let Some(job) = existing_job {
-            job.id
-        } else {
-            let result = sqlx::query!(
-                r#"
-                INSERT INTO jobs (typ, job)
-                VALUES ($1, $2)
-                RETURNING id
-                "#,
-                "table_buffer_compaction",
-                serde_json::to_value(JobParams::TableBufferCompaction(table_name))?
+                serde_json::to_value(job_params)?
             )
             .fetch_one(&mut *transaction)
             .await?;
@@ -991,7 +971,10 @@ mod tests {
         let (metadata_store, _container) = setup_test_db().await.unwrap();
 
         // Schedule a WAL compaction job
-        metadata_store.schedule_wal_compaction().await.unwrap();
+        metadata_store
+            .schedule_job(JobParams::WALCompaction)
+            .await
+            .unwrap();
 
         // Get pending jobs
         let pending_jobs = metadata_store.get_pending_jobs().await.unwrap();
@@ -1008,10 +991,16 @@ mod tests {
             JobParams::TableBufferCompaction(_) => {
                 panic!("Expected WALCompaction job, got TableBufferCompaction");
             },
+            JobParams::TableTreeCompaction(_, _) => {
+                panic!("Expected WALCompaction job, got TableTreeCompaction");
+            },
         }
 
         // Schedule another job - should not create a duplicate
-        metadata_store.schedule_wal_compaction().await.unwrap();
+        metadata_store
+            .schedule_job(JobParams::WALCompaction)
+            .await
+            .unwrap();
 
         // Verify we still have only one job
         let pending_jobs_after_second_schedule = metadata_store.get_pending_jobs().await.unwrap();

@@ -4,6 +4,7 @@ use crate::runs::RunError;
 use crate::storage::{ObjectStore, StorageError};
 
 mod table_buffer_compaction;
+mod table_tree_compaction;
 mod wal_compaction;
 
 mod k_way;
@@ -42,6 +43,10 @@ pub async fn execute(
         },
         JobParams::TableBufferCompaction(table_name) => {
             table_buffer_compaction::execute(metadata_store, object_store, job_id, table_name).await
+        },
+        JobParams::TableTreeCompaction(table_name, level) => {
+            table_tree_compaction::execute(metadata_store, object_store, job_id, table_name, level)
+                .await
         },
     }
 }

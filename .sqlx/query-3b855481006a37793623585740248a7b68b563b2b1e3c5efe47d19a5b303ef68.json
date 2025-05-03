@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            SELECT id FROM jobs \n            WHERE typ = $1 AND status IN ('pending', 'running')\n            LIMIT 1\n            ",
+  "query": "\n            SELECT id FROM jobs \n            WHERE status IN ('pending', 'running') AND job = $1\n            LIMIT 1\n            ",
   "describe": {
     "columns": [
       {
@@ -11,12 +11,12 @@
     ],
     "parameters": {
       "Left": [
-        "Text"
+        "Jsonb"
       ]
     },
     "nullable": [
       false
     ]
   },
-  "hash": "ad0c4d46876b140b97393e2c64a7dba23b0c5d9205e00ef153f2a95ac342a44e"
+  "hash": "3b855481006a37793623585740248a7b68b563b2b1e3c5efe47d19a5b303ef68"
 }
