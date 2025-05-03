@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            WITH updated_jobs AS (\n                UPDATE jobs\n                SET status = 'completed', output = $2\n                WHERE id = $1 AND status = 'pending'\n                RETURNING id\n            )\n            SELECT COUNT(*) FROM updated_jobs\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Jsonb"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "9f4769a5e3da90005ff25ff4f7dfdfa4f9424189a521fbc7b97b3b9c2a30bda1"
+}

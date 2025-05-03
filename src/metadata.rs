@@ -83,6 +83,12 @@ impl From<SeqNo> for i64 {
     }
 }
 
+impl Display for SeqNo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 #[derive(
     serde::Serialize, serde::Deserialize, Debug, Clone, Copy, Ord, PartialOrd, Eq, PartialEq, Hash,
 )]
@@ -206,8 +212,8 @@ impl From<ChangelogEntry> for proto::ChangelogEntry {
 
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 pub struct ChangelogEntryWithID {
-    id: SeqNo,
-    changes: ChangelogEntry,
+    pub id: SeqNo,
+    pub changes: ChangelogEntry,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -216,15 +222,31 @@ pub enum JobParams {
     TableBufferCompaction(TableName),
 }
 
+pub enum JobStatus {
+    Pending,
+    Completed(SeqNo),
+}
+
+impl From<JobStatus> for proto::get_job_status_response::Status {
+    fn from(status: JobStatus) -> Self {
+        match status {
+            JobStatus::Pending => proto::get_job_status_response::Status::Pending(true),
+            JobStatus::Completed(seq_no) => proto::get_job_status_response::Status::SeqNo(seq_no.0),
+        }
+    }
+}
+
 #[async_trait::async_trait]
 pub trait MetadataStoreTrait: Send + Sync + 'static {
     async fn get_changelog_snapshot(&self) -> Result<(Vec<ChangelogEntry>, SeqNo), MetadataError>;
 
-    type ChangelogStream: Stream<Item = Result<ChangelogEntry, MetadataError>> + Send + 'static;
+    type ChangelogStream: Stream<Item = Result<ChangelogEntryWithID, MetadataError>>
+        + Send
+        + 'static;
 
     async fn get_changelog(
         &self,
-    ) -> Result<(Vec<ChangelogEntry>, Self::ChangelogStream), MetadataError>;
+    ) -> Result<(Vec<ChangelogEntry>, SeqNo, Self::ChangelogStream), MetadataError>;
 
     async fn append_wal(
         &self,
@@ -257,7 +279,7 @@ pub trait MetadataStoreTrait: Send + Sync + 'static {
         table_name: TableName,
     ) -> Result<JobId, MetadataError>;
 
-    async fn get_job_status(&self, job_id: JobId) -> Result<String, MetadataError>;
+    async fn get_job_status(&self, job_id: JobId) -> Result<JobStatus, MetadataError>;
 
     async fn get_pending_jobs(&self) -> Result<Vec<(JobId, JobParams)>, MetadataError>;
 
@@ -267,7 +289,7 @@ pub trait MetadataStoreTrait: Send + Sync + 'static {
 pub type MetadataStore = Arc<
     dyn MetadataStoreTrait<
         ChangelogStream = Pin<
-            Box<dyn Stream<Item = Result<ChangelogEntry, MetadataError>> + Send + 'static>,
+            Box<dyn Stream<Item = Result<ChangelogEntryWithID, MetadataError>> + Send + 'static>,
         >,
     >,
 >;
@@ -545,18 +567,19 @@ impl MetadataStoreTrait for PostgresMetadataStore {
     }
 
     type ChangelogStream =
-        Pin<Box<dyn Stream<Item = Result<ChangelogEntry, MetadataError>> + Send + 'static>>;
+        Pin<Box<dyn Stream<Item = Result<ChangelogEntryWithID, MetadataError>> + Send + 'static>>;
 
     /// Returns a snapshot of existing changelog entries and a stream of new entries.
     /// The stream continuously polls for new entries after reaching the end of the snapshot.
     async fn get_changelog(
         &self,
-    ) -> Result<(Vec<ChangelogEntry>, Self::ChangelogStream), MetadataError> {
-        let (snapshot, mut last_id) = self.get_changelog_snapshot().await?;
+    ) -> Result<(Vec<ChangelogEntry>, SeqNo, Self::ChangelogStream), MetadataError> {
+        let (snapshot, snapshot_seq_no) = self.get_changelog_snapshot().await?;
 
         // Clone pg_pool to avoid lifetime issues
         let pg_pool = self.pg_pool.clone();
 
+        let mut last_id = snapshot_seq_no;
         let stream = stream! {
             loop {
                 let new_entries = sqlx::query_as!(
@@ -569,14 +592,14 @@ impl MetadataStoreTrait for PostgresMetadataStore {
 
                 for entry in new_entries {
                     last_id = entry.id;
-                    yield Ok(entry.changes);
+                    yield Ok(entry);
                 }
 
                 tokio::time::sleep(Duration::from_secs(1)).await;
             }
         };
 
-        Ok((snapshot, Box::pin(stream)))
+        Ok((snapshot, snapshot_seq_no, Box::pin(stream)))
     }
 
     async fn append_wal(
@@ -898,17 +921,32 @@ impl MetadataStoreTrait for PostgresMetadataStore {
         Ok(JobId::from(job_id))
     }
 
-    async fn get_job_status(&self, job_id: JobId) -> Result<String, MetadataError> {
+    async fn get_job_status(&self, job_id: JobId) -> Result<JobStatus, MetadataError> {
         let row = sqlx::query!(
             r#"
-            SELECT status FROM jobs WHERE id = $1
+            SELECT status, output FROM jobs WHERE id = $1
             "#,
             job_id.0
         )
         .fetch_one(&self.pg_pool)
         .await?;
 
-        Ok(row.status)
+        let status = match row.status.as_str() {
+            "pending" => JobStatus::Pending,
+            "completed" => {
+                let seq_no: SeqNo =
+                    serde_json::from_value(row.output).map_err(MetadataError::JsonSerdeError)?;
+                JobStatus::Completed(seq_no)
+            },
+            _ => {
+                return Err(MetadataError::InvalidJobState(format!(
+                    "Invalid job status: {}",
+                    row.status
+                )));
+            },
+        };
+
+        Ok(status)
     }
 
     async fn get_pending_jobs(&self) -> Result<Vec<(JobId, JobParams)>, MetadataError> {

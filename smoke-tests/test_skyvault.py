@@ -90,7 +90,7 @@ def perform_read(stub, table_name, key, expected_value_bytes):
 
 
 def perform_read_with_retry(
-    stub, table_name, key, expected_value_bytes, retries=30, delay=1
+    stub, table_name, seq_no, key, expected_value_bytes, retries=30, delay=1
 ):
     """Attempts to read a key, retrying until the expected value is found or retries run out."""
     table_request = skyvault_pb2.TableGetBatchRequest(table_name=table_name, keys=[key])
@@ -103,25 +103,29 @@ def perform_read_with_retry(
                 items = {item.key: item.value for item in response.tables[0].items}
                 if key in items and items[key] == expected_value_bytes:
                     return True
-        except Exception:
-            pass  # Error handling omitted, just retry
+        except grpc.RpcError as e:
+            # Only retry if we get failed_precondition (seq_no mismatch)
+            if e.code() != grpc.StatusCode.FAILED_PRECONDITION:
+                raise
+
         time.sleep(delay)
 
     return False
 
 
-def trigger_compaction(stub):
-    """Sends a KickOffWALCompaction request."""
-    request = skyvault_pb2.KickOffWALCompactionRequest()
-    response = stub.KickOffWALCompaction(request, timeout=20)
+def trigger_wal_compaction(stub):
+    request = skyvault_pb2.KickOffJobRequest(
+        wal_compaction=True,
+    )
+    response = stub.KickOffJob(request, timeout=20)
 
     # Wait for compaction job to complete with timeout
     start_time = time.time()
     while time.time() - start_time < 5:
         status_request = skyvault_pb2.GetJobStatusRequest(job_id=response.job_id)
         status_response = stub.GetJobStatus(status_request, timeout=10)
-        if status_response.status == "completed":
-            return response
+        if not status_response.pending:
+            return status_response.seq_no
         time.sleep(0.5)
 
     raise TimeoutError("Compaction job did not complete within 5 seconds")
@@ -149,12 +153,12 @@ def test_simple_write_and_read(stubs):
     reader_stub = stubs["reader"]
 
     # Write key-value pair
-    perform_write(writer_stub, TABLE_NAME, KEY_ONE, VALUE_ONE)
+    seq_no = perform_write(writer_stub, TABLE_NAME, KEY_ONE, VALUE_ONE)
 
     # Verify read works
-    assert perform_read_with_retry(reader_stub, TABLE_NAME, KEY_ONE, VALUE_ONE), (
-        f"Failed to read back key '{KEY_ONE}' after writing"
-    )
+    assert perform_read_with_retry(
+        reader_stub, TABLE_NAME, seq_no, KEY_ONE, VALUE_ONE
+    ), f"Failed to read back key '{KEY_ONE}' after writing"
 
 
 @pytest.mark.smoke
@@ -165,15 +169,15 @@ def test_write_compact_read(stubs):
     orchestrator_stub = stubs["orchestrator"]
 
     # Write second key
-    perform_write(writer_stub, TABLE_NAME, KEY_TWO, VALUE_TWO)
+    seq_no = perform_write(writer_stub, TABLE_NAME, KEY_TWO, VALUE_TWO)
 
     # Verify second key is readable before compaction
-    assert perform_read_with_retry(reader_stub, TABLE_NAME, KEY_TWO, VALUE_TWO), (
-        f"Failed to read back key '{KEY_TWO}' before compaction"
-    )
+    assert perform_read_with_retry(
+        reader_stub, TABLE_NAME, seq_no, KEY_TWO, VALUE_TWO
+    ), f"Failed to read back key '{KEY_TWO}' before compaction"
 
     # Trigger compaction
-    trigger_compaction(orchestrator_stub)
+    trigger_wal_compaction(orchestrator_stub)
     time.sleep(5)  # Wait for readers to pick up the new compaction
 
     # Verify second key is still readable after compaction

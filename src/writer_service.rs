@@ -25,7 +25,7 @@ pub enum WriterServiceError {
 
 struct WriteReq {
     ops: Vec<crate::runs::WriteOperation>,
-    tx: tokio::sync::oneshot::Sender<Result<(), Status>>,
+    tx: tokio::sync::oneshot::Sender<Result<metadata::SeqNo, Status>>,
 }
 
 pub struct MyWriter {
@@ -85,10 +85,18 @@ impl MyWriter {
                 }
             }
 
-            let result = Self::process_batch(&metadata, &storage, ops).await;
-            let result = result.map_err(|e| Status::internal(e.to_string()));
-            for item in tx.drain(..) {
-                let _ = item.send(result.clone());
+            match Self::process_batch(&metadata, &storage, ops).await {
+                Ok(seq_no) => {
+                    for item in tx.drain(..) {
+                        let _ = item.send(Ok(seq_no));
+                    }
+                },
+                Err(e) => {
+                    let status = Status::internal(e.to_string());
+                    for item in tx.drain(..) {
+                        let _ = item.send(Err(status.clone()));
+                    }
+                },
             }
         }
 
@@ -99,7 +107,7 @@ impl MyWriter {
         metadata: &metadata::MetadataStore,
         storage: &storage::ObjectStore,
         batch: Vec<Vec<crate::runs::WriteOperation>>,
-    ) -> Result<(), WriterServiceError> {
+    ) -> Result<metadata::SeqNo, WriterServiceError> {
         let sorted_ops = batch
             .into_iter()
             .flat_map(|req| req.into_iter())
@@ -116,8 +124,8 @@ impl MyWriter {
             wal_run_ids.push((run_id, stats));
         }
 
-        metadata.append_wal(wal_run_ids).await?;
-        Ok(())
+        let seq_no = metadata.append_wal(wal_run_ids).await?;
+        Ok(seq_no)
     }
 }
 
@@ -158,9 +166,12 @@ impl WriterService for MyWriter {
             .await
             .map_err(|e| Status::internal(format!("Failed to send batch: {e}")))?;
 
-        rx.await
+        let seq_no = rx
+            .await
             .map_err(|e| Status::internal(format!("Failed to receive batch result: {e}")))??;
 
-        Ok(Response::new(proto::WriteBatchResponse {}))
+        Ok(Response::new(proto::WriteBatchResponse {
+            seq_no: seq_no.into(),
+        }))
     }
 }

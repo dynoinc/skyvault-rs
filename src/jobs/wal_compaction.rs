@@ -15,8 +15,8 @@ pub async fn execute(
     object_store: ObjectStore,
     job_id: metadata::JobId,
 ) -> Result<(), JobError> {
-    let (snapshot, _) = metadata_store.get_changelog_snapshot().await?;
-    let state = State::from_snapshot(metadata_store.clone(), snapshot).await?;
+    let (snapshot, seq_no) = metadata_store.get_changelog_snapshot().await?;
+    let state = State::from_snapshot(metadata_store.clone(), snapshot, seq_no).await?;
     if state.wal.is_empty() {
         return Ok(());
     }

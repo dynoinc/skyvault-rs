@@ -5,7 +5,9 @@ use futures::{Stream, StreamExt, pin_mut};
 use thiserror::Error;
 use tracing::{debug, error};
 
-use crate::metadata::{self, ChangelogEntry, MetadataError, MetadataStore, TableName};
+use crate::metadata::{
+    self, ChangelogEntry, ChangelogEntryWithID, MetadataError, MetadataStore, TableName,
+};
 use crate::runs;
 
 #[derive(Error, Debug)]
@@ -25,6 +27,7 @@ pub struct Table {
 
 #[derive(Clone)]
 pub struct State {
+    pub seq_no: metadata::SeqNo,
     pub wal: BTreeMap<metadata::SeqNo, metadata::RunMetadata>,
     pub tables: HashMap<metadata::TableName, Table>,
 }
@@ -33,6 +36,7 @@ impl State {
     pub async fn from_snapshot(
         metadata_store: MetadataStore,
         snapshot: Vec<ChangelogEntry>,
+        seq_no: metadata::SeqNo,
     ) -> Result<Self, ForestError> {
         let mut runs = HashSet::new();
         for entry in snapshot {
@@ -81,7 +85,11 @@ impl State {
             }
         }
 
-        Ok(Self { wal, tables })
+        Ok(Self {
+            seq_no,
+            wal,
+            tables,
+        })
     }
 }
 
@@ -96,8 +104,8 @@ pub struct Forest {
 impl Forest {
     /// Creates a new Forest instance and starts the changelog stream processor.
     pub async fn new(metadata_store: MetadataStore) -> Result<Self, ForestError> {
-        let (snapshot, stream) = metadata_store.get_changelog().await?;
-        let state = State::from_snapshot(metadata_store.clone(), snapshot).await?;
+        let (snapshot, snapshot_seq_no, stream) = metadata_store.get_changelog().await?;
+        let state = State::from_snapshot(metadata_store.clone(), snapshot, snapshot_seq_no).await?;
         let forest = Self {
             metadata_store,
             state: Arc::new(Mutex::new(Arc::new(state))),
@@ -122,7 +130,7 @@ impl Forest {
     /// Continuously processes the changelog stream and updates the in-memory map.
     async fn process_changelog_stream(
         &self,
-        stream: impl Stream<Item = Result<ChangelogEntry, MetadataError>> + '_,
+        stream: impl Stream<Item = Result<ChangelogEntryWithID, MetadataError>> + '_,
     ) -> Result<(), ForestError> {
         // Pin the stream to the stack
         pin_mut!(stream);
@@ -146,8 +154,11 @@ impl Forest {
     }
 
     /// Process a single changelog entry and update the live runs map.
-    async fn process_changelog_entry(&self, entry: ChangelogEntry) -> Result<(), ForestError> {
-        let (runs_added, runs_removed) = match entry {
+    async fn process_changelog_entry(
+        &self,
+        entry: ChangelogEntryWithID,
+    ) -> Result<(), ForestError> {
+        let (runs_added, runs_removed) = match entry.changes {
             ChangelogEntry::V1(v1) => (
                 v1.runs_added,
                 v1.runs_removed.into_iter().collect::<HashSet<_>>(),
@@ -208,6 +219,7 @@ impl Forest {
             }
         }
 
+        new_state.seq_no = entry.id;
         Ok(())
     }
 }

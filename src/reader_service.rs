@@ -9,7 +9,7 @@ use tracing::{error, info};
 
 use crate::consistent_hashring::ConsistentHashRing;
 use crate::forest::{Forest, ForestError};
-use crate::metadata::{self, MetadataStore};
+use crate::metadata::{self, MetadataStore, SeqNo};
 use crate::pod_watcher::{self, PodChange, PodWatcherError};
 use crate::proto;
 use crate::proto::cache_service_client::CacheServiceClient;
@@ -261,7 +261,17 @@ impl ReaderService for MyReader {
         request: Request<proto::GetBatchRequest>,
     ) -> Result<Response<proto::GetBatchResponse>, Status> {
         let forest_state = self.forest.get_state();
-        let tables = request.into_inner().tables;
+        let (seq_no, tables) = {
+            let request = request.into_inner();
+            (SeqNo::from(request.seq_no), request.tables)
+        };
+
+        if seq_no > forest_state.seq_no {
+            return Err(Status::failed_precondition(format!(
+                "Requested seq_no {} is greater than the current seq_no {}",
+                seq_no, forest_state.seq_no
+            )));
+        }
 
         let responses = futures::future::join_all(tables.into_iter().map(|table_request| {
             self.table_get_batch(forest_state.clone(), Request::new(table_request))

@@ -7,9 +7,7 @@ use crate::metadata::{JobParams, MetadataStore, TableName};
 use crate::proto::orchestrator_service_server::OrchestratorService;
 use crate::proto::{
     self, DumpChangelogRequest, DumpChangelogResponse, DumpForestRequest, DumpForestResponse,
-    GetJobStatusRequest, GetJobStatusResponse, KickOffTableBufferCompactionRequest,
-    KickOffTableBufferCompactionResponse, KickOffWalCompactionRequest,
-    KickOffWalCompactionResponse,
+    GetJobStatusRequest, GetJobStatusResponse, KickOffJobRequest, KickOffJobResponse,
 };
 use crate::{Config, metadata};
 
@@ -287,41 +285,28 @@ impl OrchestratorService for MyOrchestrator {
         }))
     }
 
-    async fn kick_off_wal_compaction(
+    async fn kick_off_job(
         &self,
-        _request: Request<KickOffWalCompactionRequest>,
-    ) -> Result<Response<KickOffWalCompactionResponse>, Status> {
-        let job_id = match self.metadata.schedule_wal_compaction().await {
-            Ok(job_id) => job_id,
-            Err(e) => {
-                tracing::error!("Failed to schedule WAL compaction: {}", e);
-                return Err(Status::internal(e.to_string()));
+        request: Request<KickOffJobRequest>,
+    ) -> Result<Response<KickOffJobResponse>, Status> {
+        let r = match request.into_inner().job {
+            Some(proto::kick_off_job_request::Job::WalCompaction(true)) => {
+                self.metadata.schedule_wal_compaction().await
             },
+            Some(proto::kick_off_job_request::Job::TableBufferCompaction(table_name)) => {
+                self.metadata
+                    .schedule_table_buffer_compaction(TableName::from(table_name))
+                    .await
+            },
+            _ => return Err(Status::invalid_argument("Invalid job type")),
         };
 
-        Ok(Response::new(KickOffWalCompactionResponse {
-            job_id: job_id.into(),
-        }))
-    }
-
-    async fn kick_off_table_buffer_compaction(
-        &self,
-        request: Request<KickOffTableBufferCompactionRequest>,
-    ) -> Result<Response<KickOffTableBufferCompactionResponse>, Status> {
-        let table_name = request.into_inner().table_name;
-        let job_id = match self
-            .metadata
-            .schedule_table_buffer_compaction(TableName::from(table_name))
-            .await
-        {
+        let job_id = match r {
             Ok(job_id) => job_id,
-            Err(e) => {
-                tracing::error!("Failed to schedule table buffer compaction: {}", e);
-                return Err(Status::internal(e.to_string()));
-            },
+            Err(e) => return Err(Status::internal(format!("Failed to schedule job: {}", e))),
         };
 
-        Ok(Response::new(KickOffTableBufferCompactionResponse {
+        Ok(Response::new(KickOffJobResponse {
             job_id: job_id.into(),
         }))
     }
@@ -336,6 +321,8 @@ impl OrchestratorService for MyOrchestrator {
             Err(e) => return Err(Status::internal(e.to_string())),
         };
 
-        Ok(Response::new(GetJobStatusResponse { status }))
+        Ok(Response::new(GetJobStatusResponse {
+            status: Some(status.into()),
+        }))
     }
 }

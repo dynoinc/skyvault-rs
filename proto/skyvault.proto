@@ -25,7 +25,9 @@ message WriteBatchItem {
   }
 }
 
-message WriteBatchResponse {}
+message WriteBatchResponse {
+  int64 seq_no = 1;
+}
 
 // CACHE
 service CacheService {
@@ -55,7 +57,8 @@ service ReaderService {
 }
 
 message GetBatchRequest {
-  repeated TableGetBatchRequest tables = 1;
+  int64 seq_no = 1; 
+  repeated TableGetBatchRequest tables = 2;
 }
 
 message TableGetBatchRequest {
@@ -82,24 +85,18 @@ service OrchestratorService {
   rpc DumpForest (DumpForestRequest) returns (DumpForestResponse);
   rpc DumpChangelog (DumpChangelogRequest) returns (DumpChangelogResponse);
 
-  rpc KickOffWALCompaction (KickOffWALCompactionRequest) returns (KickOffWALCompactionResponse);
-  rpc KickOffTableBufferCompaction (KickOffTableBufferCompactionRequest) returns (KickOffTableBufferCompactionResponse);
-
+  rpc KickOffJob (KickOffJobRequest) returns (KickOffJobResponse);
   rpc GetJobStatus (GetJobStatusRequest) returns (GetJobStatusResponse);
 }
 
-message KickOffWALCompactionRequest {
+message KickOffJobRequest {
+  oneof job {
+    bool wal_compaction = 1;
+    string table_buffer_compaction = 2;
+  }
 }
 
-message KickOffWALCompactionResponse {
-  int64 job_id = 1;
-}
-
-message KickOffTableBufferCompactionRequest {
-  string table_name = 1;
-}
-
-message KickOffTableBufferCompactionResponse {
+message KickOffJobResponse {
   int64 job_id = 1;
 }
 
@@ -108,7 +105,10 @@ message GetJobStatusRequest {
 }
 
 message GetJobStatusResponse {
-  string status = 1;
+  oneof status {
+    bool pending = 1;
+    int64 seq_no = 2;
+  }
 }
 
 message DumpForestRequest {
