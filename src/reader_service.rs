@@ -9,7 +9,7 @@ use tracing::{error, info};
 
 use crate::consistent_hashring::ConsistentHashRing;
 use crate::forest::{Forest, ForestError};
-use crate::metadata::MetadataStore;
+use crate::metadata::{self, MetadataStore};
 use crate::pod_watcher::{self, PodChange, PodWatcherError};
 use crate::proto;
 use crate::proto::cache_service_client::CacheServiceClient;
@@ -135,7 +135,7 @@ impl MyReader {
         request: Request<proto::TableGetBatchRequest>,
     ) -> Result<Response<proto::TableGetBatchResponse>, Status> {
         let request = request.into_inner();
-        let table_name = request.table_name;
+        let table_name = metadata::TableName::from(request.table_name);
         let table_prefix_len = table_name.len() + 1;
 
         let mut responses = Vec::new();

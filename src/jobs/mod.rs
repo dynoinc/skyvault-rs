@@ -1,5 +1,5 @@
 use crate::forest::ForestError;
-use crate::metadata::{JobParams, MetadataError, MetadataStore};
+use crate::metadata::{self, JobParams, MetadataError, MetadataStore};
 use crate::runs::RunError;
 use crate::storage::{ObjectStore, StorageError};
 
@@ -32,7 +32,7 @@ pub enum JobError {
 pub async fn execute(
     metadata_store: MetadataStore,
     object_store: ObjectStore,
-    job_id: i64,
+    job_id: metadata::JobId,
 ) -> Result<(), JobError> {
     let job_params = metadata_store.get_job(job_id).await?;
 

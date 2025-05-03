@@ -4,7 +4,7 @@ use futures::stream::{self, BoxStream, StreamExt, TryStreamExt};
 use super::JobError;
 use crate::forest::State;
 use crate::jobs::k_way;
-use crate::metadata::MetadataStore;
+use crate::metadata::{self, MetadataStore};
 use crate::runs::{RunError, WriteOperation};
 use crate::storage::ObjectStore;
 
@@ -14,8 +14,8 @@ type RunStream = BoxStream<'static, Result<WriteOperation, RunError>>;
 pub async fn execute(
     metadata_store: MetadataStore,
     object_store: ObjectStore,
-    job_id: i64,
-    table_name: String,
+    job_id: metadata::JobId,
+    table_name: metadata::TableName,
 ) -> Result<(), JobError> {
     let (snapshot, _) = metadata_store.get_changelog_snapshot().await?;
     let state = State::from_snapshot(metadata_store.clone(), snapshot).await?;
@@ -61,7 +61,7 @@ pub async fn execute(
         })
         .collect::<Vec<_>>();
 
-    if let Some(level0) = table.tree.get(&0) {
+    if let Some(level0) = table.tree.get(&metadata::Level::from(0)) {
         let object_store_clone = object_store.clone();
         let level0_run_ids: Vec<_> = level0.values().map(|m| m.id.clone()).collect();
 
@@ -94,7 +94,7 @@ pub async fn execute(
             })
             .flatten();
 
-        run_streams.push((0, Box::pin(level0_streams)));
+        run_streams.push((metadata::SeqNo::from(0), Box::pin(level0_streams)));
     }
 
     let merged_stream = k_way::merge(run_streams);
@@ -113,7 +113,10 @@ pub async fn execute(
         // Collect the run ID and stats
         new_runs.push(crate::metadata::RunMetadata {
             id: run_id,
-            belongs_to: crate::metadata::BelongsTo::TableTree(table_name.clone(), 0),
+            belongs_to: crate::metadata::BelongsTo::TableTree(
+                table_name.clone(),
+                metadata::Level::from(0),
+            ),
             stats,
         });
     }
@@ -131,7 +134,7 @@ pub async fn execute(
         .chain(
             table
                 .tree
-                .get(&0)
+                .get(&metadata::Level::from(0))
                 .into_iter()
                 .flat_map(|level0| level0.iter().map(|(_, metadata)| metadata.id.clone())),
         )

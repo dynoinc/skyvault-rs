@@ -4,6 +4,7 @@ use anyhow::Result;
 use aws_sdk_s3::Client as S3Client;
 use clap::Parser;
 use rustls::crypto::aws_lc_rs;
+use skyvault::metadata::JobId;
 use skyvault::{jobs, metadata, storage};
 use tracing::info;
 use tracing::level_filters::LevelFilter;
@@ -21,8 +22,15 @@ pub struct Config {
     #[arg(long, env = "SKYVAULT_BUCKET_NAME", default_value = "skyvault-bucket")]
     pub bucket_name: String,
 
-    #[arg(long)]
-    pub job_id: i64,
+    #[arg(long, value_parser = parse_job_id)]
+    pub job_id: JobId,
+}
+
+// Custom parser function for JobId
+fn parse_job_id(s: &str) -> Result<JobId, String> {
+    s.parse::<i64>()
+        .map(JobId::from)
+        .map_err(|e| format!("Failed to parse job_id '{}' as integer: {}", s, e))
 }
 
 #[tokio::main]
@@ -37,7 +45,7 @@ async fn main() -> Result<()> {
 
     let config = Config::parse();
     let version = env!("CARGO_PKG_VERSION");
-    info!(config = ?config, version = version, job_id = config.job_id, "Starting worker");
+    info!(config = ?config, version = version, job_id = ?config.job_id, "Starting worker");
 
     // Create metadata client
     let metadata = Arc::new(metadata::PostgresMetadataStore::new(config.metadata_url).await?);

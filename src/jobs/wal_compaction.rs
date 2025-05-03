@@ -1,17 +1,19 @@
+use std::ops::Deref;
+
 use futures::stream::{self, StreamExt, TryStreamExt};
 use tokio::sync::mpsc;
 
 use super::JobError;
 use crate::forest::State;
 use crate::jobs::k_way;
-use crate::metadata::MetadataStore;
+use crate::metadata::{self, MetadataStore, TableName};
 use crate::runs::{RunError, Stats, WriteOperation};
 use crate::storage::ObjectStore;
 
 pub async fn execute(
     metadata_store: MetadataStore,
     object_store: ObjectStore,
-    job_id: i64,
+    job_id: metadata::JobId,
 ) -> Result<(), JobError> {
     let (snapshot, _) = metadata_store.get_changelog_snapshot().await?;
     let state = State::from_snapshot(metadata_store.clone(), snapshot).await?;
@@ -59,7 +61,7 @@ pub async fn execute(
 
     // Current table state: (table_name, sender, task)
     type TableState = (
-        String,
+        metadata::TableName,
         mpsc::Sender<Result<WriteOperation, RunError>>,
         tokio::task::JoinHandle<Result<(crate::runs::RunId, Stats), JobError>>,
     );
@@ -70,16 +72,28 @@ pub async fn execute(
     while let Some(result) = stream.next().await {
         let op = result?;
 
-        // Parse key in format "table_name.key"
-        let (table_name, _) = op.key().split_once('.').ok_or_else(|| {
-            JobError::InvalidInput(format!(
-                "Key does not follow 'table_name.key' format: {}",
-                op.key()
-            ))
-        })?;
+        let (table_prefix_len, new_table) = {
+            // Parse key in format "table_name.key"
+            let (table_name, _) = op.key().split_once('.').ok_or_else(|| {
+                JobError::InvalidInput(format!(
+                    "Key does not follow 'table_name.key' format: {}",
+                    op.key()
+                ))
+            })?;
 
-        let table_name = table_name.to_string();
-        let table_prefix_len = table_name.len() + 1;
+            let table_prefix_len = table_name.len() + 1;
+            let new_table = match current_state
+                .as_ref()
+                .map(|(current_table, _, _)| current_table.deref())
+                != Some(table_name)
+            {
+                true => Some(TableName::from(table_name.to_string())),
+                false => None,
+            };
+
+            (table_prefix_len, new_table)
+        };
+
         let op = match op {
             WriteOperation::Put(mut key, value) => {
                 WriteOperation::Put(key.split_off(table_prefix_len), value)
@@ -89,12 +103,7 @@ pub async fn execute(
             },
         };
 
-        // If table changed, finalize the previous table and start a new one
-        if current_state
-            .as_ref()
-            .map(|(current_table, _, _)| current_table.as_str())
-            != Some(&table_name)
-        {
+        if let Some(new_table) = new_table {
             // Close previous state if any
             if let Some((old_table, sender, task)) = current_state.take() {
                 // Close channel
@@ -157,7 +166,7 @@ pub async fn execute(
             });
 
             // Save new state
-            current_state = Some((table_name.to_string(), tx, task));
+            current_state = Some((new_table, tx, task));
         }
 
         // Send operation to current table's channel

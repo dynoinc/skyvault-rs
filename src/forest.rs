@@ -5,7 +5,7 @@ use futures::{Stream, StreamExt, pin_mut};
 use thiserror::Error;
 use tracing::{debug, error};
 
-use crate::metadata::{self, ChangelogEntry, MetadataError, MetadataStore};
+use crate::metadata::{self, ChangelogEntry, MetadataError, MetadataStore, TableName};
 use crate::runs;
 
 #[derive(Error, Debug)]
@@ -19,14 +19,14 @@ pub enum ForestError {
 
 #[derive(Default, Clone)]
 pub struct Table {
-    pub buffer: BTreeMap<i64, metadata::RunMetadata>,
-    pub tree: BTreeMap<u64, BTreeMap<String, metadata::RunMetadata>>,
+    pub buffer: BTreeMap<metadata::SeqNo, metadata::RunMetadata>,
+    pub tree: BTreeMap<metadata::Level, BTreeMap<runs::Key, metadata::RunMetadata>>,
 }
 
 #[derive(Clone)]
 pub struct State {
-    pub wal: BTreeMap<i64, metadata::RunMetadata>,
-    pub tables: HashMap<String, Table>,
+    pub wal: BTreeMap<metadata::SeqNo, metadata::RunMetadata>,
+    pub tables: HashMap<metadata::TableName, Table>,
 }
 
 impl State {
@@ -51,7 +51,7 @@ impl State {
         let run_ids = runs.into_iter().collect::<Vec<_>>();
         let run_metadatas = metadata_store.get_run_metadata_batch(run_ids).await?;
         let mut wal = BTreeMap::new();
-        let mut tables: HashMap<String, Table> = HashMap::new();
+        let mut tables: HashMap<TableName, Table> = HashMap::new();
 
         for run_metadata in run_metadatas.into_values() {
             let min_key = match run_metadata.stats {

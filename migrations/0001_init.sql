@@ -14,7 +14,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     id BIGSERIAL PRIMARY KEY,
     typ TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending',
-    job JSONB NOT NULL DEFAULT '{}'
+    job JSONB NOT NULL DEFAULT '{}',
+    output JSONB NOT NULL DEFAULT '{}'
 );
 
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs (status) WHERE status IN ('pending', 'running');

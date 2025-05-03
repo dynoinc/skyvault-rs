@@ -5,12 +5,13 @@ use std::pin::Pin;
 use futures::{Stream, StreamExt, stream};
 use tokio::sync::mpsc;
 
+use crate::metadata;
 use crate::runs::{RunError, WriteOperation};
 
 #[derive(Eq, PartialEq)]
 struct HeapItem {
     op: WriteOperation,
-    seq_no: i64,
+    seq_no: metadata::SeqNo,
 }
 
 impl Ord for HeapItem {
@@ -39,11 +40,11 @@ mod heap_item_tests {
         // Create items with different keys
         let item1 = HeapItem {
             op: WriteOperation::Put("apple".to_string(), vec![1]),
-            seq_no: 1,
+            seq_no: metadata::SeqNo::from(1),
         };
         let item2 = HeapItem {
             op: WriteOperation::Put("banana".to_string(), vec![2]),
-            seq_no: 2,
+            seq_no: metadata::SeqNo::from(2),
         };
 
         assert!(item2 < item1);
@@ -54,11 +55,11 @@ mod heap_item_tests {
         // Create items with the same key but different sequence numbers
         let item1 = HeapItem {
             op: WriteOperation::Put("apple".to_string(), vec![1]),
-            seq_no: 1,
+            seq_no: metadata::SeqNo::from(1),
         };
         let item2 = HeapItem {
             op: WriteOperation::Put("apple".to_string(), vec![2]),
-            seq_no: 2,
+            seq_no: metadata::SeqNo::from(2),
         };
 
         assert!(item1 < item2);
@@ -71,29 +72,29 @@ mod heap_item_tests {
 
         heap.push(HeapItem {
             op: WriteOperation::Put("c".to_string(), vec![1]),
-            seq_no: 1,
+            seq_no: metadata::SeqNo::from(1),
         });
         heap.push(HeapItem {
             op: WriteOperation::Put("a".to_string(), vec![1]),
-            seq_no: 1,
+            seq_no: metadata::SeqNo::from(1),
         });
         heap.push(HeapItem {
             op: WriteOperation::Put("b".to_string(), vec![1]),
-            seq_no: 1,
+            seq_no: metadata::SeqNo::from(1),
         });
         heap.push(HeapItem {
             op: WriteOperation::Put("a".to_string(), vec![2]),
-            seq_no: 2,
+            seq_no: metadata::SeqNo::from(2),
         });
 
         // Should pop in order: a(seq_no=2), a(seq_no=1), b, c
         let item = heap.pop().unwrap();
         assert_eq!(item.op.key(), "a");
-        assert_eq!(item.seq_no, 2);
+        assert_eq!(item.seq_no, metadata::SeqNo::from(2));
 
         let item = heap.pop().unwrap();
         assert_eq!(item.op.key(), "a");
-        assert_eq!(item.seq_no, 1);
+        assert_eq!(item.seq_no, metadata::SeqNo::from(1));
 
         let item = heap.pop().unwrap();
         assert_eq!(item.op.key(), "b");
@@ -105,7 +106,9 @@ mod heap_item_tests {
 
 /// Merges multiple run streams into a single stream, preserving correct ordering
 /// by key and taking the latest value (highest sequence number) for each key.
-pub fn merge<S>(run_streams: Vec<(i64, S)>) -> impl Stream<Item = Result<WriteOperation, RunError>>
+pub fn merge<S>(
+    run_streams: Vec<(metadata::SeqNo, S)>,
+) -> impl Stream<Item = Result<WriteOperation, RunError>>
 where
     S: Stream<Item = Result<WriteOperation, RunError>> + Send + 'static,
 {
@@ -196,7 +199,10 @@ mod tests {
         ]);
 
         // Create input for merge_run_streams with different sequence numbers
-        let run_streams = vec![(1, stream1), (2, stream2)];
+        let run_streams = vec![
+            (metadata::SeqNo::from(1), stream1),
+            (metadata::SeqNo::from(2), stream2),
+        ];
 
         // Merge the streams
         let merged = merge(run_streams);

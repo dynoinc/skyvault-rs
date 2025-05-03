@@ -1,7 +1,7 @@
 default: check
 
 sqlx:
-    sqlx database setup
+    sqlx database reset -f
 
 check:
     cargo fmt --all

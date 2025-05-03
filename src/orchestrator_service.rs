@@ -2,9 +2,8 @@ use kube::Error as KubeError;
 use thiserror::Error;
 use tonic::{Request, Response, Status};
 
-use crate::Config;
 use crate::forest::{Forest, ForestError};
-use crate::metadata::{JobParams, MetadataStore};
+use crate::metadata::{JobParams, MetadataStore, TableName};
 use crate::proto::orchestrator_service_server::OrchestratorService;
 use crate::proto::{
     self, DumpChangelogRequest, DumpChangelogResponse, DumpForestRequest, DumpForestResponse,
@@ -12,6 +11,7 @@ use crate::proto::{
     KickOffTableBufferCompactionResponse, KickOffWalCompactionRequest,
     KickOffWalCompactionResponse,
 };
+use crate::{Config, metadata};
 
 #[derive(Clone)]
 pub struct MyOrchestrator {
@@ -100,7 +100,7 @@ impl MyOrchestrator {
 
                     if let Err(e) = self
                         .metadata
-                        .schedule_table_buffer_compaction(table_name.to_string())
+                        .schedule_table_buffer_compaction(table_name.clone())
                         .await
                     {
                         tracing::error!("Failed to schedule table buffer compaction: {}", e);
@@ -254,14 +254,14 @@ impl OrchestratorService for MyOrchestrator {
 
         for (table_name, table) in state.tables.iter() {
             let mut table_response = proto::Table {
-                name: table_name.clone(),
+                name: table_name.to_string(),
                 buffer: table.buffer.values().cloned().map(|r| r.into()).collect(),
                 levels: vec![],
             };
 
             for (level, level_data) in table.tree.iter() {
                 let level_response = proto::TableLevel {
-                    level: *level,
+                    level: (*level).into(),
                     tree: level_data.values().cloned().map(|r| r.into()).collect(),
                 };
 
@@ -299,7 +299,9 @@ impl OrchestratorService for MyOrchestrator {
             },
         };
 
-        Ok(Response::new(KickOffWalCompactionResponse { job_id }))
+        Ok(Response::new(KickOffWalCompactionResponse {
+            job_id: job_id.into(),
+        }))
     }
 
     async fn kick_off_table_buffer_compaction(
@@ -309,7 +311,7 @@ impl OrchestratorService for MyOrchestrator {
         let table_name = request.into_inner().table_name;
         let job_id = match self
             .metadata
-            .schedule_table_buffer_compaction(table_name)
+            .schedule_table_buffer_compaction(TableName::from(table_name))
             .await
         {
             Ok(job_id) => job_id,
@@ -320,15 +322,15 @@ impl OrchestratorService for MyOrchestrator {
         };
 
         Ok(Response::new(KickOffTableBufferCompactionResponse {
-            job_id,
+            job_id: job_id.into(),
         }))
     }
 
     async fn get_job_status(
         &self,
-        _request: Request<GetJobStatusRequest>,
+        request: Request<GetJobStatusRequest>,
     ) -> Result<Response<GetJobStatusResponse>, Status> {
-        let job_id = _request.into_inner().job_id;
+        let job_id = metadata::JobId::from(request.into_inner().job_id);
         let status = match self.metadata.get_job_status(job_id).await {
             Ok(status) => status,
             Err(e) => return Err(Status::internal(e.to_string())),
