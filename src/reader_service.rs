@@ -293,4 +293,11 @@ impl ReaderService for MyReader {
 
         Ok(Response::new(response))
     }
+
+    async fn scan(
+        &self,
+        _request: Request<proto::ScanRequest>,
+    ) -> Result<Response<proto::ScanResponse>, Status> {
+        todo!()
+    }
 }

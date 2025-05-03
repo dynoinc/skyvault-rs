@@ -2,7 +2,7 @@ use thiserror::Error;
 use tonic::{Request, Response, Status};
 
 use crate::proto::cache_service_server::CacheService;
-use crate::proto::{self, GetFromRunRequest, GetFromRunResponse};
+use crate::proto;
 use crate::storage::{self, StorageCache};
 
 #[derive(Debug, Error)]
@@ -26,8 +26,8 @@ impl MyCache {
 impl CacheService for MyCache {
     async fn get_from_run(
         &self,
-        request: Request<GetFromRunRequest>,
-    ) -> Result<Response<GetFromRunResponse>, Status> {
+        request: Request<proto::GetFromRunRequest>,
+    ) -> Result<Response<proto::GetFromRunResponse>, Status> {
         let mut response = proto::GetFromRunResponse::default();
         let request = request.into_inner();
         let mut remaining_keys = request.keys;
@@ -75,5 +75,12 @@ impl CacheService for MyCache {
         }
 
         Ok(Response::new(response))
+    }
+
+    async fn scan_from_run(
+        &self,
+        _request: Request<proto::ScanFromRunRequest>,
+    ) -> Result<Response<proto::ScanFromRunResponse>, Status> {
+        todo!()
     }
 }
