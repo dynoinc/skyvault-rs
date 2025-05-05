@@ -29,18 +29,18 @@ pub enum ReaderServiceError {
 }
 
 #[derive(Clone)]
-struct ConnectionManager {
+struct ConsistentHashCM {
     port: u16,
     connections: Arc<Mutex<HashMap<String, CacheServiceClient<Channel>>>>,
     consistent_hashring: Arc<Mutex<ConsistentHashRing<String>>>,
 }
 
-impl ConnectionManager {
+impl ConsistentHashCM {
     async fn new(port: u16) -> Result<Self, ReaderServiceError> {
         let pods_stream = pod_watcher::watch().await?;
 
         // Create ConnectionManager instance
-        let connection_manager = ConnectionManager {
+        let connection_manager = ConsistentHashCM {
             port,
             connections: Arc::new(Mutex::new(HashMap::new())),
             consistent_hashring: Arc::new(Mutex::new(ConsistentHashRing::new(4))),
@@ -97,7 +97,10 @@ impl ConnectionManager {
             .insert(pod.to_string(), conn);
         Ok(conn_clone)
     }
+}
 
+#[tonic::async_trait]
+impl ConnectionManager for ConsistentHashCM {
     async fn table_get_batch_run(
         &self,
         routing_key: String,
@@ -155,20 +158,36 @@ impl ConnectionManager {
     }
 }
 
+// Define the trait
+#[tonic::async_trait]
+pub trait ConnectionManager {
+    async fn table_get_batch_run(
+        &self,
+        routing_key: String,
+        request: Request<proto::GetFromRunRequest>,
+    ) -> Result<Response<proto::GetFromRunResponse>, Status>;
+
+    async fn table_scan_run(
+        &self,
+        routing_key: String,
+        request: Request<proto::ScanFromRunRequest>,
+    ) -> Result<Response<proto::ScanFromRunResponse>, Status>;
+}
+
 #[derive(Clone)]
 pub struct MyReader {
     forest: Forest,
-    connection_manager: ConnectionManager,
+    connection_manager: Arc<dyn ConnectionManager + Send + Sync>,
 }
 
 impl MyReader {
     pub async fn new(metadata: MetadataStore, port: u16) -> Result<Self, ReaderServiceError> {
         let forest = Forest::new(metadata).await?;
-        let connection_manager = ConnectionManager::new(port).await?;
+        let connection_manager = ConsistentHashCM::new(port).await?;
 
         Ok(Self {
             forest,
-            connection_manager,
+            connection_manager: Arc::new(connection_manager),
         })
     }
 
@@ -198,7 +217,7 @@ impl MyReader {
                     .collect(),
             };
 
-            // Clone connection_manager for the future
+            // Clone the Arc containing the trait object
             let conn_manager_clone = self.connection_manager.clone();
             let wal_response_fut = async move {
                 conn_manager_clone
@@ -230,7 +249,7 @@ impl MyReader {
                     keys: request.keys.clone(),
                 };
 
-                // Clone connection_manager for the future
+                // Clone the Arc containing the trait object
                 let conn_manager_clone = self.connection_manager.clone();
                 let run_response_fut = async move {
                     conn_manager_clone
@@ -266,7 +285,7 @@ impl MyReader {
                         keys,
                     };
 
-                    // Clone connection_manager for the future
+                    // Clone the Arc containing the trait object
                     let conn_manager_clone = self.connection_manager.clone();
                     let run_response_fut = async move {
                         conn_manager_clone
@@ -334,7 +353,7 @@ impl MyReader {
                 max_results: request.max_results,
             };
 
-            // Clone connection_manager for the future
+            // Clone the Arc containing the trait object
             let conn_manager_clone = self.connection_manager.clone();
             let wal_scan_fut = async move {
                 conn_manager_clone
@@ -369,7 +388,7 @@ impl MyReader {
                     max_results: request.max_results,
                 };
 
-                // Clone connection_manager for the future
+                // Clone the Arc containing the trait object
                 let conn_manager_clone = self.connection_manager.clone();
                 let buffer_scan_fut = async move {
                     conn_manager_clone
@@ -390,7 +409,7 @@ impl MyReader {
             }
 
             for run_metadatas in table.tree.values() {
-                // Clone variables needed within the stream processing outside the iterator chain
+                // Clone the Arc containing the trait object outside the iterator chain
                 let conn_manager_level_clone = self.connection_manager.clone();
                 let start_key_level_clone = request.exclusive_start_key.clone();
                 let max_results_level = request.max_results;
@@ -408,7 +427,7 @@ impl MyReader {
                 let start_key_level_clone = request.exclusive_start_key.clone();
                 let level_stream = stream::iter(eligible_runs_iter)
                     .then(move |run_metadata| {
-                        // Clone necessary variables for each async operation
+                        // Clone the Arc for each async operation
                         let run_id = run_metadata.id.clone();
                         let conn_manager_run_clone = conn_manager_level_clone.clone();
                         let start_key_run_clone = start_key_level_clone.clone();
@@ -488,7 +507,12 @@ impl ReaderService for MyReader {
         }
 
         let responses = futures::future::join_all(tables.into_iter().map(|table_request| {
-            self.table_get_batch(forest_state.clone(), Request::new(table_request))
+            // Clone the Arc<MyReader> for the async block
+            let self_clone = self.clone();
+            let forest_state_clone = forest_state.clone();
+            async move {
+                self_clone.table_get_batch(forest_state_clone, Request::new(table_request)).await
+            }
         }))
         .await;
 
@@ -522,6 +546,7 @@ impl ReaderService for MyReader {
         let forest_state = self.forest.get_state();
         let request_inner = request.into_inner();
 
+        // Call table_scan directly as it's part of MyReader
         let response = self.table_scan(forest_state, request_inner).await?;
         Ok(Response::new(response))
     }
