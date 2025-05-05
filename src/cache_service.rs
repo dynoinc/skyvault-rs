@@ -1,15 +1,13 @@
 use std::pin::Pin;
 
-use futures::{pin_mut, Stream, StreamExt, TryStreamExt};
+use futures::{Stream, StreamExt, TryStreamExt, pin_mut};
 use thiserror::Error;
 use tonic::{Request, Response, Status};
 
 use crate::proto::cache_service_server::CacheService;
-use crate::proto;
-use crate::storage::{self, StorageCache};
 use crate::runs::{RunError, RunId, WriteOperation};
-use crate::metadata;
-use crate::k_way;
+use crate::storage::{self, StorageCache};
+use crate::{k_way, metadata, proto};
 
 #[derive(Debug, Error)]
 pub enum CacheServiceError {
@@ -88,7 +86,9 @@ impl CacheService for MyCache {
         request: Request<proto::ScanFromRunRequest>,
     ) -> Result<Response<proto::ScanFromRunResponse>, Status> {
         if request.get_ref().max_results == 0 || request.get_ref().max_results > 10_000 {
-            return Err(Status::invalid_argument("max_results must be between 1 and 10000"));
+            return Err(Status::invalid_argument(
+                "max_results must be between 1 and 10000",
+            ));
         }
 
         let request = request.into_inner();
@@ -104,12 +104,14 @@ impl CacheService for MyCache {
             let run_data = match self.storage_cache.get_run(run_id).await {
                 Ok(run_data) => run_data,
                 Err(e) => {
-                    return Err(Status::internal(format!("Error getting run {}: {}", run_id_str, e)));
-                }
+                    return Err(Status::internal(format!(
+                        "Error getting run {}: {}",
+                        run_id_str, e
+                    )));
+                },
             };
-            let stream = crate::runs::read_run_stream(
-                futures::stream::once(futures::future::ok(run_data))
-            );
+            let stream =
+                crate::runs::read_run_stream(futures::stream::once(futures::future::ok(run_data)));
 
             let filtered_stream = {
                 let exclusive_start_key = exclusive_start_key.clone();
@@ -138,9 +140,14 @@ impl CacheService for MyCache {
         let mut count = 0;
 
         while let Some(result) = merged_stream.next().await {
-            let write_op = result.map_err(|e| Status::internal(format!("Merge stream error: {}", e)))?;
+            let write_op =
+                result.map_err(|e| Status::internal(format!("Merge stream error: {}", e)))?;
 
-            count += if matches!(write_op, WriteOperation::Put(_, _)) { 1 } else { 0 };
+            count += if matches!(write_op, WriteOperation::Put(_, _)) {
+                1
+            } else {
+                0
+            };
             response.items.push(write_op.into());
 
             if count >= max_results {

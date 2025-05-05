@@ -45,12 +45,14 @@ impl From<proto::GetFromRunItem> for WriteOperation {
     }
 }
 
-impl Into<proto::GetFromRunItem> for WriteOperation {
-    fn into(self) -> proto::GetFromRunItem {
+impl From<WriteOperation> for proto::GetFromRunItem {
+    fn from(val: WriteOperation) -> Self {
         proto::GetFromRunItem {
-            key: self.key().to_string(),
-            result: match self {
-                WriteOperation::Put(_, value) => Some(proto::get_from_run_item::Result::Value(value)),
+            key: val.key().to_string(),
+            result: match val {
+                WriteOperation::Put(_, value) => {
+                    Some(proto::get_from_run_item::Result::Value(value))
+                },
                 WriteOperation::Delete(_) => Some(proto::get_from_run_item::Result::Deleted(())),
             },
         }

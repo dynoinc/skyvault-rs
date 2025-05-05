@@ -314,7 +314,7 @@ impl MyReader {
         let table_name = metadata::TableName::from(request.table_name.clone());
         let table_prefix_len = table_name.len() + 1;
 
-        let mut streams_to_merge= Vec::new();
+        let mut streams_to_merge = Vec::new();
         let mut seq_counter = i64::MAX;
 
         if !forest_state.wal.is_empty() {
@@ -339,12 +339,7 @@ impl MyReader {
 
             let wal_stream = stream::once(wal_scan_fut)
                 .map_ok(|resp| {
-                    stream::iter(
-                        resp.into_inner()
-                            .items
-                            .into_iter()
-                            .map(|item| Ok::<_, Status>(item)),
-                    )
+                    stream::iter(resp.into_inner().items.into_iter().map(Ok::<_, Status>))
                 })
                 .try_flatten()
                 .map_ok(move |item: proto::GetFromRunItem| {
@@ -352,7 +347,7 @@ impl MyReader {
                     item.key = item.key.split_off(table_prefix_len);
                     WriteOperation::from(item)
                 })
-                .map_err(|status| RunError::GrpcError(status))
+                .map_err(RunError::GrpcError)
                 .boxed();
 
             let seq_no = SeqNo::from(seq_counter);
@@ -381,7 +376,7 @@ impl MyReader {
                     .map_ok(|resp| stream::iter(resp.into_inner().items.into_iter().map(Ok)))
                     .try_flatten()
                     .map_ok(WriteOperation::from)
-                    .map_err(|status| RunError::GrpcError(status))
+                    .map_err(RunError::GrpcError)
                     .boxed();
 
                 let seq_no = SeqNo::from(seq_counter);
@@ -426,14 +421,15 @@ impl MyReader {
                                 .await
                         }
                     })
-                    .map_ok(|resp| { // Input: Ok(Response<ScanFromRunResponse>)
+                    .map_ok(|resp| {
+                        // Input: Ok(Response<ScanFromRunResponse>)
                         // Convert successful response into a stream of items
                         stream::iter(resp.into_inner().items.into_iter().map(Ok))
                         // Output: Stream<Item = Result<GetFromRunItem, Status>>
                     })
                     .try_flatten() // Flatten the stream of streams into a single stream of items
                     .map_ok(WriteOperation::from) // Convert proto item to internal WriteOperation
-                    .map_err(|status| RunError::GrpcError(status)) // Convert gRPC status error to RunError
+                    .map_err(RunError::GrpcError) // Convert gRPC status error to RunError
                     .boxed(); // Box the stream for type erasure
 
                 // Assign a sequence number and add the stream to the merge list,

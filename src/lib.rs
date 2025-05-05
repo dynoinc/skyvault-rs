@@ -25,11 +25,11 @@ pub mod writer_service;
 mod consistent_hashring;
 mod forest;
 pub mod jobs;
+mod k_way;
 pub mod metadata;
 mod pod_watcher;
 mod runs;
 pub mod storage;
-mod k_way;
 #[cfg(test)]
 pub mod test_utils;
 
