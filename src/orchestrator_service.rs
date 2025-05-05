@@ -2,7 +2,7 @@ use kube::Error as KubeError;
 use thiserror::Error;
 use tonic::{Request, Response, Status};
 
-use crate::forest::{Forest, ForestError};
+use crate::forest::{Forest, ForestError, ForestImpl};
 use crate::metadata::{JobParams, Level, MetadataStore, TableName};
 use crate::proto::orchestrator_service_server::OrchestratorService;
 use crate::proto::{
@@ -34,7 +34,7 @@ pub enum OrchestratorError {
 
 impl MyOrchestrator {
     pub async fn new(metadata: MetadataStore, config: Config) -> Result<Self, OrchestratorError> {
-        let forest = Forest::new(metadata.clone()).await?;
+        let forest = ForestImpl::new(metadata.clone()).await?;
         let k8s_client = kube::Client::try_default().await?;
         let orchestrator = Self {
             metadata,

@@ -33,31 +33,14 @@ pub struct State {
 }
 
 impl State {
-    pub async fn from_snapshot(
-        metadata_store: MetadataStore,
-        snapshot: Vec<ChangelogEntry>,
-        seq_no: metadata::SeqNo,
-    ) -> Result<Self, ForestError> {
-        let mut runs = HashSet::new();
-        for entry in snapshot {
-            match entry {
-                ChangelogEntry::V1(v1) => {
-                    for run_id in v1.runs_added {
-                        runs.insert(run_id);
-                    }
-                    for run_id in v1.runs_removed {
-                        runs.remove(&run_id);
-                    }
-                },
-            }
-        }
-
-        let run_ids = runs.into_iter().collect::<Vec<_>>();
-        let run_metadatas = metadata_store.get_run_metadata_batch(run_ids).await?;
+    pub async fn from_raw<I>(seq_no: metadata::SeqNo, runs: I) -> Self
+    where
+        I: IntoIterator<Item = metadata::RunMetadata>,
+    {
         let mut wal = BTreeMap::new();
         let mut tables: HashMap<TableName, Table> = HashMap::new();
 
-        for run_metadata in run_metadatas.into_values() {
+        for run_metadata in runs {
             let min_key = match run_metadata.stats {
                 runs::Stats::StatsV1(ref stats) => stats.min_key.clone(),
             };
@@ -85,25 +68,57 @@ impl State {
             }
         }
 
-        Ok(Self {
+        Self {
             seq_no,
             wal,
             tables,
-        })
+        }
+    }
+
+    pub async fn from_snapshot(
+        metadata_store: MetadataStore,
+        snapshot: Vec<ChangelogEntry>,
+        seq_no: metadata::SeqNo,
+    ) -> Result<Self, ForestError> {
+        let mut runs = HashSet::new();
+        for entry in snapshot {
+            match entry {
+                ChangelogEntry::V1(v1) => {
+                    for run_id in v1.runs_added {
+                        runs.insert(run_id);
+                    }
+                    for run_id in v1.runs_removed {
+                        runs.remove(&run_id);
+                    }
+                },
+            }
+        }
+
+        let run_ids = runs.into_iter().collect::<Vec<_>>();
+        let run_metadatas = metadata_store.get_run_metadata_batch(run_ids).await?;
+        Ok(Self::from_raw(seq_no, run_metadatas.into_values()).await)
     }
 }
+
+
+#[cfg_attr(test, mockall::automock)]
+pub trait ForestTrait: Send + Sync + 'static {
+    fn get_state(&self) -> Arc<State>;
+}
+
+pub type Forest = Arc<dyn ForestTrait>;
 
 /// Forest maintains an in-memory map of all runs.
 /// It streams the changelog from metadata store and loads run metadata for runs.
 #[derive(Clone)]
-pub struct Forest {
+pub struct ForestImpl {
     metadata_store: MetadataStore,
     state: Arc<Mutex<Arc<State>>>,
 }
 
-impl Forest {
+impl ForestImpl {
     /// Creates a new Forest instance and starts the changelog stream processor.
-    pub async fn new(metadata_store: MetadataStore) -> Result<Self, ForestError> {
+    pub async fn new(metadata_store: MetadataStore) -> Result<Forest, ForestError> {
         let (snapshot, snapshot_seq_no, stream) = metadata_store.get_changelog().await?;
         let state = State::from_snapshot(metadata_store.clone(), snapshot, snapshot_seq_no).await?;
         let forest = Self {
@@ -119,12 +134,7 @@ impl Forest {
             }
         });
 
-        Ok(forest)
-    }
-
-    /// Returns the current set of live runs.
-    pub fn get_state(&self) -> Arc<State> {
-        self.state.lock().unwrap().clone()
+        Ok(Arc::new(forest))
     }
 
     /// Continuously processes the changelog stream and updates the in-memory map.
@@ -221,5 +231,11 @@ impl Forest {
 
         new_state.seq_no = entry.id;
         Ok(())
+    }
+}
+
+impl ForestTrait for ForestImpl {
+    fn get_state(&self) -> Arc<State> {
+        self.state.lock().unwrap().clone()
     }
 }

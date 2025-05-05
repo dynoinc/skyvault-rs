@@ -46,4 +46,5 @@ bytes = "1.10"
 tonic-build = "0.13"
 
 [dev-dependencies]
+mockall = "0.13"
 testcontainers-modules = { version = "0.11.6", features = ["postgres", "minio"] }

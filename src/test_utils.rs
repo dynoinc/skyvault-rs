@@ -1,15 +1,14 @@
 use std::sync::Arc;
 
+use aws_config::{BehaviorVersion, Region, SdkConfig};
+use aws_sdk_s3::Client as S3Client;
+use aws_sdk_s3::config::{Credentials, SharedCredentialsProvider};
+use testcontainers_modules::minio;
 use testcontainers_modules::postgres::Postgres;
 use testcontainers_modules::testcontainers::ContainerAsync;
 use testcontainers_modules::testcontainers::runners::AsyncRunner;
-use testcontainers_modules::minio;
 
 use crate::metadata::{MetadataError, MetadataStore, PostgresMetadataStore};
-
-use aws_config::{BehaviorVersion, Region, SdkConfig};
-use aws_sdk_s3::{config::{Credentials, SharedCredentialsProvider}, Client as S3Client};
-
 use crate::storage::{ObjectStore, S3ObjectStore, StorageError};
 
 /// Sets up a test PostgreSQL instance in a container for testing.
@@ -37,8 +36,8 @@ pub async fn setup_test_db() -> Result<(MetadataStore, ContainerAsync<Postgres>)
 
 /// Sets up a test MinIO instance in a container for testing S3ObjectStore.
 /// Returns the object store connected to the test MinIO and the container handle.
-pub async fn setup_test_object_store() -> Result<(ObjectStore, ContainerAsync<minio::MinIO>), StorageError>
-{
+pub async fn setup_test_object_store()
+-> Result<(ObjectStore, ContainerAsync<minio::MinIO>), StorageError> {
     let container = minio::MinIO::default()
         .start()
         .await
@@ -66,7 +65,7 @@ pub async fn setup_test_object_store() -> Result<(ObjectStore, ContainerAsync<mi
         .build();
     let s3_config = aws_sdk_s3::config::Builder::from(&config)
         .force_path_style(true)
-        .build();   
+        .build();
 
     let client = S3Client::from_conf(s3_config);
 

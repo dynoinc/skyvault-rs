@@ -187,15 +187,18 @@ mod tests {
         let (storage, _minio) = setup_test_object_store().await.unwrap();
         let writer = MyWriter::new(metadata, storage);
 
-        let response = writer.write_batch(Request::new(proto::WriteBatchRequest {
-            tables: vec![proto::TableWriteBatchRequest {
-                table_name: "test_table".to_string(),
-                items: vec![proto::WriteBatchItem {
-                    key: "test".to_string(),
-                    operation: Some(proto::write_batch_item::Operation::Value(vec![1, 2, 3])),
+        let response = writer
+            .write_batch(Request::new(proto::WriteBatchRequest {
+                tables: vec![proto::TableWriteBatchRequest {
+                    table_name: "test_table".to_string(),
+                    items: vec![proto::WriteBatchItem {
+                        key: "test".to_string(),
+                        operation: Some(proto::write_batch_item::Operation::Value(vec![1, 2, 3])),
+                    }],
                 }],
-            }],
-        })).await.unwrap();
+            }))
+            .await
+            .unwrap();
 
         let seq_no = response.into_inner().seq_no;
         assert_eq!(seq_no, 1);

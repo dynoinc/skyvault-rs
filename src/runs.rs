@@ -14,6 +14,12 @@ pub type Value = Vec<u8>;
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct RunId(pub String);
 
+impl<T: Into<String>> From<T> for RunId {
+    fn from(value: T) -> Self {
+        RunId(value.into())
+    }
+}
+
 impl Display for RunId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)

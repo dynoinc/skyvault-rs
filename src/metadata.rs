@@ -136,9 +136,9 @@ impl Display for Level {
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Eq, PartialEq, Hash)]
 pub struct TableName(String);
 
-impl From<String> for TableName {
-    fn from(value: String) -> Self {
-        TableName(value)
+impl<T: Into<String>> From<T> for TableName {
+    fn from(value: T) -> Self {
+        TableName(value.into())
     }
 }
 
