@@ -36,6 +36,40 @@ struct ConnectionManager {
 }
 
 impl ConnectionManager {
+    async fn new(port: u16) -> Result<Self, ReaderServiceError> {
+        let pods_stream = pod_watcher::watch().await?;
+
+        // Create ConnectionManager instance
+        let connection_manager = ConnectionManager {
+            port,
+            connections: Arc::new(Mutex::new(HashMap::new())),
+            consistent_hashring: Arc::new(Mutex::new(ConsistentHashRing::new(4))),
+        };
+
+        // Use hashring from connection_manager for pod watcher
+        let hashring_clone = connection_manager.consistent_hashring.clone();
+        tokio::spawn(async move {
+            pin_mut!(pods_stream);
+            while let Some(pod_change) = pods_stream.next().await {
+                match pod_change {
+                    Ok(PodChange::Added(pod)) => {
+                        info!("Adding pod {pod} to consistent hashring");
+                        hashring_clone.lock().unwrap().add_node(pod);
+                    },
+                    Ok(PodChange::Removed(pod)) => {
+                        info!("Removing pod {pod} from consistent hashring");
+                        hashring_clone.lock().unwrap().remove_node(&pod);
+                    },
+                    Err(e) => {
+                        error!("Error watching pods: {e}");
+                    },
+                }
+            }
+        });
+
+        Ok(connection_manager)
+    }
+
     async fn get_connection(
         &self,
         pod: &str,
@@ -130,35 +164,7 @@ pub struct MyReader {
 impl MyReader {
     pub async fn new(metadata: MetadataStore, port: u16) -> Result<Self, ReaderServiceError> {
         let forest = Forest::new(metadata).await?;
-        let pods_stream = pod_watcher::watch().await?;
-
-        // Create ConnectionManager instance
-        let connection_manager = ConnectionManager {
-            port,
-            connections: Arc::new(Mutex::new(HashMap::new())),
-            consistent_hashring: Arc::new(Mutex::new(ConsistentHashRing::new(4))),
-        };
-
-        // Use hashring from connection_manager for pod watcher
-        let hashring_clone = connection_manager.consistent_hashring.clone();
-        tokio::spawn(async move {
-            pin_mut!(pods_stream);
-            while let Some(pod_change) = pods_stream.next().await {
-                match pod_change {
-                    Ok(PodChange::Added(pod)) => {
-                        info!("Adding pod {pod} to consistent hashring");
-                        hashring_clone.lock().unwrap().add_node(pod);
-                    },
-                    Ok(PodChange::Removed(pod)) => {
-                        info!("Removing pod {pod} from consistent hashring");
-                        hashring_clone.lock().unwrap().remove_node(&pod);
-                    },
-                    Err(e) => {
-                        error!("Error watching pods: {e}");
-                    },
-                }
-            }
-        });
+        let connection_manager = ConnectionManager::new(port).await?;
 
         Ok(Self {
             forest,
