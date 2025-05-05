@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use futures::{FutureExt, StreamExt, pin_mut};
+use futures::{FutureExt, StreamExt, TryStreamExt, pin_mut, stream};
 use thiserror::Error;
 use tonic::transport::Channel;
 use tonic::{Request, Response, Status};
@@ -14,8 +14,7 @@ use crate::pod_watcher::{self, PodChange, PodWatcherError};
 use crate::proto;
 use crate::proto::cache_service_client::CacheServiceClient;
 use crate::proto::reader_service_server::ReaderService;
-use crate::runs::Stats;
-use crate::runs::WriteOperation;
+use crate::runs::{RunError, Stats, WriteOperation};
 
 #[derive(Debug, Error)]
 pub enum ReaderServiceError {
@@ -29,52 +28,14 @@ pub enum ReaderServiceError {
     ConnectionError(#[from] tonic::transport::Error),
 }
 
-pub struct MyReader {
-    // Metadata
-    forest: Forest,
-
-    // Connections
+#[derive(Clone)]
+struct ConnectionManager {
     port: u16,
     connections: Arc<Mutex<HashMap<String, CacheServiceClient<Channel>>>>,
     consistent_hashring: Arc<Mutex<ConsistentHashRing<String>>>,
 }
 
-impl MyReader {
-    pub async fn new(metadata: MetadataStore, port: u16) -> Result<Self, ReaderServiceError> {
-        let forest = Forest::new(metadata).await?;
-
-        let pods_stream = pod_watcher::watch().await?;
-        let connections = Arc::new(Mutex::new(HashMap::new()));
-        let consistent_hashring = Arc::new(Mutex::new(ConsistentHashRing::new(4)));
-
-        let ch = consistent_hashring.clone();
-        tokio::spawn(async move {
-            pin_mut!(pods_stream);
-            while let Some(pod_change) = pods_stream.next().await {
-                match pod_change {
-                    Ok(PodChange::Added(pod)) => {
-                        info!("Adding pod {pod} to consistent hashring");
-                        ch.lock().unwrap().add_node(pod);
-                    },
-                    Ok(PodChange::Removed(pod)) => {
-                        info!("Removing pod {pod} from consistent hashring");
-                        ch.lock().unwrap().remove_node(&pod);
-                    },
-                    Err(e) => {
-                        error!("Error watching pods: {e}");
-                    },
-                }
-            }
-        });
-
-        Ok(Self {
-            forest,
-            consistent_hashring,
-            connections,
-            port,
-        })
-    }
-
+impl ConnectionManager {
     async fn get_connection(
         &self,
         pod: &str,
@@ -158,6 +119,53 @@ impl MyReader {
 
         scan_conn.scan_from_run(request).await
     }
+}
+
+
+#[derive(Clone)]
+pub struct MyReader {
+    forest: Forest,
+    connection_manager: ConnectionManager,
+}
+
+impl MyReader {
+    pub async fn new(metadata: MetadataStore, port: u16) -> Result<Self, ReaderServiceError> {
+        let forest = Forest::new(metadata).await?;
+        let pods_stream = pod_watcher::watch().await?;
+
+        // Create ConnectionManager instance
+        let connection_manager = ConnectionManager {
+            port,
+            connections: Arc::new(Mutex::new(HashMap::new())),
+            consistent_hashring: Arc::new(Mutex::new(ConsistentHashRing::new(4))),
+        };
+
+        // Use hashring from connection_manager for pod watcher
+        let hashring_clone = connection_manager.consistent_hashring.clone();
+        tokio::spawn(async move {
+            pin_mut!(pods_stream);
+            while let Some(pod_change) = pods_stream.next().await {
+                match pod_change {
+                    Ok(PodChange::Added(pod)) => {
+                        info!("Adding pod {pod} to consistent hashring");
+                        hashring_clone.lock().unwrap().add_node(pod);
+                    },
+                    Ok(PodChange::Removed(pod)) => {
+                        info!("Removing pod {pod} from consistent hashring");
+                        hashring_clone.lock().unwrap().remove_node(&pod);
+                    },
+                    Err(e) => {
+                        error!("Error watching pods: {e}");
+                    },
+                }
+            }
+        });
+
+        Ok(Self {
+            forest,
+            connection_manager,
+        })
+    }
 
     async fn table_get_batch(
         &self,
@@ -185,20 +193,25 @@ impl MyReader {
                     .collect(),
             };
 
-            let wal_response_fut = self
-                .table_get_batch_run("wal".to_string(), Request::new(wal_request))
-                .map(|r| {
-                    r.map(|r| {
-                        r.into_inner()
-                            .items
-                            .into_iter()
-                            .map(|mut item| proto::GetFromRunItem {
-                                key: item.key.split_off(table_prefix_len),
-                                result: item.result,
-                            })
-                            .collect()
-                    })
-                });
+            // Clone connection_manager for the future
+            let conn_manager_clone = self.connection_manager.clone();
+            let wal_response_fut = async move {
+                conn_manager_clone
+                    .table_get_batch_run("wal".to_string(), Request::new(wal_request))
+                    .await
+            }
+            .map(|r| {
+                r.map(|r| {
+                    r.into_inner()
+                        .items
+                        .into_iter()
+                        .map(|mut item| proto::GetFromRunItem {
+                            key: item.key.split_off(table_prefix_len),
+                            result: item.result,
+                        })
+                        .collect()
+                })
+            });
 
             responses.push(wal_response_fut.boxed());
         }
@@ -212,9 +225,14 @@ impl MyReader {
                     keys: request.keys.clone(),
                 };
 
-                let run_response_fut = self
-                    .table_get_batch_run(run_id.to_string(), Request::new(run_request))
-                    .map(|r| r.map(|r| r.into_inner().items));
+                // Clone connection_manager for the future
+                let conn_manager_clone = self.connection_manager.clone();
+                let run_response_fut = async move {
+                    conn_manager_clone
+                        .table_get_batch_run(run_id.to_string(), Request::new(run_request))
+                        .await
+                }
+                .map(|r| r.map(|r| r.into_inner().items));
 
                 responses.push(run_response_fut.boxed());
             }
@@ -243,9 +261,14 @@ impl MyReader {
                         keys,
                     };
 
-                    let run_response_fut = self
-                        .table_get_batch_run(run_id.to_string(), Request::new(run_request))
-                        .map(|r| r.map(|r| r.into_inner().items));
+                    // Clone connection_manager for the future
+                    let conn_manager_clone = self.connection_manager.clone();
+                    let run_response_fut = async move {
+                        conn_manager_clone
+                            .table_get_batch_run(run_id.to_string(), Request::new(run_request))
+                            .await
+                    }
+                    .map(|r| r.map(|r| r.into_inner().items));
 
                     responses.push(run_response_fut.boxed());
                 }
@@ -288,128 +311,156 @@ impl MyReader {
         forest_state: Arc<crate::forest::State>,
         request: proto::ScanRequest,
     ) -> Result<proto::ScanResponse, Status> {
-        let table_name = metadata::TableName::from(request.table_name);
+        let table_name = metadata::TableName::from(request.table_name.clone());
         let table_prefix_len = table_name.len() + 1;
 
-        let mut responses = Vec::new();
+        let mut streams_to_merge= Vec::new();
+        let mut seq_counter = i64::MAX;
+
         if !forest_state.wal.is_empty() {
             let wal_request = proto::ScanFromRunRequest {
-                run_ids: forest_state.wal.values().rev().map(|r| r.id.to_string()).collect(),
+                run_ids: forest_state
+                    .wal
+                    .values()
+                    .rev()
+                    .map(|r| r.id.to_string())
+                    .collect(),
                 exclusive_start_key: format!("{table_name}.{}", &request.exclusive_start_key),
                 max_results: request.max_results,
             };
 
-            let wal_response_fut = self
-                .table_scan_run("wal".to_string(), Request::new(wal_request))
-                .map(|r| r.map(|r| r.into_inner().items.into_iter().map(|mut item| {
-                    proto::GetFromRunItem {
-                        key: item.key.split_off(table_prefix_len),
-                        result: item.result,
-                    }
-                }).collect()));
+            // Clone connection_manager for the future
+            let conn_manager_clone = self.connection_manager.clone();
+            let wal_scan_fut = async move {
+                conn_manager_clone
+                    .table_scan_run("wal".to_string(), Request::new(wal_request))
+                    .await
+            };
 
-            responses.push(wal_response_fut.boxed());
+            let wal_stream = stream::once(wal_scan_fut)
+                .map_ok(|resp| {
+                    stream::iter(
+                        resp.into_inner()
+                            .items
+                            .into_iter()
+                            .map(|item| Ok::<_, Status>(item)),
+                    )
+                })
+                .try_flatten()
+                .map_ok(move |item: proto::GetFromRunItem| {
+                    let mut item = item;
+                    item.key = item.key.split_off(table_prefix_len);
+                    WriteOperation::from(item)
+                })
+                .map_err(|status| RunError::GrpcError(status))
+                .boxed();
+
+            let seq_no = SeqNo::from(seq_counter);
+            seq_counter -= 1;
+            streams_to_merge.push((seq_no, wal_stream));
         }
 
         if let Some(table) = forest_state.tables.get(&table_name) {
             for (_, run_metadata) in table.buffer.iter().rev() {
                 let run_id = run_metadata.id.clone();
-
-                let run_request = proto::ScanFromRunRequest {
+                let buffer_request = proto::ScanFromRunRequest {
                     run_ids: vec![run_id.to_string()],
                     exclusive_start_key: request.exclusive_start_key.clone(),
                     max_results: request.max_results,
                 };
 
-                let run_response_fut = self
-                    .table_scan_run(run_id.to_string(), Request::new(run_request))
-                    .map(|r| r.map(|r| r.into_inner().items));
+                // Clone connection_manager for the future
+                let conn_manager_clone = self.connection_manager.clone();
+                let buffer_scan_fut = async move {
+                    conn_manager_clone
+                        .table_scan_run(run_id.to_string(), Request::new(buffer_request))
+                        .await
+                };
 
-                responses.push(run_response_fut.boxed());
+                let buffer_stream = stream::once(buffer_scan_fut)
+                    .map_ok(|resp| stream::iter(resp.into_inner().items.into_iter().map(Ok)))
+                    .try_flatten()
+                    .map_ok(WriteOperation::from)
+                    .map_err(|status| RunError::GrpcError(status))
+                    .boxed();
+
+                let seq_no = SeqNo::from(seq_counter);
+                seq_counter -= 1;
+                streams_to_merge.push((seq_no, buffer_stream));
             }
 
-            for (_, run_metadatas) in table.tree.iter() {
-                // Find the first run metadata that can include keys starting after the exclusive start key
-                let run_metadata_entry = run_metadatas
+            for run_metadatas in table.tree.values() {
+                // Clone variables needed within the stream processing outside the iterator chain
+                let conn_manager_level_clone = self.connection_manager.clone();
+                let start_key_level_clone = request.exclusive_start_key.clone();
+                let max_results_level = request.max_results;
+
+                // Create an iterator over eligible runs in reverse order, without collecting
+                let eligible_runs_iter = run_metadatas
                     .values()
-                    .filter(|run_metadata| {
-                        match &run_metadata.stats {
-                            Stats::StatsV1(stats) => {
-                                // A run might contain keys greater than the exclusive_start_key
-                                // if its maximum key is greater than the exclusive_start_key.
-                                stats.max_key > request.exclusive_start_key
-                            },
+                    .filter(move |run_metadata| match &run_metadata.stats {
+                        Stats::StatsV1(stats) => stats.max_key > start_key_level_clone,
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>(); // TODO: This is highly inefficient, need to avoid this.
+
+                // Create a stream directly from the iterator
+                let start_key_level_clone = request.exclusive_start_key.clone();
+                let level_stream = stream::iter(eligible_runs_iter)
+                    .then(move |run_metadata| {
+                        // Clone necessary variables for each async operation
+                        let run_id = run_metadata.id.clone();
+                        let conn_manager_run_clone = conn_manager_level_clone.clone();
+                        let start_key_run_clone = start_key_level_clone.clone();
+
+                        async move {
+                            // Prepare the request for scanning this specific run
+                            let run_request_proto = proto::ScanFromRunRequest {
+                                run_ids: vec![run_id.to_string()],
+                                exclusive_start_key: start_key_run_clone,
+                                max_results: max_results_level,
+                            };
+                            // Perform the scan RPC call
+                            conn_manager_run_clone
+                                .table_scan_run(run_id.to_string(), Request::new(run_request_proto))
+                                .await
                         }
                     })
-                    .next();
+                    .map_ok(|resp| { // Input: Ok(Response<ScanFromRunResponse>)
+                        // Convert successful response into a stream of items
+                        stream::iter(resp.into_inner().items.into_iter().map(Ok))
+                        // Output: Stream<Item = Result<GetFromRunItem, Status>>
+                    })
+                    .try_flatten() // Flatten the stream of streams into a single stream of items
+                    .map_ok(WriteOperation::from) // Convert proto item to internal WriteOperation
+                    .map_err(|status| RunError::GrpcError(status)) // Convert gRPC status error to RunError
+                    .boxed(); // Box the stream for type erasure
 
-                if let Some(run_metadata) = run_metadata_entry {
-                    let run_id = run_metadata.id.clone();
-
-                    let run_request = proto::ScanFromRunRequest {
-                        run_ids: vec![run_id.to_string()],
-                        exclusive_start_key: request.exclusive_start_key.clone(),
-                        max_results: request.max_results,
-                    };
-
-                    let run_response_fut = self
-                        .table_scan_run(run_id.to_string(), Request::new(run_request))
-                        .map(|r| r.map(|r| r.into_inner().items));
-
-                    responses.push(run_response_fut.boxed());
-                }
+                // Assign a sequence number and add the stream to the merge list,
+                // even if the iterator was empty (resulting in an empty stream).
+                let seq_no = SeqNo::from(seq_counter);
+                seq_counter -= 1;
+                streams_to_merge.push((seq_no, level_stream));
             }
         }
 
-        let responses = futures::future::join_all(responses).await;
-
-        let mut streams_to_merge = Vec::new();
-        for (index, response) in responses.into_iter().enumerate() {
-            match response {
-                Ok(items) => {
-                    // Convert Vec<proto::GetFromRunItem> to Stream<Item = Result<WriteOperation, RunError>>
-                    // Filter out items with None result and map others to WriteOperation
-                    let stream = futures::stream::iter(items.into_iter().map(|item| {
-                        Ok(item.into())
-                    }));
-
-                    // Assign priority: Higher index (later stages like tree runs) gets lower SeqNo.
-                    // usize::MAX ensures WAL (index 0) gets the highest priority.
-                    let seq_no = metadata::SeqNo::from(i64::MAX - index as i64);
-                    // Box the stream as they are of different underlying types now
-                    streams_to_merge.push((seq_no, stream.boxed()));
-                }
-                Err(e) => {
-                    // Propagate the gRPC error from individual run scans
-                    error!("Error scanning run: {}", e);
-                    return Err(Status::internal(format!("Error scanning run: {}", e)));
-                }
-            }
-        }
-
-        // Merge the streams using k-way merge
-        // The merge function handles key ordering and uses SeqNo to pick the latest version per key.
         let merged_stream = crate::k_way::merge(streams_to_merge);
 
-        // Process the merged stream: filter out deletes, handle potential errors from merge, take max results
         let merged_items = merged_stream
-            .filter_map(|result| async move {
-                match result {
-                    // Keep Put operations and convert them to ScanItem
-                    Ok(WriteOperation::Put(key, value)) => Some(proto::ScanItem { key, value }),
-                    // Filter out Delete operations
-                    Ok(WriteOperation::Delete(_)) => None,
-                    // Log errors from the merge process itself (should be rare)
-                    Err(e) => {
-                        panic!("Error during k-way merge stream processing: {}", e);
-                    }
+            .try_filter_map(|write_op| async {
+                match write_op {
+                    WriteOperation::Put(key, value) => Ok(Some(proto::ScanItem { key, value })),
+                    WriteOperation::Delete(_) => Ok(None),
                 }
             })
-            .take(request.max_results as usize) // Limit the number of results
-            .collect::<Vec<_>>()
-            .await;
+            .take(request.max_results as usize)
+            .map_err(|run_error: RunError| {
+                error!("Error during k-way merge or run scan: {}", run_error);
+                Status::internal(format!("Scan failed: {}", run_error))
+            })
+            .try_collect::<Vec<_>>()
+            .await?;
 
-        // Construct the final response
         Ok(proto::ScanResponse {
             items: merged_items,
         })
@@ -460,13 +511,17 @@ impl ReaderService for MyReader {
         &self,
         request: Request<proto::ScanRequest>,
     ) -> Result<Response<proto::ScanResponse>, Status> {
-        if request.get_ref().max_results == 0 || request.get_ref().max_results > 10_000 {
-            return Err(Status::invalid_argument("max_results must be between 1 and 10000"));
+        let max_results_val = request.get_ref().max_results;
+        if max_results_val <= 0 || max_results_val > 10_000 {
+            return Err(Status::invalid_argument(
+                "max_results must be between 1 and 10000",
+            ));
         }
 
         let forest_state = self.forest.get_state();
-        let request = request.into_inner();
-        let response = self.table_scan(forest_state, request).await?;
+        let request_inner = request.into_inner();
+
+        let response = self.table_scan(forest_state, request_inner).await?;
         Ok(Response::new(response))
     }
 }

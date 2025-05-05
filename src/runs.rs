@@ -71,6 +71,8 @@ pub enum RunError {
     Io(#[from] std::io::Error),
     #[error("Data format error: {0}")]
     Format(String),
+    #[error("gRPC error: {0}")]
+    GrpcError(#[from] tonic::Status),
     #[error("Unsupported run version: {0}")]
     UnsupportedVersion(u8),
     #[error("Input list of operations cannot be empty")]
