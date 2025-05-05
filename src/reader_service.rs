@@ -121,7 +121,6 @@ impl ConnectionManager {
     }
 }
 
-
 #[derive(Clone)]
 pub struct MyReader {
     forest: Forest,

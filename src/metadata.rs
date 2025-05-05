@@ -633,14 +633,14 @@ impl MetadataStoreTrait for PostgresMetadataStore {
             // Retry loop for transaction serialization failures
             let mut transaction = self.pg_pool.begin().await?;
 
-            match self
+            return match self
                 .append_wal_attempt(&mut transaction, &run_ids_with_stats)
                 .await
             {
                 Ok(seq_no) => {
                     // Attempt commit
                     match transaction.commit().await {
-                        Ok(_) => return Ok(seq_no), // Success! Exit function.
+                        Ok(_) => Ok(seq_no), // Success! Exit function.
                         Err(commit_err) => {
                             // Check if commit error is retryable
                             if let sqlx::Error::Database(db_err) = &commit_err {
@@ -650,7 +650,7 @@ impl MetadataStoreTrait for PostgresMetadataStore {
                                 }
                             }
                             // Non-retryable commit error
-                            return Err(MetadataError::DatabaseError(commit_err));
+                            Err(MetadataError::DatabaseError(commit_err))
                         },
                     }
                 },
@@ -664,9 +664,9 @@ impl MetadataStoreTrait for PostgresMetadataStore {
                         }
                     }
                     // Non-retryable attempt error
-                    return Err(MetadataError::DatabaseError(attempt_err));
+                    Err(MetadataError::DatabaseError(attempt_err))
                 },
-            }
+            };
         } // End of loop
     }
 
@@ -680,7 +680,7 @@ impl MetadataStoreTrait for PostgresMetadataStore {
             // Retry loop
             let mut transaction = self.pg_pool.begin().await?;
 
-            match self
+            return match self
                 .append_wal_compaction_attempt(
                     &mut transaction,
                     job_id,
@@ -692,7 +692,7 @@ impl MetadataStoreTrait for PostgresMetadataStore {
                 Ok(seq_no) => {
                     // Attempt commit
                     match transaction.commit().await {
-                        Ok(_) => return Ok(seq_no), // Success!
+                        Ok(_) => Ok(seq_no), // Success!
                         Err(commit_err) => {
                             if let sqlx::Error::Database(db_err) = &commit_err {
                                 if db_err.code().is_some_and(|code| code == "40001") {
@@ -701,7 +701,7 @@ impl MetadataStoreTrait for PostgresMetadataStore {
                                 }
                             }
                             // Map non-retryable commit error
-                            return Err(MetadataError::DatabaseError(commit_err));
+                            Err(MetadataError::DatabaseError(commit_err))
                         },
                     }
                 },
@@ -724,12 +724,10 @@ impl MetadataStoreTrait for PostgresMetadataStore {
                         }
                     }
                     // Otherwise, assume it's a general DB connection error
-                    return Err(MetadataError::DatabaseError(attempt_err));
+                    Err(MetadataError::DatabaseError(attempt_err))
                 },
-                Err(e) => {
-                    return Err(e);
-                },
-            }
+                Err(e) => Err(e),
+            };
         } // End loop
     }
 

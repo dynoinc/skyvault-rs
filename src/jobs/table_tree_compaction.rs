@@ -52,7 +52,7 @@ pub async fn execute(
 
     // Note: We clone the RunMetadata here. The original tree state remains untouched until the
     // metadata update.
-    let next_level_overlapping_runs: Vec<crate::metadata::RunMetadata> = table
+    let next_level_overlapping_runs: Vec<metadata::RunMetadata> = table
         .tree
         .get(&level.next()) // Use immutable borrow here
         .map(|m| {
@@ -166,9 +166,9 @@ pub async fn execute(
         object_store.put_run(new_run_id.clone(), run_data).await?;
 
         // Collect the run metadata
-        new_runs.push(crate::metadata::RunMetadata {
+        new_runs.push(metadata::RunMetadata {
             id: new_run_id,
-            belongs_to: crate::metadata::BelongsTo::TableTree(
+            belongs_to: metadata::BelongsTo::TableTree(
                 table_name.clone(),
                 next_level, // New runs belong to the next level
             ),

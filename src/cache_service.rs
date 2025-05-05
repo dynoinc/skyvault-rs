@@ -41,11 +41,7 @@ impl CacheService for MyCache {
                 break;
             }
 
-            let run = match self
-                .storage_cache
-                .get_run(crate::runs::RunId(run_id.clone()))
-                .await
-            {
+            let run = match self.storage_cache.get_run(RunId(run_id.clone())).await {
                 Ok(run) => run,
                 Err(e) => {
                     return Err(Status::internal(format!(

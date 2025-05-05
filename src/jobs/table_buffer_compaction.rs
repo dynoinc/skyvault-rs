@@ -112,12 +112,9 @@ pub async fn execute(
         object_store.put_run(run_id.clone(), run_data).await?;
 
         // Collect the run ID and stats
-        new_runs.push(crate::metadata::RunMetadata {
+        new_runs.push(metadata::RunMetadata {
             id: run_id,
-            belongs_to: crate::metadata::BelongsTo::TableTree(
-                table_name.clone(),
-                metadata::Level::zero(),
-            ),
+            belongs_to: metadata::BelongsTo::TableTree(table_name.clone(), metadata::Level::zero()),
             stats,
         });
     }

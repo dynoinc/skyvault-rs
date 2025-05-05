@@ -29,7 +29,7 @@ pub struct Table {
 pub struct State {
     pub seq_no: metadata::SeqNo,
     pub wal: BTreeMap<metadata::SeqNo, metadata::RunMetadata>,
-    pub tables: HashMap<metadata::TableName, Table>,
+    pub tables: HashMap<TableName, Table>,
 }
 
 impl State {

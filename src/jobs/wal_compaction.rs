@@ -61,7 +61,7 @@ pub async fn execute(
 
     // Current table state: (table_name, sender, task)
     type TableState = (
-        metadata::TableName,
+        TableName,
         mpsc::Sender<Result<WriteOperation, RunError>>,
         tokio::task::JoinHandle<Result<(crate::runs::RunId, Stats), JobError>>,
     );
