@@ -154,3 +154,214 @@ impl CacheService for MyCache {
         Ok(Response::new(response))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::proto::{
+        self,
+        GetFromRunRequest, ScanFromRunRequest,
+    };
+    use crate::runs::{RunId, WriteOperation, RunError, Stats};
+    use crate::storage::ObjectStore;
+    use crate::test_utils::setup_test_object_store;
+    use bytes::Bytes;
+    use std::collections::HashMap;
+    use futures::{stream, TryStreamExt};
+
+    async fn create_and_store_run(
+        object_store: &ObjectStore,
+        run_id: &RunId,
+        operations: Vec<WriteOperation>,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let ops_stream = stream::iter(operations.into_iter().map(Ok::<_, RunError>));
+
+        let mut run_items: Vec<(Bytes, Stats)> =
+            crate::runs::build_runs(ops_stream).try_collect().await?;
+
+        if run_items.len() != 1 {
+            return Err(format!(
+                "Expected 1 run, got {}. Ensure operations are sorted.",
+                run_items.len()
+            )
+            .into());
+        }
+        
+        let (data_bytes, _stats) = run_items.pop().unwrap(); 
+
+        object_store.put_run(run_id.clone(), data_bytes).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_my_cache_new() {
+        let (object_store, _container) = setup_test_object_store().await.unwrap();
+        let cache = MyCache::new(object_store).await;
+        assert!(cache.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_get_from_run_simple() {
+        let (object_store, _container) = setup_test_object_store().await.unwrap();
+        let cache_service = MyCache::new(object_store.clone()).await.unwrap();
+
+        let run_id_str = "test_get_run_1".to_string();
+        let run_id = RunId(run_id_str.clone());
+
+        let get_test_ops = vec![
+            WriteOperation::Put("key1".to_string(), Bytes::from("value1").to_vec()),
+            WriteOperation::Put("key2".to_string(), Bytes::from("value2").to_vec()), 
+            WriteOperation::Delete("key3".to_string()),
+        ];
+
+        create_and_store_run(&object_store, &run_id, get_test_ops)
+            .await
+            .unwrap();
+
+        let request = Request::new(GetFromRunRequest {
+            run_ids: vec![run_id_str],
+            keys: vec![
+                "key1".to_string(),
+                "key3".to_string(),
+                "key4".to_string(),
+            ],
+        });
+
+        let response = cache_service.get_from_run(request).await.unwrap();
+        let response_inner = response.into_inner();
+
+        assert_eq!(response_inner.items.len(), 2);
+
+        let mut results_map = HashMap::new();
+        for item in response_inner.items {
+            results_map.insert(item.key, item.result);
+        }
+
+        match results_map.get("key1") {
+            Some(Some(proto::get_from_run_item::Result::Value(val))) => {
+                assert_eq!(val, &Bytes::from("value1"));
+            }
+            _ => panic!("key1 not found or incorrect result type. Actual: {:?}", results_map.get("key1")),
+        }
+
+        match results_map.get("key3") {
+            Some(Some(proto::get_from_run_item::Result::Deleted(_))) => {}
+            _ => panic!("key3 not found or incorrect result type for deleted. Actual: {:?}", results_map.get("key3")),
+        }
+
+        assert!(!results_map.contains_key("key4"));
+    }
+
+    #[tokio::test]
+    async fn test_scan_from_run_simple() {
+        let (object_store, _container) = setup_test_object_store().await.unwrap();
+        let cache_service = MyCache::new(object_store.clone()).await.unwrap();
+
+        let run_id_str = "test_scan_run_1".to_string();
+        let run_id = RunId(run_id_str.clone());
+
+        let ops = vec![
+            WriteOperation::Put("a_key1".to_string(), Bytes::from("value1").to_vec()),
+            WriteOperation::Delete("b_key2".to_string()),
+            WriteOperation::Put("c_key3".to_string(), Bytes::from("value3").to_vec()),
+            WriteOperation::Put("d_key4".to_string(), Bytes::from("value4").to_vec()),
+        ];
+        create_and_store_run(&object_store, &run_id, ops.clone())
+            .await
+            .unwrap();
+
+        let request_all = Request::new(ScanFromRunRequest {
+            run_ids: vec![run_id_str.clone()],
+            exclusive_start_key: "".to_string(),
+            max_results: 10,
+        });
+
+        let response_all = cache_service.scan_from_run(request_all).await.unwrap();
+        let inner_all = response_all.into_inner();
+
+        assert_eq!(inner_all.items.len(), 4);
+        let expected_items: Vec<proto::GetFromRunItem> = ops.iter().cloned().map(Into::into).collect();
+        assert_eq!(inner_all.items[0], expected_items[0]);
+        assert_eq!(inner_all.items[1], expected_items[1]);
+        assert_eq!(inner_all.items[2], expected_items[2]);
+        assert_eq!(inner_all.items[3], expected_items[3]);
+
+        let request_max_puts = Request::new(ScanFromRunRequest {
+            run_ids: vec![run_id_str.clone()],
+            exclusive_start_key: "".to_string(),
+            max_results: 2,
+        });
+
+        let response_max_puts = cache_service.scan_from_run(request_max_puts).await.unwrap();
+        let inner_max_puts = response_max_puts.into_inner();
+        assert_eq!(inner_max_puts.items.len(), 3);
+        assert_eq!(inner_max_puts.items[0], expected_items[0]);
+        assert_eq!(inner_max_puts.items[1], expected_items[1]);
+        assert_eq!(inner_max_puts.items[2], expected_items[2]);
+
+        let request_start_key = Request::new(ScanFromRunRequest {
+            run_ids: vec![run_id_str.clone()],
+            exclusive_start_key: "b_key2".to_string(),
+            max_results: 10,
+        });
+
+        let response_start_key = cache_service.scan_from_run(request_start_key).await.unwrap();
+        let inner_start_key = response_start_key.into_inner();
+        assert_eq!(inner_start_key.items.len(), 2);
+        assert_eq!(inner_start_key.items[0], expected_items[2]);
+        assert_eq!(inner_start_key.items[1], expected_items[3]);
+
+        let request_invalid_max_zero = Request::new(ScanFromRunRequest {
+            run_ids: vec![run_id_str.clone()],
+            exclusive_start_key: "".to_string(),
+            max_results: 0,
+        });
+        assert!(cache_service.scan_from_run(request_invalid_max_zero).await.is_err());
+
+        let request_invalid_max_large = Request::new(ScanFromRunRequest {
+            run_ids: vec![run_id_str.clone()],
+            exclusive_start_key: "".to_string(),
+            max_results: 10001,
+        });
+        assert!(cache_service.scan_from_run(request_invalid_max_large).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_scan_from_run_multiple_runs() {
+        let (object_store, _container) = setup_test_object_store().await.unwrap();
+        let cache_service = MyCache::new(object_store.clone()).await.unwrap();
+
+        let run_id_1_str = "scan_multi_run_1".to_string();
+        let run_id_1 = RunId(run_id_1_str.clone());
+        let ops1 = vec![
+            WriteOperation::Put("apple".to_string(), Bytes::from("red_from_run1").to_vec()),
+            WriteOperation::Put("banana".to_string(), Bytes::from("yellow_from_run1").to_vec()),
+        ];
+        create_and_store_run(&object_store, &run_id_1, ops1.clone()).await.unwrap();
+        let proto_items1: Vec<proto::GetFromRunItem> = ops1.iter().cloned().map(Into::into).collect();
+
+
+        let run_id_2_str = "scan_multi_run_2".to_string();
+        let run_id_2 = RunId(run_id_2_str.clone());
+        let ops2 = vec![
+            WriteOperation::Put("banana".to_string(), Bytes::from("green_from_run2").to_vec()), 
+            WriteOperation::Delete("cherry".to_string()),
+        ];
+        create_and_store_run(&object_store, &run_id_2, ops2.clone()).await.unwrap();
+        let proto_items2: Vec<proto::GetFromRunItem> = ops2.iter().cloned().map(Into::into).collect();
+
+        let request = Request::new(ScanFromRunRequest {
+            run_ids: vec![run_id_2_str.clone(), run_id_1_str.clone()],
+            exclusive_start_key: "".to_string(),
+            max_results: 10,
+        });
+
+        let response = cache_service.scan_from_run(request).await.unwrap();
+        let inner = response.into_inner();
+
+        assert_eq!(inner.items.len(), 3);
+        assert_eq!(inner.items[0], proto_items1[0]);
+        assert_eq!(inner.items[1], proto_items2[0]);
+        assert_eq!(inner.items[2], proto_items2[1]);
+    }
+}
