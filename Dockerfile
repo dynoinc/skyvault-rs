@@ -1,7 +1,9 @@
 FROM rust:latest AS builder
 
-# Install protobuf compiler and dependencies for sccache
-RUN apt-get update && apt-get install -y protobuf-compiler pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
+# Install protobuf compiler
+RUN apt-get update && \
+    apt-get install -y protobuf-compiler && \
+    rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
