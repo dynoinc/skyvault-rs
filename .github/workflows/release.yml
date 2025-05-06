@@ -139,6 +139,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
+          file: Dockerfile.release
           push: true
           platforms: linux/amd64
           tags: |
@@ -183,13 +184,15 @@ jobs:
       - name: Setup Buf
         uses: bufbuild/buf-action@v1
         with:
+          token: ${{ secrets.BUF_TOKEN }}
           setup_only: true
       
       - name: Push Buf
-        run: buf push \
-          --create \
-          --create-default-label "v$(git rev-parse --short HEAD)" \
-          --create-visibility private
+        run: |
+          buf push \
+            --create \
+            --create-default-label "v$(git rev-parse --short HEAD)" \
+            --create-visibility private
           
   purge_old_versions:
     runs-on: ubuntu-latest
