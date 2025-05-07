@@ -51,6 +51,15 @@ pub struct Config {
 
     #[arg(long, env = "SKYVAULT_IMAGE_ID", default_value = "skyvault")]
     pub image_id: String,
+
+    #[arg(long, env = "SKYVAULT_ENABLE_WRITER", default_value = "true")]
+    pub enable_writer: bool,
+
+    #[arg(long, env = "SKYVAULT_ENABLE_READER", default_value = "true")]
+    pub enable_reader: bool,
+
+    #[arg(long, env = "SKYVAULT_ENABLE_ORCHESTRATOR", default_value = "true")]
+    pub enable_orchestrator: bool,
 }
 
 /// Error types for the skyvault2 library.
@@ -84,51 +93,62 @@ pub async fn server(
 ) -> Result<(), ServerError> {
     let (health_reporter, health_service) = tonic_health::server::health_reporter();
 
-    let writer = writer_service::MyWriter::new(metadata.clone(), storage.clone());
-    health_reporter
-        .set_service_status(
-            proto::writer_service_server::SERVICE_NAME,
-            ServingStatus::Serving,
-        )
-        .await;
-
-    let reader = reader_service::MyReader::new(metadata.clone(), config.grpc_addr.port()).await?;
-    health_reporter
-        .set_service_status(
-            proto::reader_service_server::SERVICE_NAME,
-            ServingStatus::Serving,
-        )
-        .await;
-
-    let cache = cache_service::MyCache::new(storage.clone()).await?;
-    health_reporter
-        .set_service_status(
-            proto::cache_service_server::SERVICE_NAME,
-            ServingStatus::Serving,
-        )
-        .await;
-
-    let orchestrator =
-        orchestrator_service::MyOrchestrator::new(metadata.clone(), config.clone()).await?;
-    health_reporter
-        .set_service_status(
-            proto::orchestrator_service_server::SERVICE_NAME,
-            ServingStatus::Serving,
-        )
-        .await;
-
     let reflection_service = tonic_reflection::server::Builder::configure()
         .register_encoded_file_descriptor_set(proto::FILE_DESCRIPTOR_SET)
         .build_v1()
         .expect("Failed to build reflection service");
 
-    Server::builder()
-        .add_service(WriterServiceServer::new(writer))
-        .add_service(ReaderServiceServer::new(reader))
-        .add_service(CacheServiceServer::new(cache))
-        .add_service(OrchestratorServiceServer::new(orchestrator))
+    let mut builder = Server::builder().add_service(reflection_service);
+
+    if config.enable_writer {
+        let writer = writer_service::MyWriter::new(metadata.clone(), storage.clone());
+        health_reporter
+            .set_service_status(
+                proto::writer_service_server::SERVICE_NAME,
+                ServingStatus::Serving,
+            )
+            .await;
+
+        builder = builder.add_service(WriterServiceServer::new(writer));
+    }
+
+    if config.enable_reader {
+        let reader =
+            reader_service::MyReader::new(metadata.clone(), config.grpc_addr.port()).await?;
+        health_reporter
+            .set_service_status(
+                proto::reader_service_server::SERVICE_NAME,
+                ServingStatus::Serving,
+            )
+            .await;
+
+        let cache = cache_service::MyCache::new(storage.clone()).await?;
+        health_reporter
+            .set_service_status(
+                proto::cache_service_server::SERVICE_NAME,
+                ServingStatus::Serving,
+            )
+            .await;
+
+        builder = builder.add_service(ReaderServiceServer::new(reader));
+        builder = builder.add_service(CacheServiceServer::new(cache));
+    }
+
+    if config.enable_orchestrator {
+        let orchestrator =
+            orchestrator_service::MyOrchestrator::new(metadata.clone(), config.clone()).await?;
+        health_reporter
+            .set_service_status(
+                proto::orchestrator_service_server::SERVICE_NAME,
+                ServingStatus::Serving,
+            )
+            .await;
+
+        builder = builder.add_service(OrchestratorServiceServer::new(orchestrator));
+    }
+
+    builder
         .add_service(health_service)
-        .add_service(reflection_service)
         .serve_with_shutdown(config.grpc_addr, async {
             let mut terminate =
                 tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())

@@ -574,11 +574,12 @@ mod tests {
     use tokio; // For async test runtime
     use tonic::{Request, Response, Status};
 
-    use super::*; 
+    use super::*;
     use crate::forest::{Forest, MockForestTrait};
     use crate::metadata::{BelongsTo, RunMetadata, SeqNo, TableName};
     use crate::proto::{
-        get_from_run_item, GetBatchRequest, GetFromRunItem, GetFromRunRequest, GetFromRunResponse, ScanFromRunRequest, ScanFromRunResponse, ScanRequest, TableGetBatchRequest
+        GetBatchRequest, GetFromRunItem, GetFromRunRequest, GetFromRunResponse, ScanFromRunRequest,
+        ScanFromRunResponse, ScanRequest, TableGetBatchRequest, get_from_run_item,
     };
     use crate::runs::{RunId, Stats, StatsV1};
 
@@ -643,7 +644,8 @@ mod tests {
                     size_bytes: 0,
                 }),
             },
-        ]).await;
+        ])
+        .await;
 
         let mut mock_conn = MockConnectionManager::new();
         mock_conn
@@ -663,7 +665,7 @@ mod tests {
                     &format!("{}.{}", table_name, key),
                     Some("wal_value"),
                 )])
-            });        
+            });
         mock_conn
             .expect_table_get_batch_run()
             .with(
@@ -676,10 +678,7 @@ mod tests {
             )
             .times(1)
             .returning(move |_routing_key, _req| {
-                create_run_response(vec![create_run_item(
-                    key,
-                    Some("buf_value"),
-                )])
+                create_run_response(vec![create_run_item(key, Some("buf_value"))])
             });
 
         let reader = MyReader::new_for_test(forest, Arc::new(mock_conn));
@@ -731,7 +730,8 @@ mod tests {
                     size_bytes: 0,
                 }),
             },
-        ]).await;
+        ])
+        .await;
 
         let mut mock_conn = MockConnectionManager::new();
         mock_conn
@@ -742,7 +742,8 @@ mod tests {
                 function(move |req: &Request<ScanFromRunRequest>| {
                     let inner = req.get_ref();
                     inner.run_ids == vec![wal_run_id.to_string()]
-                        && inner.exclusive_start_key == format!("{}.{}", table_name, exclusive_start_key)
+                        && inner.exclusive_start_key
+                            == format!("{}.{}", table_name, exclusive_start_key)
                 }),
             )
             .times(1)
@@ -751,7 +752,7 @@ mod tests {
                     &format!("{}.key2", table_name),
                     Some("wal_value"),
                 )])
-            });        
+            });
         mock_conn
             .expect_table_scan_run()
             .with(
@@ -764,10 +765,7 @@ mod tests {
             )
             .times(1)
             .returning(move |_routing_key, _req| {
-                create_scan_response(vec![create_run_item(
-                    "key3",
-                    Some("buf_value"),
-                )])
+                create_scan_response(vec![create_run_item("key3", Some("buf_value"))])
             });
 
         let reader = MyReader::new_for_test(forest, Arc::new(mock_conn));

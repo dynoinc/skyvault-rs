@@ -100,7 +100,6 @@ impl State {
     }
 }
 
-
 #[cfg_attr(test, mockall::automock)]
 pub trait ForestTrait: Send + Sync + 'static {
     fn get_state(&self) -> Arc<State>;
