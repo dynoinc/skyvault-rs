@@ -191,7 +191,7 @@ jobs:
   
   create_release:
     runs-on: ubuntu-latest
-    needs: bump_version
+    needs: [bump_version, push]
     if: needs.bump_version.outputs.VERSION != '' && success()
     name: Create Release
     permissions:
@@ -202,12 +202,37 @@ jobs:
         with:
           ref: ${{ needs.bump_version.outputs.COMMIT_HASH }}
 
+      - name: Set up Helm
+        uses: azure/setup-helm@v3
+        
+      - name: Package Helm Chart
+        run: |
+          VERSION="${{ needs.bump_version.outputs.VERSION }}"
+          VERSION_NO_V="${VERSION#v}"
+          helm package charts/skyvault --version $VERSION_NO_V --app-version $VERSION_NO_V
+
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ needs.bump_version.outputs.VERSION }}
           name: Release ${{ needs.bump_version.outputs.VERSION }}
           generate_release_notes: true
+          body: |
+            ## Container Image
+            ```
+            ghcr.io/${{ github.repository }}:${{ needs.bump_version.outputs.VERSION }}
+            ```
+
+            ## Artifacts
+            - Container Image: `ghcr.io/${{ github.repository }}:${{ needs.bump_version.outputs.VERSION }}`
+            - Helm Chart: [skyvault-${{ needs.bump_version.outputs.VERSION_NO_V }}.tgz](https://github.com/${{ github.repository }}/releases/download/${{ needs.bump_version.outputs.VERSION }}/skyvault-${{ needs.bump_version.outputs.VERSION_NO_V }}.tgz)
+            
+            ## Installation
+            ```bash
+            helm install my-release https://github.com/${{ github.repository }}/releases/download/${{ needs.bump_version.outputs.VERSION }}/skyvault-${{ needs.bump_version.outputs.VERSION_NO_V }}.tgz
+            ```
+          files: |
+            skyvault-*.tgz
     
   buf_push:
     runs-on: ubuntu-latest
@@ -232,30 +257,6 @@ jobs:
       
       - name: Push Buf
         run: buf push --label "${{ needs.bump_version.outputs.VERSION }}" proto
-          
-  helm_release:
-    runs-on: ubuntu-latest
-    needs: bump_version
-    if: needs.bump_version.outputs.VERSION != '' && success()
-    name: Release Helm Chart
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.bump_version.outputs.COMMIT_HASH }}
-          fetch-depth: 0
-          fetch-tags: true
-
-      - name: Configure Git
-        run: |
-          git config user.name "$GITHUB_ACTOR"
-          git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
-
-      - name: Run chart-releaser
-        uses: helm/chart-releaser-action@v1.7.0
-        env:
-          CR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           
   purge_old_versions:
     runs-on: ubuntu-latest

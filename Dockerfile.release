@@ -9,7 +9,7 @@ WORKDIR /app
 
 COPY . .
 ENV SQLX_OFFLINE=true
-RUN cargo build --release
+RUN cargo build
 
 # Final stage
 FROM public.ecr.aws/lts/ubuntu:24.04_stable
@@ -20,8 +20,8 @@ RUN apt-get update && \
 
 WORKDIR /app
 
-COPY --from=builder /app/target/release/skyvault /app/skyvault
-COPY --from=builder /app/target/release/worker /app/worker
+COPY --from=builder /app/target/debug/skyvault /app/skyvault
+COPY --from=builder /app/target/debug/worker /app/worker
 
 LABEL org.opencontainers.image.source="https://github.com/dynoinc/skyvault-rs"
 LABEL org.opencontainers.image.description="Skyvault - high-performance, scalable object-store backed key-value store"
