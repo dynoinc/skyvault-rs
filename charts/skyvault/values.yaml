@@ -8,7 +8,7 @@ common:
     repository: localhost/skyvault
     pullPolicy: Never
     tag: dev
-  
+
   # Common environment variables for all deployments
   env:
     AWS_REGION: us-east-1
@@ -36,7 +36,7 @@ deployments:
     # Instance-specific environment variables
     env:
       LOG_LEVEL: "info"
-      
+
   # Second instance example with different config
   instance2:
     enabled: false
@@ -115,7 +115,7 @@ minio:
   env:
     MINIO_ROOT_USER: minioadmin
     MINIO_ROOT_PASSWORD: minioadmin
- 
+
 # Values for the PostgreSQL service
 postgres:
   enabled: true
@@ -131,4 +131,3 @@ postgres:
     POSTGRES_USER: postgres
     POSTGRES_PASSWORD: postgres
     POSTGRES_DB: skyvault
- 

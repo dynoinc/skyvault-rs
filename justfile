@@ -8,6 +8,8 @@ check:
     cargo clippy -- -D warnings
     RUST_BACKTRACE=1 cargo test
 
+    helm lint charts/skyvault
+
     cd smoke-tests && uv run ruff check .
     cd smoke-tests && uv run ruff format .
 

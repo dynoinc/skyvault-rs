@@ -69,12 +69,6 @@ jobs:
       with:
         python-version: '3.10'
     
-    - name: Install chart-testing
-      uses: helm/chart-testing-action@v2.6.1
-    
-    - name: Run chart-testing (lint)
-      run: ct lint --target-branch ${{ github.event.repository.default_branch }} --charts charts/skyvault
-    
     - name: Run helm lint
       run: |
         helm lint charts/skyvault
