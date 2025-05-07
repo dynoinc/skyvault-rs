@@ -49,3 +49,32 @@ jobs:
       run: |
         export SQLX_OFFLINE=true
         cargo test
+
+  lint-helm:
+    name: Lint Helm Charts
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 1
+    
+    - name: Set up Helm
+      uses: azure/setup-helm@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+    
+    - name: Install chart-testing
+      uses: helm/chart-testing-action@v2.6.1
+    
+    - name: Run chart-testing (lint)
+      run: ct lint --target-branch ${{ github.event.repository.default_branch }} --charts charts/skyvault
+    
+    - name: Run helm lint
+      run: |
+        helm lint charts/skyvault

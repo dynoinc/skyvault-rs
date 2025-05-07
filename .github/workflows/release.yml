@@ -190,6 +190,28 @@ jobs:
       - name: Push Buf
         run: buf push --label "${{ needs.bump_version.outputs.VERSION }}" proto
           
+  helm_release:
+    runs-on: ubuntu-latest
+    needs: bump_version
+    if: success()
+    name: Release Helm Chart
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "$GITHUB_ACTOR"
+          git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
+
+      - name: Run chart-releaser
+        uses: helm/chart-releaser-action@v1.7.0
+        env:
+          CR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          
   purge_old_versions:
     runs-on: ubuntu-latest
     needs: push
