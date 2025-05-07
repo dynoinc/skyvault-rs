@@ -10,6 +10,6 @@ To install the chart with the release name `my-release`:
 
 2. **Install the chart:**
    ```bash
-   helm install my-release skyvault/skyvault
+   helm install my-release skyvault/skyvault --version 0.1.0
    ```
 

@@ -9,7 +9,7 @@ WORKDIR /app
 
 COPY . .
 ENV SQLX_OFFLINE=true
-RUN cargo build --release --locked
+RUN cargo build --release
 
 # Final stage
 FROM public.ecr.aws/lts/ubuntu:24.04_stable
