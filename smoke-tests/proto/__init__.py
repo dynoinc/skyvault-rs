@@ -13,7 +13,7 @@ def _compile_proto():
     generated_dir = script_dir.parent
 
     # Include path for the directory containing skyvault.proto
-    proto_include_proj = f"-I{project_root.resolve()}"
+    proto_include_proj = f"-I{project_root.resolve()}/proto/skyvault/v1"
 
     # Include path for google/protobuf/empty.proto
     try:
@@ -33,7 +33,7 @@ def _compile_proto():
         f"--pyi_out={generated_dir.resolve()}",  # Generate .pyi stub files
         f"--grpc_python_out={generated_dir.resolve()}",
         # Use absolute path to the proto file since it's outside smoke-tests
-        "proto/skyvault.proto",
+        "proto/skyvault/v1/skyvault.proto",
     ]
 
     # Compile proto files

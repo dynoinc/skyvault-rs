@@ -1,4 +1,4 @@
 version: v2
 modules:
-  - path: .
+  - path: proto
     name: buf.build/dynoinc/skyvault

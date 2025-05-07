@@ -15,12 +15,13 @@ RUN rustup toolchain install --profile minimal $(rustup show active-toolchain | 
 COPY Cargo.toml Cargo.lock build.rs .rustfmt.toml ./
 
 # Create a minimal project structure for dependency caching
-RUN mkdir -p src bin proto && \
+RUN mkdir -p src bin proto/skyvault/v1 && \
     echo "fn main() {println!(\"fake\")}" > src/lib.rs && \
     echo "fn main() {println!(\"fake\")}" > bin/main.rs && \
     echo "fn main() {println!(\"fake\")}" > bin/worker.rs && \
-    echo "syntax = \"proto3\"; package skyvault;" > proto/skyvault.proto
+    echo "syntax = \"proto3\"; package skyvault.v1;" > proto/skyvault/v1/skyvault.proto
 RUN cargo build --locked
+RUN rm -rf src bin proto target/debug/deps/skyvault* target/debug/deps/worker*
 
 # Build the actual project
 COPY . .

@@ -5,8 +5,8 @@ import time
 import sys
 import pytest
 
-from proto import skyvault_pb2
-from proto import skyvault_pb2_grpc
+from proto.skyvault.v1 import skyvault_pb2
+from proto.skyvault.v1 import skyvault_pb2_grpc
 
 #
 # Fixtures
