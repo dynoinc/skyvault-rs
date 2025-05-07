@@ -121,8 +121,9 @@ jobs:
           echo "Updating ./Cargo.toml to version $VERSION_NO_V"
           # This sed command targets 'version = "..."' under [package] or [workspace.package]
           # It handles version assignments within these specific TOML tables.
-          sed -i -E "/^\s*\[(workspace\.)?package\]/,/version\s*=/s/^(version\s*=\s*["']).*(["'])/version = \1$VERSION_NO_V\2/" Cargo.toml
+          sed -i "3s/version = \".*\"/version = \"$VERSION_NO_V\"/" Cargo.toml
           git add Cargo.toml
+          git add Cargo.lock
 
           # Commit changes
           # Check if there are changes to commit
