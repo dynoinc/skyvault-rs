@@ -103,6 +103,7 @@ affinity: {}
 
 # Values for the minio service
 minio:
+  enabled: true
   image:
     repository: docker.io/minio/minio
     tag: latest
@@ -117,6 +118,7 @@ minio:
  
 # Values for the PostgreSQL service
 postgres:
+  enabled: true
   image:
     repository: docker.io/postgres
     tag: "12"

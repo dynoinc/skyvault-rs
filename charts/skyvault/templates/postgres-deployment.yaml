@@ -1,3 +1,4 @@
+{{- if .Values.postgres.enabled }}
 # PostgreSQL Deployment
 apiVersion: apps/v1
 kind: Deployment
@@ -31,3 +32,4 @@ spec:
             - name: {{ $key }}
               value: {{ $value | quote }}
             {{- end }}
+{{- end }}

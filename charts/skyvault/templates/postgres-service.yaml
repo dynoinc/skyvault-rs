@@ -1,3 +1,4 @@
+{{- if .Values.postgres.enabled }}
 # PostgreSQL Service
 apiVersion: v1
 kind: Service
@@ -15,4 +16,5 @@ spec:
       name: postgres
   selector:
     {{- include "skyvault.selectorLabels" . | nindent 4 }}
-    app.kubernetes.io/component: postgres 
+    app.kubernetes.io/component: postgres
+{{- end }}
