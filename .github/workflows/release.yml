@@ -61,6 +61,7 @@ jobs:
     outputs:
       VERSION: ${{ steps.generate_version.outputs.VERSION }}
       COMMIT_HASH: ${{ steps.update_manifests_and_commit.outputs.COMMIT_HASH }}
+      VERSION_NO_V: ${{ steps.generate_version.outputs.VERSION_NO_V }}
 
     steps:
       - uses: actions/checkout@v4
@@ -95,6 +96,7 @@ jobs:
           IFS='.' read -r major minor patch <<< "$LAST_VERSION"
           NEW_VERSION="$major.$minor.$((patch + 1))"
           echo "VERSION=v$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "VERSION_NO_V=$NEW_VERSION" >> $GITHUB_OUTPUT
 
       - name: Update manifests, commit, tag, and push
         id: update_manifests_and_commit
@@ -117,11 +119,13 @@ jobs:
                  charts/skyvault/Chart.yaml
           git add charts/skyvault/Chart.yaml
 
-          # Update root Cargo.toml
-          echo "Updating ./Cargo.toml to version $VERSION_NO_V"
+          # Update root Cargo.toml and Cargo.lock
+          echo "Updating ./Cargo.toml and Cargo.lock to version $VERSION_NO_V"
           # This sed command targets 'version = "..."' under [package] or [workspace.package]
           # It handles version assignments within these specific TOML tables.
           sed -i "3s/version = \".*\"/version = \"$VERSION_NO_V\"/" Cargo.toml
+          # Update version in Cargo.lock for the skyvault package
+          sed -i '/name = "skyvault"/,/version = ".*"/ s/version = ".*"/version = "'$VERSION_NO_V'"/' Cargo.lock
           git add Cargo.toml
           git add Cargo.lock
 
