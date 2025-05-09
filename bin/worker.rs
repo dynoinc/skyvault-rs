@@ -1,23 +1,21 @@
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use aws_sdk_s3::Client as S3Client;
 use clap::Parser;
+use kube::Client;
 use rustls::crypto::aws_lc_rs;
 use skyvault::metadata::JobId;
-use skyvault::{jobs, metadata, storage};
+use skyvault::{jobs, metadata, storage, PostgresConfig};
+use tokio::fs;
 use tracing::info;
 use tracing::level_filters::LevelFilter;
 
 #[derive(Debug, Parser)]
 #[command(name = "worker", about = "A worker for skyvault.")]
 pub struct Config {
-    #[arg(
-        long,
-        env = "SKYVAULT_METADATA_URL",
-        default_value = "postgres://postgres:postgres@localhost:5432/skyvault"
-    )]
-    pub metadata_url: String,
+    #[clap(flatten)]
+    pub postgres: PostgresConfig,
 
     #[arg(long, env = "SKYVAULT_BUCKET_NAME", default_value = "skyvault-bucket")]
     pub bucket_name: String,
@@ -45,10 +43,24 @@ async fn main() -> Result<()> {
 
     let config = Config::parse();
     let version = env!("CARGO_PKG_VERSION");
-    info!(config = ?config, version = version, job_id = ?config.job_id, "Starting worker");
+
+    // Initialize K8s client
+    let k8s_client = Client::try_default().await.context("Failed to create Kubernetes client")?;
+
+    // Determine namespace - we're always running in Kubernetes
+    let namespace_path = "/var/run/secrets/kubernetes.io/serviceaccount/namespace";
+    let current_namespace = fs::read_to_string(namespace_path).await
+        .context(format!("Failed to read namespace from {}. This worker must run within a Kubernetes pod with a service account.", namespace_path))?
+        .trim().to_string();
+
+    info!(config = ?config, version = version, job_id = ?config.job_id, namespace = %current_namespace, "Starting worker");
+
+    // Resolve metadata_url using K8s secret
+    let metadata_url = config.postgres.resolve_metadata_url(k8s_client.clone(), &current_namespace).await
+        .context("Failed to resolve metadata URL from Kubernetes secret")?;
 
     // Create metadata client
-    let metadata = Arc::new(metadata::PostgresMetadataStore::new(config.metadata_url).await?);
+    let metadata_store = Arc::new(metadata::PostgresMetadataStore::new(metadata_url).await?);
 
     // Create S3 client with path style URLs
     let aws_config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
@@ -58,7 +70,7 @@ async fn main() -> Result<()> {
     let s3_client = S3Client::from_conf(s3_config);
     let storage = Arc::new(storage::S3ObjectStore::new(s3_client, &config.bucket_name).await?);
 
-    jobs::execute(metadata, storage, config.job_id).await?;
+    jobs::execute(metadata_store, storage, config.job_id).await?;
     info!("Complete!");
     Ok(())
 }

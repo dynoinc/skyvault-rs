@@ -1,14 +1,14 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: {{ include "skyvault.fullname" . }}-binding
+  name: skyvault-rolebinding
   labels:
     {{- include "skyvault.labels" . | nindent 4 }}
 subjects:
 - kind: ServiceAccount
-  name: {{ include "skyvault.serviceAccountName" . }}
+  name: skyvault-serviceaccount
   namespace: {{ .Release.Namespace }}
 roleRef:
   kind: Role
-  name: {{ include "skyvault.fullname" . }}
+  name: skyvault-role
   apiGroup: rbac.authorization.k8s.io 

@@ -211,6 +211,7 @@ impl MyOrchestrator {
                         ..ObjectMeta::default()
                     }),
                     spec: Some(k8s_openapi::api::core::v1::PodSpec {
+                        service_account_name: Some(self.config.worker_service_account_name.clone()),
                         containers: vec![k8s_openapi::api::core::v1::Container {
                             name: "worker".to_string(),
                             command: Some(vec![
@@ -221,8 +222,28 @@ impl MyOrchestrator {
                             image: Some(self.config.image_id.clone()),
                             env: Some(vec![
                                 k8s_openapi::api::core::v1::EnvVar {
-                                    name: "SKYVAULT_METADATA_URL".to_string(),
-                                    value: Some(self.config.metadata_url.clone()),
+                                    name: "SKYVAULT_POSTGRES_USER".to_string(),
+                                    value: Some(self.config.postgres.user.clone()),
+                                    value_from: None,
+                                },
+                                k8s_openapi::api::core::v1::EnvVar {
+                                    name: "SKYVAULT_POSTGRES_HOST".to_string(),
+                                    value: Some(self.config.postgres.host.clone()),
+                                    value_from: None,
+                                },
+                                k8s_openapi::api::core::v1::EnvVar {
+                                    name: "SKYVAULT_POSTGRES_PORT".to_string(),
+                                    value: Some(self.config.postgres.port.to_string()),
+                                    value_from: None,
+                                },
+                                k8s_openapi::api::core::v1::EnvVar {
+                                    name: "SKYVAULT_POSTGRES_DB".to_string(),
+                                    value: Some(self.config.postgres.db_name.clone()),
+                                    value_from: None,
+                                },
+                                k8s_openapi::api::core::v1::EnvVar {
+                                    name: "SKYVAULT_POSTGRES_SSLMODE".to_string(),
+                                    value: Some(self.config.postgres.sslmode.clone()),
                                     value_from: None,
                                 },
                                 k8s_openapi::api::core::v1::EnvVar {

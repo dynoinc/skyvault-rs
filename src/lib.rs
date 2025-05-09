@@ -10,6 +10,11 @@ use proto::writer_service_server::WriterServiceServer;
 use tonic::transport::Server;
 use tonic_health::ServingStatus;
 
+use k8s_openapi::api::core::v1::Secret;
+use kube::api::Api;
+use kube::Client;
+use anyhow::{anyhow, Result};
+
 pub mod proto {
     tonic::include_proto!("skyvault.v1");
 
@@ -34,23 +39,78 @@ pub mod storage;
 pub mod test_utils;
 
 #[derive(Debug, Parser, Clone)]
+pub struct PostgresConfig {
+    #[arg(long, env = "SKYVAULT_POSTGRES_USER", default_value = "postgres")]
+    pub user: String,
+    #[arg(long, env = "SKYVAULT_POSTGRES_HOST", default_value = "localhost")]
+    pub host: String,
+    #[arg(long, env = "SKYVAULT_POSTGRES_PORT", default_value = "5432")]
+    pub port: u16,
+    #[arg(long, env = "SKYVAULT_POSTGRES_DB", default_value = "skyvault")]
+    pub db_name: String,
+    #[arg(long, env = "SKYVAULT_POSTGRES_SSLMODE", default_value = "prefer")]
+    pub sslmode: String,
+}
+
+impl PostgresConfig {
+    fn to_url_with_password(&self, password_val: &str) -> String {
+        format!(
+            "postgres://{}:{}@{}:{}/{}?sslmode={}",
+            self.user, password_val, self.host, self.port, self.db_name, self.sslmode
+        )
+    }
+
+    pub async fn resolve_metadata_url(
+        &self,
+        k8s_client: Client, 
+        namespace: &str,
+    ) -> Result<String> {
+        const PASSWORD_SECRET_NAME: &str = "skyvault-postgres-password";
+        const PASSWORD_KEY: &str = "POSTGRES_PASSWORD";
+
+        let secrets_api: Api<Secret> = Api::namespaced(k8s_client, namespace);
+        match secrets_api.get(PASSWORD_SECRET_NAME).await {
+            Ok(secret) => {
+                let data = secret.data.ok_or_else(|| {
+                    anyhow!("Secret '{}' in namespace '{}' does not contain any data", PASSWORD_SECRET_NAME, namespace)
+                })?;
+                
+                let password_bytes = data.get(PASSWORD_KEY).ok_or_else(|| {
+                    anyhow!("Secret '{}' in namespace '{}' does not contain key '{}'", PASSWORD_SECRET_NAME, namespace, PASSWORD_KEY)
+                })?;
+
+                let password_str = String::from_utf8(password_bytes.0.clone()).map_err(|e| {
+                    anyhow!("Failed to decode password from secret '{}', key '{}': {}", PASSWORD_SECRET_NAME, PASSWORD_KEY, e)
+                })?;
+                Ok(self.to_url_with_password(&password_str))
+            }
+            Err(e) => {
+                Err(
+                    anyhow!("Failed to get secret '{}' in namespace '{}': {}. Ensure the service account has GET permissions on Secrets.", PASSWORD_SECRET_NAME, namespace, e)
+                    .context(format!("Attempting to read secret: '{}', key: '{}' in namespace: '{}'", PASSWORD_SECRET_NAME, PASSWORD_KEY, namespace))
+                )
+            }
+        }
+    }
+}
+
+#[derive(Debug, Parser, Clone)]
 #[command(name = "skyvault", about = "A gRPC server for skyvault.")]
 pub struct Config {
     #[arg(long, env = "SKYVAULT_GRPC_ADDR", value_parser = clap::value_parser!(SocketAddr), default_value = "0.0.0.0:50051")]
     pub grpc_addr: SocketAddr,
 
-    #[arg(
-        long,
-        env = "SKYVAULT_METADATA_URL",
-        default_value = "postgres://postgres:postgres@localhost:5432/skyvault"
-    )]
-    pub metadata_url: String,
+    #[clap(flatten)]
+    pub postgres: PostgresConfig,
 
     #[arg(long, env = "SKYVAULT_BUCKET_NAME", default_value = "skyvault-bucket")]
     pub bucket_name: String,
 
     #[arg(long, env = "SKYVAULT_IMAGE_ID", default_value = "skyvault")]
     pub image_id: String,
+
+    #[arg(long, env = "SKYVAULT_WORKER_SERVICE_ACCOUNT_NAME", default_value = "default")]
+    pub worker_service_account_name: String,
 
     #[arg(long, env = "SKYVAULT_ENABLE_WRITER", default_value = "true")]
     pub enable_writer: bool,

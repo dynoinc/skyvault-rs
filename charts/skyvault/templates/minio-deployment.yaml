@@ -3,7 +3,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "skyvault.fullname" . }}-minio
+  name: skyvault-minio
   labels:
     {{- include "skyvault.labels" . | nindent 4 }}
     app.kubernetes.io/component: minio

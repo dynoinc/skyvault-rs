@@ -3,7 +3,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "skyvault.fullname" . }}-postgres
+  name: skyvault-postgres
   labels:
     {{- include "skyvault.labels" . | nindent 4 }}
     app.kubernetes.io/component: postgres
@@ -28,8 +28,13 @@ spec:
               containerPort: {{ .Values.postgres.service.port }}
               protocol: TCP
           env:
-            {{- range $key, $value := .Values.postgres.env }}
-            - name: {{ $key }}
-              value: {{ $value | quote }}
-            {{- end }}
+            - name: POSTGRES_USER
+              value: {{ .Values.postgres.env.POSTGRES_USER | quote }}
+            - name: POSTGRES_DB
+              value: {{ .Values.postgres.env.POSTGRES_DB | quote }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: skyvault-postgres-password
+                  key: POSTGRES_PASSWORD
 {{- end }}

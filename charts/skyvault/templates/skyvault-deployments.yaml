@@ -4,7 +4,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "skyvault.fullname" $ }}-{{ $deployment.instanceName }}
+  name: skyvault-{{ $deployment.instanceName }}
   labels:
     {{- include "skyvault.labels" $ | nindent 4 }}
     app.kubernetes.io/component: skyvault
@@ -23,7 +23,7 @@ spec:
         app.kubernetes.io/component: skyvault
         app.kubernetes.io/instance-id: {{ $deployment.instanceName }}
     spec:
-      serviceAccountName: {{ include "skyvault.serviceAccountName" $ }}
+      serviceAccountName: skyvault-serviceaccount
       containers:
         - name: {{ $.Chart.Name }}
           image: "{{ $.Values.common.image.id }}"
@@ -50,14 +50,26 @@ spec:
             - name: SKYVAULT_IMAGE_ID
               value: "{{ $.Values.common.image.id }}"
 
-            - name: SKYVAULT_METADATA_URL
-              value: "postgres://{{ $.Values.postgres.env.POSTGRES_USER }}:{{ $.Values.postgres.env.POSTGRES_PASSWORD }}@{{ $.Values.postgres.env.POSTGRES_HOST }}:{{ $.Values.postgres.service.port }}/{{ $.Values.postgres.env.POSTGRES_DB }}?sslmode={{ $.Values.postgres.env.POSTGRES_SSLMODE }}"
+            - name: SKYVAULT_WORKER_SERVICE_ACCOUNT_NAME
+              value: "skyvault-serviceaccount"
+
+            # Database connection details
+            - name: POSTGRES_USER
+              value: {{ $.Values.postgres.env.POSTGRES_USER | quote }}
+            - name: POSTGRES_HOST
+              value: {{ $.Values.postgres.env.POSTGRES_HOST | quote }}
+            - name: POSTGRES_PORT
+              value: {{ $.Values.postgres.service.port | quote }}
+            - name: POSTGRES_DB
+              value: {{ $.Values.postgres.env.POSTGRES_DB | quote }}
+            - name: POSTGRES_SSLMODE
+              value: {{ $.Values.postgres.env.POSTGRES_SSLMODE | quote }}
 ---
 # Service for each Skyvault instance
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "skyvault.fullname" $ }}-{{ $deployment.instanceName }}
+  name: skyvault-{{ $deployment.instanceName }}
   labels:
     {{- include "skyvault.labels" $ | nindent 4 }}
     app.kubernetes.io/component: skyvault
