@@ -26,7 +26,7 @@ spec:
       serviceAccountName: {{ include "skyvault.serviceAccountName" $ }}
       containers:
         - name: {{ $.Chart.Name }}
-          image: "{{ $.Values.common.image.repository }}:{{ $.Values.common.image.tag | default $.Chart.AppVersion }}"
+          image: "{{ $.Values.common.image.id }}"
           imagePullPolicy: {{ $.Values.common.image.pullPolicy }}
           ports:
             - name: grpc
@@ -51,7 +51,7 @@ spec:
               value: http://{{ include "skyvault.fullname" $ }}-minio:{{ $.Values.minio.service.port }}
             
             - name: SKYVAULT_IMAGE_ID
-              value: "{{ $.Values.common.image.repository }}:{{ $.Values.common.image.tag | default $.Chart.AppVersion }}"
+              value: "{{ $.Values.common.image.id }}"
 
             - name: SKYVAULT_METADATA_URL
               value: "postgres://{{ $.Values.postgres.env.POSTGRES_USER }}:{{ $.Values.postgres.env.POSTGRES_PASSWORD }}@{{ include "skyvault.fullname" $ }}-postgres:{{ $.Values.postgres.service.port }}/{{ $.Values.postgres.env.POSTGRES_DB }}?sslmode=disable"
