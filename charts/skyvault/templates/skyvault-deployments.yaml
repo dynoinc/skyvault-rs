@@ -54,15 +54,15 @@ spec:
               value: "skyvault-serviceaccount"
 
             # Database connection details
-            - name: POSTGRES_USER
+            - name: SKYVAULT_POSTGRES_USER
               value: {{ $.Values.postgres.env.POSTGRES_USER | quote }}
-            - name: POSTGRES_HOST
+            - name: SKYVAULT_POSTGRES_HOST
               value: {{ $.Values.postgres.env.POSTGRES_HOST | quote }}
-            - name: POSTGRES_PORT
+            - name: SKYVAULT_POSTGRES_PORT
               value: {{ $.Values.postgres.service.port | quote }}
-            - name: POSTGRES_DB
+            - name: SKYVAULT_POSTGRES_DB
               value: {{ $.Values.postgres.env.POSTGRES_DB | quote }}
-            - name: POSTGRES_SSLMODE
+            - name: SKYVAULT_POSTGRES_SSLMODE
               value: {{ $.Values.postgres.env.POSTGRES_SSLMODE | quote }}
 ---
 # Service for each Skyvault instance

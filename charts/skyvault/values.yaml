@@ -56,6 +56,7 @@ deployments:
 
 # Service account configuration
 serviceAccount:
+  create: true
   annotations: {}
 
 # Values for the minio service
@@ -87,5 +88,6 @@ postgres:
   env:
     POSTGRES_USER: postgres
     POSTGRES_DB: skyvault
+    POSTGRES_PASSWORD: postgres
     POSTGRES_HOST: skyvault-postgres
     POSTGRES_SSLMODE: disable

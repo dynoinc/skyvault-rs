@@ -20,7 +20,7 @@ def service_connection():
     command = [
         "minikube",
         "service",
-        "skyvault-dev-primary",
+        "skyvault-primary",
         "--url",
         "--format={{.IP}}:{{.Port}}",
     ]
