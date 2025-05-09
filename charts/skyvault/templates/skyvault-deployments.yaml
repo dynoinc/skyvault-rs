@@ -47,14 +47,11 @@ spec:
               value: {{ $value | quote }}
             {{- end }}
             
-            - name: AWS_ENDPOINT_URL_S3
-              value: http://{{ include "skyvault.fullname" $ }}-minio:{{ $.Values.minio.service.port }}
-            
             - name: SKYVAULT_IMAGE_ID
               value: "{{ $.Values.common.image.id }}"
 
             - name: SKYVAULT_METADATA_URL
-              value: "postgres://{{ $.Values.postgres.env.POSTGRES_USER }}:{{ $.Values.postgres.env.POSTGRES_PASSWORD }}@{{ include "skyvault.fullname" $ }}-postgres:{{ $.Values.postgres.service.port }}/{{ $.Values.postgres.env.POSTGRES_DB }}?sslmode=disable"
+              value: "postgres://{{ $.Values.postgres.env.POSTGRES_USER }}:{{ $.Values.postgres.env.POSTGRES_PASSWORD }}@{{ $.Values.postgres.env.POSTGRES_HOST }}:{{ $.Values.postgres.service.port }}/{{ $.Values.postgres.env.POSTGRES_DB }}?sslmode={{ $.Values.postgres.env.POSTGRES_SSLMODE }}"
 ---
 # Service for each Skyvault instance
 apiVersion: v1

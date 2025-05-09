@@ -11,6 +11,7 @@ common:
     AWS_REGION: us-east-1
     AWS_ACCESS_KEY_ID: minioadmin
     AWS_SECRET_ACCESS_KEY: minioadmin
+    AWS_ENDPOINT_URL_S3: http://skyvault-dev-minio:9000
 
 # Multiple deployment instances configuration
 deployments:
@@ -108,3 +109,5 @@ postgres:
     POSTGRES_USER: postgres
     POSTGRES_PASSWORD: postgres
     POSTGRES_DB: skyvault
+    POSTGRES_HOST: skyvault-dev-postgres
+    POSTGRES_SSLMODE: disable
