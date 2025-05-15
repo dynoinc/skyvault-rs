@@ -136,6 +136,7 @@ def persist_snapshot(stub):
     response = stub.PersistSnapshot(request, timeout=10)
     return response.seq_no
 
+
 #
 # Test constants
 #
@@ -195,6 +196,7 @@ def test_write_compact_read(stubs):
         f"Failed to read back key '{KEY_ONE}' after compaction"
     )
 
+
 @pytest.mark.smoke
 def test_snapshot_persistence(stubs):
     """Test that snapshots are persisted correctly."""
@@ -203,7 +205,7 @@ def test_snapshot_persistence(stubs):
     orchestrator_stub = stubs["orchestrator"]
 
     # Write some data
-    seq_no = perform_write(writer_stub, TABLE_NAME, KEY_ONE, VALUE_ONE)
+    perform_write(writer_stub, TABLE_NAME, KEY_ONE, VALUE_ONE)
 
     # Trigger snapshot persistence
     persist_snapshot(orchestrator_stub)

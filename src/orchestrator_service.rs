@@ -10,7 +10,8 @@ use crate::metadata::{JobParams, Level, MetadataStore, SeqNo, SnapshotID, TableN
 use crate::proto::orchestrator_service_server::OrchestratorService;
 use crate::proto::{
     self, DumpChangelogRequest, DumpChangelogResponse, DumpSnapshotRequest, DumpSnapshotResponse,
-    GetJobStatusRequest, GetJobStatusResponse, KickOffJobRequest, KickOffJobResponse, PersistSnapshotRequest, PersistSnapshotResponse,
+    GetJobStatusRequest, GetJobStatusResponse, KickOffJobRequest, KickOffJobResponse,
+    PersistSnapshotRequest, PersistSnapshotResponse,
 };
 use crate::storage::{self, ObjectStore};
 use crate::{Config, metadata};
@@ -88,7 +89,11 @@ impl MyOrchestrator {
             } {
                 match self.persist_snapshot(state.clone()).await {
                     Ok((snapshot_id, seq_no)) => {
-                        tracing::info!("Successfully persisted snapshot {} at seq_no {}", snapshot_id, seq_no);
+                        tracing::info!(
+                            "Successfully persisted snapshot {} at seq_no {}",
+                            snapshot_id,
+                            seq_no
+                        );
                     },
                     Err(e) => {
                         tracing::error!("Failed to persist snapshot: {}", e);
@@ -217,17 +222,17 @@ impl MyOrchestrator {
         }
     }
 
-    async fn persist_snapshot(&self, state: Arc<Snapshot>) -> Result<(SnapshotID, SeqNo), OrchestratorError> {
-        let snapshot =
-            proto::Snapshot::encode_to_vec(&Arc::unwrap_or_clone(state.clone()).into());
+    async fn persist_snapshot(
+        &self,
+        state: Arc<Snapshot>,
+    ) -> Result<(SnapshotID, SeqNo), OrchestratorError> {
+        let snapshot = proto::Snapshot::encode_to_vec(&Arc::unwrap_or_clone(state.clone()).into());
         let snapshot_id = metadata::SnapshotID::from(ulid::Ulid::new().to_string());
-        self
-            .storage
+        self.storage
             .put_snapshot(snapshot_id.clone(), bytes::Bytes::from(snapshot))
             .await?;
 
-        self
-            .metadata
+        self.metadata
             .persist_snapshot(snapshot_id.clone(), state.seq_no)
             .await?;
 

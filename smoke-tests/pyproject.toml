@@ -16,4 +16,4 @@ dev = [
 ]
 
 [tool.ruff]
-exclude = ["proto/skyvault*"]
+exclude = ["skyvault*"]
