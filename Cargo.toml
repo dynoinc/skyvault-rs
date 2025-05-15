@@ -6,6 +6,8 @@ edition = "2024"
 [profile.release]
 lto = true
 panic = "abort"
+opt-level = 3
+overflow-checks = true
 
 [lib]
 path = "src/lib.rs"
