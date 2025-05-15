@@ -8,13 +8,14 @@ use tonic::{Request, Response, Status};
 use tracing::{error, info};
 
 use crate::consistent_hashring::ConsistentHashRing;
-use crate::forest::{Forest, ForestError, State as ForestState};
+use crate::forest::{Forest, ForestError, Snapshot as ForestState};
 use crate::metadata::{self, MetadataStore, SeqNo};
 use crate::pod_watcher::{self, PodChange, PodWatcherError};
 use crate::proto;
 use crate::proto::cache_service_client::CacheServiceClient;
 use crate::proto::reader_service_server::ReaderService;
 use crate::runs::{RunError, Stats, WriteOperation};
+use crate::storage::ObjectStore;
 
 #[derive(Debug, Error)]
 pub enum ReaderServiceError {
@@ -181,8 +182,12 @@ pub struct MyReader {
 }
 
 impl MyReader {
-    pub async fn new(metadata: MetadataStore, port: u16) -> Result<Self, ReaderServiceError> {
-        let forest = crate::forest::ForestImpl::build(metadata).await?;
+    pub async fn new(
+        metadata: MetadataStore,
+        object_store: ObjectStore,
+        port: u16,
+    ) -> Result<Self, ReaderServiceError> {
+        let forest = crate::forest::ForestImpl::watch(metadata, object_store).await?;
         let connection_manager = ConsistentHashCM::new(port).await?;
 
         Ok(Self {

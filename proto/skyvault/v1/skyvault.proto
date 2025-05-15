@@ -109,11 +109,13 @@ message ScanItem {
 
 // ORCHESTRATOR
 service OrchestratorService {
-  rpc DumpForest (DumpForestRequest) returns (DumpForestResponse);
+  rpc DumpSnapshot (DumpSnapshotRequest) returns (DumpSnapshotResponse);
   rpc DumpChangelog (DumpChangelogRequest) returns (DumpChangelogResponse);
 
   rpc KickOffJob (KickOffJobRequest) returns (KickOffJobResponse);
   rpc GetJobStatus (GetJobStatusRequest) returns (GetJobStatusResponse);
+
+  rpc PersistSnapshot (PersistSnapshotRequest) returns (PersistSnapshotResponse);
 }
 
 message TableTreeCompaction {
@@ -144,12 +146,17 @@ message GetJobStatusResponse {
   }
 }
 
-message DumpForestRequest {
+message DumpSnapshotRequest {
 }
 
-message DumpForestResponse {
-  repeated RunMetadata wal = 1;
-  repeated Table tables = 2;
+message DumpSnapshotResponse {
+  Snapshot snapshot = 1;
+}
+
+message Snapshot {
+  int64 seq_no = 1;
+  repeated RunMetadata wal = 2;
+  repeated Table tables = 3;
 }
 
 message Table {
@@ -164,15 +171,18 @@ message TableLevel {
 }
 
 message DumpChangelogRequest {
+  int64 from_seq_no = 1;
 }
 
 message DumpChangelogResponse {
-  repeated ChangelogEntry entries = 1;
+  repeated ChangelogEntryWithID entries = 1;
 }
 
-message ChangelogEntry {
+message ChangelogEntryWithID {
+  int64 id = 1;
+
   oneof entry {
-    ChangelogEntryV1 v1 = 1;
+    ChangelogEntryV1 v1 = 2;
   }
 }
 
@@ -211,4 +221,12 @@ message StatsV1 {
   uint64 size_bytes = 3;
   uint64 put_count = 4;
   uint64 delete_count = 5;
+}
+
+message PersistSnapshotRequest {
+}
+
+message PersistSnapshotResponse {
+  string snapshot_id = 1;
+  int64 seq_no = 2;
 }

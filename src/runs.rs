@@ -114,6 +114,18 @@ impl From<StatsV1> for proto::StatsV1 {
     }
 }
 
+impl From<proto::StatsV1> for StatsV1 {
+    fn from(stats: proto::StatsV1) -> Self {
+        StatsV1 {
+            min_key: stats.min_key,
+            max_key: stats.max_key,
+            size_bytes: stats.size_bytes,
+            put_count: stats.put_count,
+            delete_count: stats.delete_count,
+        }
+    }
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub enum Stats {
     StatsV1(StatsV1),
@@ -123,6 +135,14 @@ impl From<Stats> for proto::run_metadata::Stats {
     fn from(stats: Stats) -> Self {
         match stats {
             Stats::StatsV1(stats) => proto::run_metadata::Stats::StatsV1(stats.into()),
+        }
+    }
+}
+
+impl From<proto::run_metadata::Stats> for Stats {
+    fn from(stats: proto::run_metadata::Stats) -> Self {
+        match stats {
+            proto::run_metadata::Stats::StatsV1(stats) => Stats::StatsV1(stats.into()),
         }
     }
 }

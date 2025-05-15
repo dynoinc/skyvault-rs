@@ -1,14 +1,18 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
+use bytes::Bytes;
 use futures::{Stream, StreamExt, pin_mut};
+use prost::Message;
 use thiserror::Error;
 use tracing::{debug, error};
 
 use crate::metadata::{
-    self, ChangelogEntry, ChangelogEntryWithID, MetadataError, MetadataStore, TableName,
+    self, ChangelogEntry, ChangelogEntryWithID, Level, MetadataError, MetadataStore, SeqNo,
+    TableName,
 };
-use crate::runs;
+use crate::storage::{ObjectStore, StorageError};
+use crate::{proto, runs};
 
 #[derive(Error, Debug)]
 pub enum ForestError {
@@ -17,6 +21,12 @@ pub enum ForestError {
 
     #[error("Internal error: {0}")]
     Internal(String),
+
+    #[error("Storage error: {0}")]
+    StorageError(#[from] StorageError),
+
+    #[error("Bad snapshot: {0}")]
+    BadSnapshot(#[from] prost::DecodeError),
 }
 
 #[derive(Default, Clone)]
@@ -25,14 +35,91 @@ pub struct Table {
     pub tree: BTreeMap<metadata::Level, BTreeMap<runs::Key, metadata::RunMetadata>>,
 }
 
-#[derive(Clone)]
-pub struct State {
+#[derive(Default, Clone)]
+pub struct Snapshot {
     pub seq_no: metadata::SeqNo,
     pub wal: BTreeMap<metadata::SeqNo, metadata::RunMetadata>,
     pub tables: HashMap<TableName, Table>,
 }
 
-impl State {
+impl From<Snapshot> for proto::Snapshot {
+    fn from(snapshot: Snapshot) -> Self {
+        let mut response = proto::Snapshot {
+            seq_no: snapshot.seq_no.into(),
+            wal: snapshot.wal.values().cloned().map(|r| r.into()).collect(),
+            tables: vec![],
+        };
+
+        for (table_name, table) in snapshot.tables.iter() {
+            let mut table_response = proto::Table {
+                name: table_name.to_string(),
+                buffer: table.buffer.values().cloned().map(|r| r.into()).collect(),
+                levels: vec![],
+            };
+
+            for (level, level_data) in table.tree.iter() {
+                let level_response = proto::TableLevel {
+                    level: (*level).into(),
+                    tree: level_data.values().cloned().map(|r| r.into()).collect(),
+                };
+
+                table_response.levels.push(level_response);
+            }
+
+            response.tables.push(table_response);
+        }
+
+        response
+    }
+}
+
+impl From<proto::Snapshot> for Snapshot {
+    fn from(snapshot: proto::Snapshot) -> Self {
+        let mut wal = BTreeMap::new();
+        let mut tables = HashMap::new();
+
+        for table in snapshot.tables {
+            let mut table_data = Table {
+                buffer: BTreeMap::new(),
+                tree: BTreeMap::new(),
+            };
+
+            for (i, level) in table.levels.into_iter().enumerate() {
+                let mut level_data = BTreeMap::new();
+                for run in level.tree {
+                    match run.stats {
+                        Some(proto::run_metadata::Stats::StatsV1(ref stats)) => {
+                            level_data.insert(stats.min_key.clone(), run.into());
+                        },
+                        None => panic!("Stats are not present"),
+                    }
+                }
+
+                table_data.tree.insert(Level::from(i as u64), level_data);
+            }
+
+            tables.insert(TableName::from(table.name), table_data);
+        }
+
+        for run in snapshot.wal {
+            match run.belongs_to {
+                Some(proto::run_metadata::BelongsTo::WalSeqNo(seq_no)) => {
+                    wal.insert(SeqNo::from(seq_no), run.into());
+                },
+                Some(other) => panic!("Invalid belongs to for wal: {:?}", other),
+                None => panic!("Belongs to is not present"),
+            }
+        }
+
+        Self {
+            seq_no: snapshot.seq_no.into(),
+            wal,
+            tables,
+        }
+    }
+}
+
+impl Snapshot {
     pub async fn from_raw<I>(seq_no: metadata::SeqNo, runs: I) -> Self
     where
         I: IntoIterator<Item = metadata::RunMetadata>,
@@ -75,34 +162,15 @@ impl State {
         }
     }
 
-    pub async fn from_snapshot(
-        metadata_store: MetadataStore,
-        snapshot: Vec<ChangelogEntry>,
-        seq_no: metadata::SeqNo,
-    ) -> Result<Self, ForestError> {
-        let mut runs = HashSet::new();
-        for entry in snapshot {
-            match entry {
-                ChangelogEntry::V1(v1) => {
-                    for run_id in v1.runs_added {
-                        runs.insert(run_id);
-                    }
-                    for run_id in v1.runs_removed {
-                        runs.remove(&run_id);
-                    }
-                },
-            }
-        }
-
-        let run_ids = runs.into_iter().collect::<Vec<_>>();
-        let run_metadatas = metadata_store.get_run_metadata_batch(run_ids).await?;
-        Ok(Self::from_raw(seq_no, run_metadatas.into_values()).await)
+    pub async fn from_bytes(snapshot: Bytes) -> Result<Self, ForestError> {
+        let snapshot = proto::Snapshot::decode(snapshot.as_ref())?;
+        Ok(Snapshot::from(snapshot))
     }
 }
 
 #[cfg_attr(test, mockall::automock)]
 pub trait ForestTrait: Send + Sync + 'static {
-    fn get_state(&self) -> Arc<State>;
+    fn get_state(&self) -> Arc<Snapshot>;
 }
 
 pub type Forest = Arc<dyn ForestTrait>;
@@ -112,14 +180,49 @@ pub type Forest = Arc<dyn ForestTrait>;
 #[derive(Clone)]
 pub struct ForestImpl {
     metadata_store: MetadataStore,
-    state: Arc<Mutex<Arc<State>>>,
+    state: Arc<Mutex<Arc<Snapshot>>>,
 }
 
 impl ForestImpl {
+    pub async fn latest(
+        metadata_store: MetadataStore,
+        object_store: ObjectStore,
+    ) -> Result<Forest, ForestError> {
+        let (snapshot_id, entries) = metadata_store.get_latest_snapshot().await?;
+        let snapshot = match snapshot_id {
+            Some(snapshot_id) => {
+                let bytes = object_store.get_snapshot(snapshot_id).await?;
+                Snapshot::from_bytes(bytes).await?
+            },
+            None => Snapshot::default(),
+        };
+
+        let forest = Self {
+            metadata_store,
+            state: Arc::new(Mutex::new(Arc::new(snapshot))),
+        };
+
+        for entry in entries {
+            forest.process_changelog_entry(entry).await?;
+        }
+
+        Ok(Arc::new(forest))
+    }
+
     /// Creates a new Forest instance and starts the changelog stream processor.
-    pub async fn build(metadata_store: MetadataStore) -> Result<Forest, ForestError> {
-        let (snapshot, snapshot_seq_no, stream) = metadata_store.get_changelog().await?;
-        let state = State::from_snapshot(metadata_store.clone(), snapshot, snapshot_seq_no).await?;
+    pub async fn watch(
+        metadata_store: MetadataStore,
+        object_store: ObjectStore,
+    ) -> Result<Forest, ForestError> {
+        let (snapshot_id, stream) = metadata_store.stream_changelog().await?;
+        let state = match snapshot_id {
+            Some(snapshot_id) => {
+                let snapshot = object_store.get_snapshot(snapshot_id).await?;
+                Snapshot::from_bytes(snapshot).await?
+            },
+            None => Snapshot::default(),
+        };
+
         let forest = Self {
             metadata_store,
             state: Arc::new(Mutex::new(Arc::new(state))),
@@ -234,7 +337,7 @@ impl ForestImpl {
 }
 
 impl ForestTrait for ForestImpl {
-    fn get_state(&self) -> Arc<State> {
+    fn get_state(&self) -> Arc<Snapshot> {
         self.state.lock().unwrap().clone()
     }
 }

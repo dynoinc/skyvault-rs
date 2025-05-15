@@ -55,6 +55,16 @@ impl From<SdkError<GetObjectError, HttpResponse>> for StorageError {
 pub trait ObjectStoreTrait: Send + Sync + 'static {
     async fn put_run(&self, run_id: crate::runs::RunId, data: Bytes) -> Result<(), StorageError>;
     async fn get_run(&self, run_id: crate::runs::RunId) -> Result<ByteStream, StorageError>;
+
+    async fn put_snapshot(
+        &self,
+        snapshot_id: crate::metadata::SnapshotID,
+        data: Bytes,
+    ) -> Result<(), StorageError>;
+    async fn get_snapshot(
+        &self,
+        snapshot_id: crate::metadata::SnapshotID,
+    ) -> Result<Bytes, StorageError>;
 }
 
 pub type ObjectStore = Arc<dyn ObjectStoreTrait>;
@@ -86,6 +96,27 @@ impl S3ObjectStore {
 
 #[async_trait]
 impl ObjectStoreTrait for S3ObjectStore {
+    async fn put_snapshot(
+        &self,
+        snapshot_id: crate::metadata::SnapshotID,
+        data: Bytes,
+    ) -> Result<(), StorageError> {
+        let byte_stream = ByteStream::from(data);
+
+        match self
+            .client
+            .put_object()
+            .bucket(self.bucket_name.clone())
+            .key(format!("snapshots/{}", snapshot_id))
+            .body(byte_stream)
+            .send()
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(err) => Err(StorageError::PutObjectError(Box::new(err))),
+        }
+    }
+
     async fn put_run(&self, run_id: crate::runs::RunId, data: Bytes) -> Result<(), StorageError> {
         let byte_stream = ByteStream::from(data);
 
@@ -102,6 +133,34 @@ impl ObjectStoreTrait for S3ObjectStore {
             Ok(_) => Ok(()),
             Err(err) => Err(StorageError::PutObjectError(Box::new(err))),
         }
+    }
+
+    async fn get_snapshot(
+        &self,
+        snapshot_id: crate::metadata::SnapshotID,
+    ) -> Result<Bytes, StorageError> {
+        let key = format!("snapshots/{}", snapshot_id);
+        let response = match self
+            .client
+            .get_object()
+            .bucket(self.bucket_name.clone())
+            .key(key.clone())
+            .send()
+            .await
+        {
+            Ok(resp) => resp,
+            Err(err) => {
+                if let SdkError::ServiceError(ref inner) = err {
+                    if let GetObjectError::NoSuchKey(_) = inner.err() {
+                        return Err(StorageError::NotFound(key));
+                    }
+                }
+                return Err(StorageError::GetObjectError(Box::new(err)));
+            },
+        };
+
+        let bytes = response.body.collect().await?.into_bytes();
+        Ok(bytes)
     }
 
     async fn get_run(&self, run_id: crate::runs::RunId) -> Result<ByteStream, StorageError> {

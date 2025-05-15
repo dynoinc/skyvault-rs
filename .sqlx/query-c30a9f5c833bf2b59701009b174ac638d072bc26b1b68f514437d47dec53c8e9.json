@@ -1,17 +1,17 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT * FROM changelog ORDER BY id ASC",
+  "query": "SELECT id, seq_no FROM snapshots ORDER BY seq_no DESC LIMIT 1",
   "describe": {
     "columns": [
       {
         "ordinal": 0,
         "name": "id",
-        "type_info": "Int8"
+        "type_info": "Text"
       },
       {
         "ordinal": 1,
-        "name": "changes",
-        "type_info": "Jsonb"
+        "name": "seq_no",
+        "type_info": "Int8"
       }
     ],
     "parameters": {
@@ -22,5 +22,5 @@
       false
     ]
   },
-  "hash": "dd6902e4fadf9c69e7d069dfef82c946bbe61ef7b958514cdcc440f308f75344"
+  "hash": "c30a9f5c833bf2b59701009b174ac638d072bc26b1b68f514437d47dec53c8e9"
 }

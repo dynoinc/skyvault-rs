@@ -1,8 +1,10 @@
+use std::sync::Arc;
+
 use futures::future;
 use futures::stream::{self, BoxStream, StreamExt, TryStreamExt};
 
 use super::JobError;
-use crate::forest::State;
+use crate::forest::ForestImpl;
 use crate::k_way;
 use crate::metadata::{self, MetadataStore};
 use crate::runs::{RunError, RunId, Stats, StatsV1, WriteOperation};
@@ -23,8 +25,8 @@ pub async fn execute(
         return Ok(());
     }
 
-    let (snapshot, seq_no) = metadata_store.get_changelog_snapshot().await?;
-    let mut state = State::from_snapshot(metadata_store.clone(), snapshot, seq_no).await?;
+    let forest = ForestImpl::latest(metadata_store.clone(), object_store.clone()).await?;
+    let mut state = Arc::unwrap_or_clone(forest.get_state());
 
     // Pick first run at level and all the runs that overlap with it in the next level unless it's
     // the max level

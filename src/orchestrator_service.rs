@@ -1,20 +1,25 @@
+use std::sync::Arc;
+
 use kube::Error as KubeError;
+use prost::Message;
 use thiserror::Error;
 use tonic::{Request, Response, Status};
 
-use crate::forest::{Forest, ForestError, ForestImpl};
-use crate::metadata::{JobParams, Level, MetadataStore, TableName};
+use crate::forest::{Forest, ForestError, ForestImpl, Snapshot};
+use crate::metadata::{JobParams, Level, MetadataStore, SeqNo, SnapshotID, TableName};
 use crate::proto::orchestrator_service_server::OrchestratorService;
 use crate::proto::{
-    self, DumpChangelogRequest, DumpChangelogResponse, DumpForestRequest, DumpForestResponse,
-    GetJobStatusRequest, GetJobStatusResponse, KickOffJobRequest, KickOffJobResponse,
+    self, DumpChangelogRequest, DumpChangelogResponse, DumpSnapshotRequest, DumpSnapshotResponse,
+    GetJobStatusRequest, GetJobStatusResponse, KickOffJobRequest, KickOffJobResponse, PersistSnapshotRequest, PersistSnapshotResponse,
 };
+use crate::storage::{self, ObjectStore};
 use crate::{Config, metadata};
 
 #[derive(Clone)]
 pub struct MyOrchestrator {
     config: Config,
     metadata: MetadataStore,
+    storage: ObjectStore,
     forest: Forest,
 
     k8s_client: kube::Client,
@@ -30,23 +35,33 @@ pub enum OrchestratorError {
 
     #[error("Failed to get hostname: {0}")]
     HostnameError(#[from] std::io::Error),
+
+    #[error("Metadata error: {0}")]
+    MetadataError(#[from] metadata::MetadataError),
+
+    #[error("Storage error: {0}")]
+    StorageError(#[from] storage::StorageError),
 }
 
 impl MyOrchestrator {
-    pub async fn new(metadata: MetadataStore, config: Config) -> Result<Self, OrchestratorError> {
-        let forest = ForestImpl::build(metadata.clone()).await?;
+    pub async fn new(
+        metadata: MetadataStore,
+        storage: ObjectStore,
+        config: Config,
+    ) -> Result<Self, OrchestratorError> {
+        let forest = ForestImpl::watch(metadata.clone(), storage.clone()).await?;
         let k8s_client = kube::Client::try_default().await?;
         let orchestrator = Self {
             metadata,
+            storage,
             forest,
             k8s_client,
             config,
         };
 
-        // Spawn a background task to periodically refresh the forest
         let orchestrator_clone = orchestrator.clone();
         tokio::spawn(async move {
-            orchestrator_clone.schedule_compaction().await;
+            orchestrator_clone.run().await;
         });
 
         Ok(orchestrator)
@@ -54,13 +69,32 @@ impl MyOrchestrator {
 }
 
 impl MyOrchestrator {
-    pub async fn schedule_compaction(&self) {
+    pub async fn run(&self) {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
 
         loop {
             interval.tick().await;
 
             let state = self.forest.get_state();
+
+            // If we have more than 5000 entries in the changelog, persist a new snapshot
+            if match self.metadata.get_latest_snapshot_id().await {
+                Ok(Some((_, seq_no))) => i64::from(state.seq_no) - i64::from(seq_no) > 5000,
+                Ok(None) => i64::from(state.seq_no) > 5000,
+                Err(e) => {
+                    tracing::error!("Failed to get latest snapshot ID: {}", e);
+                    false
+                },
+            } {
+                match self.persist_snapshot(state.clone()).await {
+                    Ok((snapshot_id, seq_no)) => {
+                        tracing::info!("Successfully persisted snapshot {} at seq_no {}", snapshot_id, seq_no);
+                    },
+                    Err(e) => {
+                        tracing::error!("Failed to persist snapshot: {}", e);
+                    },
+                }
+            }
 
             // If total size of WALs exceeds 100MB, schedule a job to compact the WALs
             let total_wal_size = state
@@ -183,6 +217,23 @@ impl MyOrchestrator {
         }
     }
 
+    async fn persist_snapshot(&self, state: Arc<Snapshot>) -> Result<(SnapshotID, SeqNo), OrchestratorError> {
+        let snapshot =
+            proto::Snapshot::encode_to_vec(&Arc::unwrap_or_clone(state.clone()).into());
+        let snapshot_id = metadata::SnapshotID::from(ulid::Ulid::new().to_string());
+        self
+            .storage
+            .put_snapshot(snapshot_id.clone(), bytes::Bytes::from(snapshot))
+            .await?;
+
+        self
+            .metadata
+            .persist_snapshot(snapshot_id.clone(), state.seq_no)
+            .await?;
+
+        Ok((snapshot_id, state.seq_no))
+    }
+
     async fn create_k8s_job(&self, job_id: String, job_type: &str) -> Result<(), kube::Error> {
         use k8s_openapi::api::batch::v1::Job;
         use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
@@ -302,49 +353,29 @@ impl MyOrchestrator {
 
 #[tonic::async_trait]
 impl OrchestratorService for MyOrchestrator {
-    async fn dump_forest(
+    async fn dump_snapshot(
         &self,
-        _request: Request<DumpForestRequest>,
-    ) -> Result<Response<DumpForestResponse>, Status> {
+        _request: Request<DumpSnapshotRequest>,
+    ) -> Result<Response<DumpSnapshotResponse>, Status> {
         let state = self.forest.get_state();
 
-        let mut response = DumpForestResponse {
-            wal: state.wal.values().cloned().map(|r| r.into()).collect(),
-            tables: vec![],
-        };
-
-        for (table_name, table) in state.tables.iter() {
-            let mut table_response = proto::Table {
-                name: table_name.to_string(),
-                buffer: table.buffer.values().cloned().map(|r| r.into()).collect(),
-                levels: vec![],
-            };
-
-            for (level, level_data) in table.tree.iter() {
-                let level_response = proto::TableLevel {
-                    level: (*level).into(),
-                    tree: level_data.values().cloned().map(|r| r.into()).collect(),
-                };
-
-                table_response.levels.push(level_response);
-            }
-
-            response.tables.push(table_response);
-        }
-        Ok(Response::new(response))
+        Ok(Response::new(DumpSnapshotResponse {
+            snapshot: Some(Arc::unwrap_or_clone(state).into()),
+        }))
     }
 
     async fn dump_changelog(
         &self,
-        _request: Request<DumpChangelogRequest>,
+        request: Request<DumpChangelogRequest>,
     ) -> Result<Response<DumpChangelogResponse>, Status> {
-        let snapshot = match self.metadata.get_changelog_snapshot().await {
-            Ok((snapshot, _)) => snapshot,
+        let from_seq_no = SeqNo::from(request.into_inner().from_seq_no);
+        let entries = match self.metadata.get_changelog(from_seq_no).await {
+            Ok(entries) => entries,
             Err(e) => return Err(Status::internal(e.to_string())),
         };
 
         Ok(Response::new(DumpChangelogResponse {
-            entries: snapshot.into_iter().map(|e| e.into()).collect(),
+            entries: entries.into_iter().map(|e| e.into()).collect(),
         }))
     }
 
@@ -396,6 +427,22 @@ impl OrchestratorService for MyOrchestrator {
 
         Ok(Response::new(GetJobStatusResponse {
             status: Some(status.into()),
+        }))
+    }
+
+    async fn persist_snapshot(
+        &self,
+        _request: Request<PersistSnapshotRequest>,
+    ) -> Result<Response<PersistSnapshotResponse>, Status> {
+        let state = self.forest.get_state();
+        let (snapshot_id, seq_no) = match self.persist_snapshot(state).await {
+            Ok((snapshot_id, seq_no)) => (snapshot_id, seq_no),
+            Err(e) => return Err(Status::internal(e.to_string())),
+        };
+
+        Ok(Response::new(PersistSnapshotResponse {
+            snapshot_id: snapshot_id.into(),
+            seq_no: seq_no.into(),
         }))
     }
 }

@@ -195,8 +195,12 @@ pub async fn server(
     }
 
     if config.enable_reader {
-        let reader =
-            reader_service::MyReader::new(metadata.clone(), config.grpc_addr.port()).await?;
+        let reader = reader_service::MyReader::new(
+            metadata.clone(),
+            storage.clone(),
+            config.grpc_addr.port(),
+        )
+        .await?;
         health_reporter
             .set_service_status(
                 proto::reader_service_server::SERVICE_NAME,
@@ -217,8 +221,12 @@ pub async fn server(
     }
 
     if config.enable_orchestrator {
-        let orchestrator =
-            orchestrator_service::MyOrchestrator::new(metadata.clone(), config.clone()).await?;
+        let orchestrator = orchestrator_service::MyOrchestrator::new(
+            metadata.clone(),
+            storage.clone(),
+            config.clone(),
+        )
+        .await?;
         health_reporter
             .set_service_status(
                 proto::orchestrator_service_server::SERVICE_NAME,

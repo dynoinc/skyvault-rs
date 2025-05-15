@@ -2,7 +2,7 @@ use futures::future;
 use futures::stream::{self, BoxStream, StreamExt, TryStreamExt};
 
 use super::JobError;
-use crate::forest::State;
+use crate::forest::ForestImpl;
 use crate::k_way;
 use crate::metadata::{self, MetadataStore};
 use crate::runs::{RunError, WriteOperation};
@@ -17,8 +17,8 @@ pub async fn execute(
     job_id: metadata::JobId,
     table_name: metadata::TableName,
 ) -> Result<(), JobError> {
-    let (snapshot, seq_no) = metadata_store.get_changelog_snapshot().await?;
-    let state = State::from_snapshot(metadata_store.clone(), snapshot, seq_no).await?;
+    let forest = ForestImpl::latest(metadata_store.clone(), object_store.clone()).await?;
+    let state = forest.get_state();
 
     let table = match state.tables.get(&table_name) {
         Some(table) if table.buffer.is_empty() => return Ok(()),

@@ -59,6 +59,7 @@ impl Display for JobId {
     serde::Serialize,
     serde::Deserialize,
     Debug,
+    Default,
     Ord,
     PartialOrd,
     Eq,
@@ -70,6 +71,12 @@ impl Display for JobId {
 )]
 #[sqlx(transparent)]
 pub struct SeqNo(i64);
+
+impl SeqNo {
+    pub fn zero() -> Self {
+        SeqNo(0)
+    }
+}
 
 impl From<i64> for SeqNo {
     fn from(value: i64) -> Self {
@@ -102,7 +109,7 @@ impl Level {
         // 3 - 100GB
         // 4 - 1TB
         // 5 - 10TB
-        // 6 - 100TB (order of scale we want to support)
+        // 6 - infinite (100TB or more)
         Level(6)
     }
 
@@ -128,6 +135,27 @@ impl From<Level> for u64 {
 }
 
 impl Display for Level {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Eq, PartialEq, Hash)]
+pub struct SnapshotID(String);
+
+impl From<String> for SnapshotID {
+    fn from(value: String) -> Self {
+        SnapshotID(value)
+    }
+}
+
+impl From<SnapshotID> for String {
+    fn from(value: SnapshotID) -> Self {
+        value.0
+    }
+}
+
+impl Display for SnapshotID {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
     }
@@ -183,6 +211,21 @@ impl From<BelongsTo> for proto::run_metadata::BelongsTo {
     }
 }
 
+impl From<proto::run_metadata::BelongsTo> for BelongsTo {
+    fn from(belongs_to: proto::run_metadata::BelongsTo) -> Self {
+        match belongs_to {
+            proto::run_metadata::BelongsTo::WalSeqNo(seq_no) => BelongsTo::WalSeqNo(SeqNo(seq_no)),
+            proto::run_metadata::BelongsTo::TableBuffer(table_buffer) => BelongsTo::TableBuffer(
+                TableName(table_buffer.table_name),
+                SeqNo(table_buffer.seq_no),
+            ),
+            proto::run_metadata::BelongsTo::TableTree(table_tree) => {
+                BelongsTo::TableTree(TableName(table_tree.table_name), Level(table_tree.level))
+            },
+        }
+    }
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct RunMetadata {
     pub id: crate::runs::RunId,
@@ -196,6 +239,22 @@ impl From<RunMetadata> for proto::RunMetadata {
             id: metadata.id.to_string(),
             belongs_to: Some(metadata.belongs_to.into()),
             stats: Some(metadata.stats.into()),
+        }
+    }
+}
+
+impl From<proto::RunMetadata> for RunMetadata {
+    fn from(metadata: proto::RunMetadata) -> Self {
+        RunMetadata {
+            id: metadata.id.into(),
+            belongs_to: match metadata.belongs_to {
+                Some(belongs_to) => belongs_to.into(),
+                None => panic!("belongs_to is None"),
+            },
+            stats: match metadata.stats {
+                Some(stats) => stats.into(),
+                None => panic!("stats is None"),
+            },
         }
     }
 }
@@ -227,20 +286,23 @@ impl From<JsonValue> for ChangelogEntry {
     }
 }
 
-impl From<ChangelogEntry> for proto::ChangelogEntry {
-    fn from(entry: ChangelogEntry) -> Self {
-        match entry {
-            ChangelogEntry::V1(v1) => proto::ChangelogEntry {
-                entry: Some(proto::changelog_entry::Entry::V1(v1.into())),
-            },
-        }
-    }
-}
-
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 pub struct ChangelogEntryWithID {
     pub id: SeqNo,
     pub changes: ChangelogEntry,
+}
+
+impl From<ChangelogEntryWithID> for proto::ChangelogEntryWithId {
+    fn from(entry_with_id: ChangelogEntryWithID) -> Self {
+        proto::ChangelogEntryWithId {
+            id: entry_with_id.id.0,
+            entry: match entry_with_id.changes {
+                ChangelogEntry::V1(v1) => {
+                    Some(proto::changelog_entry_with_id::Entry::V1(v1.into()))
+                },
+            },
+        }
+    }
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
@@ -264,58 +326,60 @@ impl From<JobStatus> for proto::get_job_status_response::Status {
     }
 }
 
+type ChangelogStream =
+    Pin<Box<dyn Stream<Item = Result<ChangelogEntryWithID, MetadataError>> + Send + 'static>>;
+
 #[async_trait::async_trait]
 pub trait MetadataStoreTrait: Send + Sync + 'static {
-    async fn get_changelog_snapshot(&self) -> Result<(Vec<ChangelogEntry>, SeqNo), MetadataError>;
-
-    type ChangelogStream: Stream<Item = Result<ChangelogEntryWithID, MetadataError>>
-        + Send
-        + 'static;
-
+    // SNAPSHOTS
+    async fn get_latest_snapshot_id(&self) -> Result<Option<(SnapshotID, SeqNo)>, MetadataError>;
+    async fn get_latest_snapshot(
+        &self,
+    ) -> Result<(Option<SnapshotID>, Vec<ChangelogEntryWithID>), MetadataError>;
+    async fn persist_snapshot(
+        &self,
+        snapshot_id: SnapshotID,
+        seq_no: SeqNo,
+    ) -> Result<(), MetadataError>;
+    // CHANGELOG
+    async fn stream_changelog(
+        &self,
+    ) -> Result<(Option<SnapshotID>, ChangelogStream), MetadataError>;
     async fn get_changelog(
         &self,
-    ) -> Result<(Vec<ChangelogEntry>, SeqNo, Self::ChangelogStream), MetadataError>;
+        from_seq_no: SeqNo,
+    ) -> Result<Vec<ChangelogEntryWithID>, MetadataError>;
 
+    // WAL & COMPACTIONS
     async fn append_wal(
         &self,
         run_ids: Vec<(crate::runs::RunId, crate::runs::Stats)>,
     ) -> Result<SeqNo, MetadataError>;
-
     async fn append_wal_compaction(
         &self,
         job_id: JobId,
         compacted: Vec<crate::runs::RunId>,
         new_table_runs: Vec<(crate::runs::RunId, TableName, crate::runs::Stats)>,
     ) -> Result<SeqNo, MetadataError>;
-
     async fn append_table_compaction(
         &self,
         job_id: JobId,
         compacted: Vec<crate::runs::RunId>,
         new_runs: Vec<RunMetadata>,
     ) -> Result<SeqNo, MetadataError>;
-
     async fn get_run_metadata_batch(
         &self,
         run_ids: Vec<crate::runs::RunId>,
     ) -> Result<HashMap<crate::runs::RunId, RunMetadata>, MetadataError>;
 
+    // JOBS
     async fn schedule_job(&self, job_params: JobParams) -> Result<JobId, MetadataError>;
-
     async fn get_job_status(&self, job_id: JobId) -> Result<JobStatus, MetadataError>;
-
     async fn get_pending_jobs(&self) -> Result<Vec<(JobId, JobParams)>, MetadataError>;
-
     async fn get_job(&self, job_id: JobId) -> Result<JobParams, MetadataError>;
 }
 
-pub type MetadataStore = Arc<
-    dyn MetadataStoreTrait<
-        ChangelogStream = Pin<
-            Box<dyn Stream<Item = Result<ChangelogEntryWithID, MetadataError>> + Send + 'static>,
-        >,
-    >,
->;
+pub type MetadataStore = Arc<dyn MetadataStoreTrait>;
 
 #[derive(Clone)]
 pub struct PostgresMetadataStore {
@@ -576,33 +640,67 @@ impl PostgresMetadataStore {
 
 #[async_trait::async_trait]
 impl MetadataStoreTrait for PostgresMetadataStore {
-    /// Fetches all existing changelog entries and returns them as a vector.
-    async fn get_changelog_snapshot(&self) -> Result<(Vec<ChangelogEntry>, SeqNo), MetadataError> {
-        let entries = sqlx::query_as!(
-            ChangelogEntryWithID,
-            "SELECT * FROM changelog ORDER BY id ASC"
-        )
-        .fetch_all(&self.pg_pool)
-        .await?;
+    async fn get_latest_snapshot_id(&self) -> Result<Option<(SnapshotID, SeqNo)>, MetadataError> {
+        let latest_persisted_snapshot =
+            sqlx::query!("SELECT id, seq_no FROM snapshots ORDER BY seq_no DESC LIMIT 1")
+                .fetch_optional(&self.pg_pool)
+                .await?;
 
-        let last_id = entries.last().map(|e| e.id).unwrap_or(SeqNo::from(0));
-        Ok((entries.into_iter().map(|e| e.changes).collect(), last_id))
+        Ok(latest_persisted_snapshot.map(|e| (SnapshotID::from(e.id), SeqNo::from(e.seq_no))))
     }
 
-    type ChangelogStream =
-        Pin<Box<dyn Stream<Item = Result<ChangelogEntryWithID, MetadataError>> + Send + 'static>>;
+    /// Fetches all existing changelog entries and returns them as a vector.
+    async fn get_latest_snapshot(
+        &self,
+    ) -> Result<(Option<SnapshotID>, Vec<ChangelogEntryWithID>), MetadataError> {
+        let latest_persisted_snapshot =
+            sqlx::query!("SELECT id, seq_no FROM snapshots ORDER BY seq_no DESC LIMIT 1")
+                .fetch_optional(&self.pg_pool)
+                .await?;
+
+        let snapshot =
+            latest_persisted_snapshot.map(|e| (SnapshotID::from(e.id), SeqNo::from(e.seq_no)));
+        let last_seq_no = snapshot
+            .clone()
+            .map(|(_, seq_no)| seq_no)
+            .unwrap_or(SeqNo::zero());
+        let changelog = self.get_changelog(last_seq_no).await?;
+        Ok((snapshot.map(|(id, _)| id), changelog))
+    }
+
+    async fn persist_snapshot(
+        &self,
+        snapshot_id: SnapshotID,
+        seq_no: SeqNo,
+    ) -> Result<(), MetadataError> {
+        sqlx::query!(
+            "INSERT INTO snapshots (id, seq_no) VALUES ($1, $2)",
+            snapshot_id.0,
+            seq_no.0
+        )
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(())
+    }
 
     /// Returns a snapshot of existing changelog entries and a stream of new entries.
     /// The stream continuously polls for new entries after reaching the end of the snapshot.
-    async fn get_changelog(
+    async fn stream_changelog(
         &self,
-    ) -> Result<(Vec<ChangelogEntry>, SeqNo, Self::ChangelogStream), MetadataError> {
-        let (snapshot, snapshot_seq_no) = self.get_changelog_snapshot().await?;
+    ) -> Result<(Option<SnapshotID>, ChangelogStream), MetadataError> {
+        let latest_persisted_snapshot =
+            sqlx::query!("SELECT id, seq_no FROM snapshots ORDER BY seq_no DESC LIMIT 1")
+                .fetch_optional(&self.pg_pool)
+                .await?;
 
-        // Clone pg_pool to avoid lifetime issues
+        let snapshot =
+            latest_persisted_snapshot.map(|e| (SnapshotID::from(e.id), SeqNo::from(e.seq_no)));
+
         let pg_pool = self.pg_pool.clone();
-
-        let mut last_id = snapshot_seq_no;
+        let mut last_id = snapshot
+            .clone()
+            .map(|(_, seq_no)| seq_no)
+            .unwrap_or(SeqNo::zero());
         let stream = stream! {
             loop {
                 let new_entries = sqlx::query_as!(
@@ -622,7 +720,22 @@ impl MetadataStoreTrait for PostgresMetadataStore {
             }
         };
 
-        Ok((snapshot, snapshot_seq_no, Box::pin(stream)))
+        Ok((snapshot.map(|(id, _)| id), Box::pin(stream)))
+    }
+
+    async fn get_changelog(
+        &self,
+        from_seq_no: SeqNo,
+    ) -> Result<Vec<ChangelogEntryWithID>, MetadataError> {
+        let entries = sqlx::query_as!(
+            ChangelogEntryWithID,
+            "SELECT * FROM changelog WHERE id > $1 ORDER BY id ASC",
+            from_seq_no.0
+        )
+        .fetch_all(&self.pg_pool)
+        .await?;
+
+        Ok(entries)
     }
 
     async fn append_wal(
