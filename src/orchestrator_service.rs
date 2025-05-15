@@ -34,7 +34,7 @@ pub enum OrchestratorError {
 
 impl MyOrchestrator {
     pub async fn new(metadata: MetadataStore, config: Config) -> Result<Self, OrchestratorError> {
-        let forest = ForestImpl::new(metadata.clone()).await?;
+        let forest = ForestImpl::build(metadata.clone()).await?;
         let k8s_client = kube::Client::try_default().await?;
         let orchestrator = Self {
             metadata,

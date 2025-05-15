@@ -98,7 +98,8 @@ pub struct StatsV1 {
     pub min_key: String,
     pub max_key: String,
     pub size_bytes: u64,
-    pub item_count: u64,
+    pub put_count: u64,
+    pub delete_count: u64,
 }
 
 impl From<StatsV1> for proto::StatsV1 {
@@ -107,7 +108,8 @@ impl From<StatsV1> for proto::StatsV1 {
             min_key: stats.min_key,
             max_key: stats.max_key,
             size_bytes: stats.size_bytes,
-            item_count: stats.item_count,
+            put_count: stats.put_count,
+            delete_count: stats.delete_count,
         }
     }
 }
@@ -142,7 +144,8 @@ where
     async_stream::stream! {
         let mut min_key: Option<String> = None;
         let mut max_key: Option<String> = None;
-        let mut item_count: u64 = 0;
+        let mut put_count: u64 = 0;
+        let mut delete_count: u64 = 0;
         let mut current_run_data: Vec<u8> = Vec::new();
         let mut current_run_size_bytes: u64 = 0;
         let mut last_key: Option<String> = None;
@@ -193,14 +196,16 @@ where
                     min_key: min_key.take().unwrap(), // Should always have a value if item_count > 0
                     max_key: max_key.take().unwrap(), // Should always have a value if item_count > 0
                     size_bytes: current_run_size_bytes,
-                    item_count,
+                    put_count,
+                    delete_count,
                 });
                 yield Ok((Bytes::from(current_run_data), stats));
 
                 // Reset state for the next run
                 current_run_data = Vec::new();
                 current_run_size_bytes = 0;
-                item_count = 0;
+                put_count = 0;
+                delete_count = 0;
                 // min_key and max_key already taken.
                 first_op_in_run = true;
                 // The current 'op' will be the first in the new run. Recalculate its size contribution below.
@@ -215,7 +220,6 @@ where
             }
 
             max_key = Some(current_key.clone()); // Update max_key for the current run
-            item_count += 1;
             current_run_size_bytes += op_size; // Add actual operation size
 
             // Serialize the operation into the current run's buffer
@@ -226,22 +230,25 @@ where
                     current_run_data.extend_from_slice(key.as_bytes());
                     current_run_data.extend_from_slice(&(value.len() as u32).to_be_bytes());
                     current_run_data.extend_from_slice(value);
+                    put_count += 1;
                 },
                 WriteOperation::Delete(key) => {
                     current_run_data.push(MARKER_DELETE);
                     current_run_data.extend_from_slice(&(key.len() as u32).to_be_bytes());
                     current_run_data.extend_from_slice(key.as_bytes());
+                    delete_count += 1;
                 },
             }
         }
 
         // Yield the last run if it contains any data
-        if item_count > 0 {
+        if put_count > 0 || delete_count > 0 {
             let stats = Stats::StatsV1(StatsV1 {
                 min_key: min_key.unwrap(),
                 max_key: max_key.unwrap(),
                 size_bytes: current_run_size_bytes,
-                item_count,
+                put_count,
+                delete_count,
             });
             yield Ok((Bytes::from(current_run_data), stats));
         }
@@ -714,8 +721,8 @@ mod tests {
                     match stats {
                         Stats::StatsV1(s) => {
                             println!(
-                                "Run {}: min={}, max={}, count={}, size={}",
-                                i, s.min_key, s.max_key, s.item_count, s.size_bytes
+                                "Run {}: min={}, max={}, put={}, delete={}, size={}",
+                                i, s.min_key, s.max_key, s.put_count, s.delete_count, s.size_bytes
                             );
                             // Check size is close to the limit (except maybe the last one)
                             if i < results.len() - 1 {

@@ -24,18 +24,29 @@ async fn main() -> Result<()> {
     let version = env!("CARGO_PKG_VERSION");
 
     // Initialize K8s client
-    let k8s_client = Client::try_default().await.context("Failed to create Kubernetes client")?;
+    let k8s_client = Client::try_default()
+        .await
+        .context("Failed to create Kubernetes client")?;
 
     // Determine namespace - we're always running in Kubernetes
     let namespace_path = "/var/run/secrets/kubernetes.io/serviceaccount/namespace";
-    let current_namespace = fs::read_to_string(namespace_path).await
-        .context(format!("Failed to read namespace from {}. This worker must run within a Kubernetes pod with a service account.", namespace_path))?
-        .trim().to_string();
+    let current_namespace = fs::read_to_string(namespace_path)
+        .await
+        .context(format!(
+            "Failed to read namespace from {}. This worker must run within a Kubernetes pod with \
+             a service account.",
+            namespace_path
+        ))?
+        .trim()
+        .to_string();
 
     info!(config = ?config, version = version, current_namespace = %current_namespace, "Starting skyvault");
 
     // Resolve metadata_url using K8s secret
-    let metadata_url = config.postgres.resolve_metadata_url(k8s_client.clone(), &current_namespace).await
+    let metadata_url = config
+        .postgres
+        .resolve_metadata_url(k8s_client.clone(), &current_namespace)
+        .await
         .context("Failed to resolve metadata URL from Kubernetes secret")?;
 
     // Create metadata client

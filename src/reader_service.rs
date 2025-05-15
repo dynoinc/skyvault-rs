@@ -182,7 +182,7 @@ pub struct MyReader {
 
 impl MyReader {
     pub async fn new(metadata: MetadataStore, port: u16) -> Result<Self, ReaderServiceError> {
-        let forest = crate::forest::ForestImpl::new(metadata).await?;
+        let forest = crate::forest::ForestImpl::build(metadata).await?;
         let connection_manager = ConsistentHashCM::new(port).await?;
 
         Ok(Self {
@@ -424,16 +424,29 @@ impl MyReader {
                 // Clone the Arc containing the trait object outside the iterator chain
                 let conn_manager_level_clone = self.connection_manager.clone();
                 let start_key_level_clone = request.exclusive_start_key.clone();
-                let max_results_level = request.max_results;
+                let max_results_level_clone = request.max_results;
 
-                // Create an iterator over eligible runs in reverse order, without collecting
-                let eligible_runs_iter = run_metadatas
-                    .values()
-                    .filter(move |run_metadata| match &run_metadata.stats {
-                        Stats::StatsV1(stats) => stats.max_key > start_key_level_clone,
-                    })
-                    .cloned()
-                    .collect::<Vec<_>>(); // TODO: This is highly inefficient, need to avoid this.
+                let eligible_runs_iter = {
+                    let mut collected_runs = Vec::new();
+                    let mut current_put_count = 0u64;
+                    for run_metadata in run_metadatas.values() {
+                        if match &run_metadata.stats {
+                            Stats::StatsV1(stats) => stats.max_key > start_key_level_clone,
+                        } {
+                            collected_runs.push(run_metadata.clone());
+                            match &run_metadata.stats {
+                                Stats::StatsV1(stats) => {
+                                    current_put_count += stats.put_count;
+                                    if current_put_count > max_results_level_clone {
+                                        break;
+                                    }
+                                },
+                            }
+                        }
+                    }
+
+                    collected_runs
+                };
 
                 // Create a stream directly from the iterator
                 let start_key_level_clone = request.exclusive_start_key.clone();
@@ -449,7 +462,7 @@ impl MyReader {
                             let run_request_proto = proto::ScanFromRunRequest {
                                 run_ids: vec![run_id.to_string()],
                                 exclusive_start_key: start_key_run_clone,
-                                max_results: max_results_level,
+                                max_results: max_results_level_clone,
                             };
                             // Perform the scan RPC call
                             conn_manager_run_clone
@@ -551,7 +564,7 @@ impl ReaderService for MyReader {
         request: Request<proto::ScanRequest>,
     ) -> Result<Response<proto::ScanResponse>, Status> {
         let max_results_val = request.get_ref().max_results;
-        if max_results_val <= 0 || max_results_val > 10_000 {
+        if max_results_val > 10_000 {
             return Err(Status::invalid_argument(
                 "max_results must be between 1 and 10000",
             ));
@@ -630,7 +643,8 @@ mod tests {
                 stats: Stats::StatsV1(StatsV1 {
                     min_key: "".to_string(),
                     max_key: "".to_string(),
-                    item_count: 0,
+                    put_count: 0,
+                    delete_count: 0,
                     size_bytes: 0,
                 }),
             },
@@ -640,7 +654,8 @@ mod tests {
                 stats: Stats::StatsV1(StatsV1 {
                     min_key: "".to_string(),
                     max_key: "".to_string(),
-                    item_count: 0,
+                    put_count: 0,
+                    delete_count: 0,
                     size_bytes: 0,
                 }),
             },
@@ -716,7 +731,8 @@ mod tests {
                 stats: Stats::StatsV1(StatsV1 {
                     min_key: "".to_string(),
                     max_key: "".to_string(),
-                    item_count: 0,
+                    put_count: 0,
+                    delete_count: 0,
                     size_bytes: 0,
                 }),
             },
@@ -726,7 +742,8 @@ mod tests {
                 stats: Stats::StatsV1(StatsV1 {
                     min_key: "".to_string(),
                     max_key: "".to_string(),
-                    item_count: 0,
+                    put_count: 0,
+                    delete_count: 0,
                     size_bytes: 0,
                 }),
             },

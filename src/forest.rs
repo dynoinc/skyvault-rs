@@ -117,7 +117,7 @@ pub struct ForestImpl {
 
 impl ForestImpl {
     /// Creates a new Forest instance and starts the changelog stream processor.
-    pub async fn new(metadata_store: MetadataStore) -> Result<Forest, ForestError> {
+    pub async fn build(metadata_store: MetadataStore) -> Result<Forest, ForestError> {
         let (snapshot, snapshot_seq_no, stream) = metadata_store.get_changelog().await?;
         let state = State::from_snapshot(metadata_store.clone(), snapshot, snapshot_seq_no).await?;
         let forest = Self {

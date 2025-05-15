@@ -55,7 +55,7 @@ message GetFromRunItem {
 message ScanFromRunRequest {
   repeated string run_ids = 1;
   string exclusive_start_key = 2;
-  int64 max_results = 3;
+  uint64 max_results = 3;
 }
 
 message ScanFromRunResponse {
@@ -95,7 +95,7 @@ message GetBatchItem {
 message ScanRequest {
   string table_name = 1;
   string exclusive_start_key = 2;
-  int64 max_results = 3;
+  uint64 max_results = 3;
 }
 
 message ScanResponse {
@@ -209,5 +209,6 @@ message StatsV1 {
   string min_key = 1;
   string max_key = 2;
   uint64 size_bytes = 3;
-  uint64 item_count = 4;
+  uint64 put_count = 4;
+  uint64 delete_count = 5;
 }

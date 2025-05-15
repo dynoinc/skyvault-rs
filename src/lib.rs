@@ -2,18 +2,17 @@
 
 use std::net::SocketAddr;
 
+use anyhow::{Result, anyhow};
 use clap::Parser;
+use k8s_openapi::api::core::v1::Secret;
+use kube::Client;
+use kube::api::Api;
 use proto::cache_service_server::CacheServiceServer;
 use proto::orchestrator_service_server::OrchestratorServiceServer;
 use proto::reader_service_server::ReaderServiceServer;
 use proto::writer_service_server::WriterServiceServer;
 use tonic::transport::Server;
 use tonic_health::ServingStatus;
-
-use k8s_openapi::api::core::v1::Secret;
-use kube::api::Api;
-use kube::Client;
-use anyhow::{anyhow, Result};
 
 pub mod proto {
     tonic::include_proto!("skyvault.v1");
@@ -62,7 +61,7 @@ impl PostgresConfig {
 
     pub async fn resolve_metadata_url(
         &self,
-        k8s_client: Client, 
+        k8s_client: Client,
         namespace: &str,
     ) -> Result<String> {
         const PASSWORD_SECRET_NAME: &str = "skyvault-postgres-password";
@@ -72,24 +71,43 @@ impl PostgresConfig {
         match secrets_api.get(PASSWORD_SECRET_NAME).await {
             Ok(secret) => {
                 let data = secret.data.ok_or_else(|| {
-                    anyhow!("Secret '{}' in namespace '{}' does not contain any data", PASSWORD_SECRET_NAME, namespace)
+                    anyhow!(
+                        "Secret '{}' in namespace '{}' does not contain any data",
+                        PASSWORD_SECRET_NAME,
+                        namespace
+                    )
                 })?;
-                
+
                 let password_bytes = data.get(PASSWORD_KEY).ok_or_else(|| {
-                    anyhow!("Secret '{}' in namespace '{}' does not contain key '{}'", PASSWORD_SECRET_NAME, namespace, PASSWORD_KEY)
+                    anyhow!(
+                        "Secret '{}' in namespace '{}' does not contain key '{}'",
+                        PASSWORD_SECRET_NAME,
+                        namespace,
+                        PASSWORD_KEY
+                    )
                 })?;
 
                 let password_str = String::from_utf8(password_bytes.0.clone()).map_err(|e| {
-                    anyhow!("Failed to decode password from secret '{}', key '{}': {}", PASSWORD_SECRET_NAME, PASSWORD_KEY, e)
+                    anyhow!(
+                        "Failed to decode password from secret '{}', key '{}': {}",
+                        PASSWORD_SECRET_NAME,
+                        PASSWORD_KEY,
+                        e
+                    )
                 })?;
                 Ok(self.to_url_with_password(&password_str))
-            }
-            Err(e) => {
-                Err(
-                    anyhow!("Failed to get secret '{}' in namespace '{}': {}. Ensure the service account has GET permissions on Secrets.", PASSWORD_SECRET_NAME, namespace, e)
-                    .context(format!("Attempting to read secret: '{}', key: '{}' in namespace: '{}'", PASSWORD_SECRET_NAME, PASSWORD_KEY, namespace))
-                )
-            }
+            },
+            Err(e) => Err(anyhow!(
+                "Failed to get secret '{}' in namespace '{}': {}. Ensure the service account has \
+                 GET permissions on Secrets.",
+                PASSWORD_SECRET_NAME,
+                namespace,
+                e
+            )
+            .context(format!(
+                "Attempting to read secret: '{}', key: '{}' in namespace: '{}'",
+                PASSWORD_SECRET_NAME, PASSWORD_KEY, namespace
+            ))),
         }
     }
 }
@@ -109,7 +127,11 @@ pub struct Config {
     #[arg(long, env = "SKYVAULT_IMAGE_ID", default_value = "skyvault")]
     pub image_id: String,
 
-    #[arg(long, env = "SKYVAULT_WORKER_SERVICE_ACCOUNT_NAME", default_value = "default")]
+    #[arg(
+        long,
+        env = "SKYVAULT_WORKER_SERVICE_ACCOUNT_NAME",
+        default_value = "default"
+    )]
     pub worker_service_account_name: String,
 
     #[arg(long, env = "SKYVAULT_ENABLE_WRITER", default_value = "true")]
