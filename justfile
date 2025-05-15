@@ -27,4 +27,5 @@ pgshell:
     kubectl exec -it $(kubectl get pods -l app.kubernetes.io/component=postgres -o jsonpath="{.items[0].metadata.name}") -- psql -U postgres -d skyvault
 
 smoke:
+    cd smoke-tests && uv run python3 -m grpc_tools.protoc -I../proto --python_out=. --pyi_out=. --grpc_python_out=. ../proto/skyvault/v1/skyvault.proto
     cd smoke-tests && uv run pytest
