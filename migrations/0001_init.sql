@@ -1,7 +1,18 @@
+CREATE TABLE IF NOT EXISTS tables (
+    id BIGSERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    config JSONB NOT NULL DEFAULT '{}',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMPTZ DEFAULT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS unique_name ON tables (name) WHERE deleted_at IS NULL;
+
 CREATE TABLE IF NOT EXISTS runs (
     id TEXT PRIMARY KEY,
     belongs_to JSONB NOT NULL DEFAULT '{}',
     stats JSONB NOT NULL DEFAULT '{}',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     deleted_at TIMESTAMPTZ DEFAULT NULL
 );
 
@@ -23,4 +34,4 @@ CREATE TABLE IF NOT EXISTS jobs (
     output JSONB NOT NULL DEFAULT '{}'
 );
 
-CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs (status) WHERE status IN ('pending', 'running');
+CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs (status) WHERE status IN ('pending');

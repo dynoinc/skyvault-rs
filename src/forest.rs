@@ -8,8 +8,7 @@ use thiserror::Error;
 use tracing::{debug, error};
 
 use crate::metadata::{
-    self, ChangelogEntry, ChangelogEntryWithID, Level, MetadataError, MetadataStore, SeqNo,
-    TableName,
+    self, ChangelogEntry, ChangelogEntryWithID, Level, MetadataError, MetadataStore, SeqNo, TableID,
 };
 use crate::storage::{ObjectStore, StorageError};
 use crate::{proto, runs};
@@ -39,7 +38,7 @@ pub struct Table {
 pub struct Snapshot {
     pub seq_no: metadata::SeqNo,
     pub wal: BTreeMap<metadata::SeqNo, metadata::RunMetadata>,
-    pub tables: HashMap<TableName, Table>,
+    pub tables: HashMap<metadata::TableID, Table>,
 }
 
 impl From<Snapshot> for proto::Snapshot {
@@ -50,9 +49,9 @@ impl From<Snapshot> for proto::Snapshot {
             tables: vec![],
         };
 
-        for (table_name, table) in snapshot.tables.iter() {
+        for (table_id, table) in snapshot.tables.iter() {
             let mut table_response = proto::Table {
-                name: table_name.to_string(),
+                id: (*table_id).into(),
                 buffer: table.buffer.values().cloned().map(|r| r.into()).collect(),
                 levels: vec![],
             };
@@ -98,7 +97,7 @@ impl From<proto::Snapshot> for Snapshot {
                 table_data.tree.insert(Level::from(i as u64), level_data);
             }
 
-            tables.insert(TableName::from(table.name), table_data);
+            tables.insert(TableID::from(table.id), table_data);
         }
 
         for run in snapshot.wal {
@@ -125,7 +124,7 @@ impl Snapshot {
         I: IntoIterator<Item = metadata::RunMetadata>,
     {
         let mut wal = BTreeMap::new();
-        let mut tables: HashMap<TableName, Table> = HashMap::new();
+        let mut tables: HashMap<_, Table> = HashMap::new();
 
         for run_metadata in runs {
             let min_key = match run_metadata.stats {
@@ -136,16 +135,16 @@ impl Snapshot {
                 metadata::BelongsTo::WalSeqNo(seq_no) => {
                     wal.insert(seq_no, run_metadata);
                 },
-                metadata::BelongsTo::TableBuffer(ref table_name, seq_no) => {
+                metadata::BelongsTo::TableBuffer(ref table_id, seq_no) => {
                     tables
-                        .entry(table_name.clone())
+                        .entry(*table_id)
                         .or_default()
                         .buffer
                         .insert(seq_no, run_metadata);
                 },
-                metadata::BelongsTo::TableTree(ref table_name, level) => {
+                metadata::BelongsTo::TableTree(ref table_id, level) => {
                     tables
-                        .entry(table_name.clone())
+                        .entry(*table_id)
                         .or_default()
                         .tree
                         .entry(level)
@@ -306,22 +305,22 @@ impl ForestImpl {
                 metadata::BelongsTo::WalSeqNo(seq_no) => {
                     new_state.wal.insert(seq_no, new_run);
                 },
-                metadata::BelongsTo::TableBuffer(ref table_name, seq_no) => {
+                metadata::BelongsTo::TableBuffer(table_id, seq_no) => {
                     new_state
                         .tables
-                        .entry(table_name.clone())
+                        .entry(table_id)
                         .or_default()
                         .buffer
                         .insert(seq_no, new_run);
                 },
-                metadata::BelongsTo::TableTree(ref table_name, level) => {
+                metadata::BelongsTo::TableTree(table_id, level) => {
                     let min_key = match new_run.stats {
                         runs::Stats::StatsV1(ref stats) => stats.min_key.clone(),
                     };
 
                     new_state
                         .tables
-                        .entry(table_name.clone())
+                        .entry(table_id)
                         .or_default()
                         .tree
                         .entry(level)

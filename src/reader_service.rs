@@ -9,7 +9,7 @@ use tracing::{error, info};
 
 use crate::consistent_hashring::ConsistentHashRing;
 use crate::forest::{Forest, ForestError, Snapshot as ForestState};
-use crate::metadata::{self, MetadataStore, SeqNo};
+use crate::metadata::{self, MetadataStore, SeqNo, TableCache};
 use crate::pod_watcher::{self, PodChange, PodWatcherError};
 use crate::proto;
 use crate::proto::cache_service_client::CacheServiceClient;
@@ -178,6 +178,7 @@ pub trait ConnectionManager {
 #[derive(Clone)]
 pub struct MyReader {
     forest: Forest,
+    table_cache: TableCache,
     connection_manager: Arc<dyn ConnectionManager + Send + Sync>,
 }
 
@@ -187,11 +188,13 @@ impl MyReader {
         object_store: ObjectStore,
         port: u16,
     ) -> Result<Self, ReaderServiceError> {
+        let table_cache = TableCache::new(metadata.clone());
         let forest = crate::forest::ForestImpl::watch(metadata, object_store).await?;
         let connection_manager = ConsistentHashCM::new(port).await?;
 
         Ok(Self {
             forest,
+            table_cache,
             connection_manager: Arc::new(connection_manager),
         })
     }
@@ -200,10 +203,12 @@ impl MyReader {
     #[cfg(test)]
     pub fn new_for_test(
         forest: Forest,
+        table_cache: TableCache,
         connection_manager: Arc<dyn ConnectionManager + Send + Sync>,
     ) -> Self {
         Self {
             forest,
+            table_cache,
             connection_manager,
         }
     }
@@ -215,7 +220,12 @@ impl MyReader {
     ) -> Result<Response<proto::TableGetBatchResponse>, Status> {
         let request = request.into_inner();
         let table_name = metadata::TableName::from(request.table_name.clone());
-        let table_prefix_len = table_name.len() + 1;
+        let table_id = self
+            .table_cache
+            .get_table_id(table_name.clone())
+            .await
+            .map_err(|e| Status::internal(e.to_string()))?;
+        let table_prefix_len = format!("{}.", table_id).len();
 
         let mut responses = Vec::new();
         if !forest_state.wal.is_empty() {
@@ -230,7 +240,7 @@ impl MyReader {
                 keys: request
                     .keys
                     .iter()
-                    .map(|key| format!("{table_name}.{key}"))
+                    .map(|key| format!("{table_id}.{key}"))
                     .collect(),
             };
 
@@ -257,7 +267,7 @@ impl MyReader {
             responses.push(wal_response_fut.boxed());
         }
 
-        if let Some(table) = forest_state.tables.get(&table_name) {
+        if let Some(table) = forest_state.tables.get(&table_id) {
             for (_, run_metadata) in table.buffer.iter().rev() {
                 let run_id = run_metadata.id.clone();
 
@@ -353,7 +363,12 @@ impl MyReader {
         request: proto::ScanRequest,
     ) -> Result<proto::ScanResponse, Status> {
         let table_name = metadata::TableName::from(request.table_name.clone());
-        let table_prefix_len = table_name.len() + 1;
+        let table_id = self
+            .table_cache
+            .get_table_id(table_name.clone())
+            .await
+            .map_err(|e| Status::internal(e.to_string()))?;
+        let table_prefix_len = format!("{}.", table_id).len();
 
         let mut streams_to_merge = Vec::new();
         let mut seq_counter = i64::MAX;
@@ -366,7 +381,7 @@ impl MyReader {
                     .rev()
                     .map(|r| r.id.to_string())
                     .collect(),
-                exclusive_start_key: format!("{table_name}.{}", &request.exclusive_start_key),
+                exclusive_start_key: format!("{table_id}.{}", &request.exclusive_start_key),
                 max_results: request.max_results,
             };
 
@@ -396,7 +411,7 @@ impl MyReader {
             streams_to_merge.push((seq_no, wal_stream));
         }
 
-        if let Some(table) = forest_state.tables.get(&table_name) {
+        if let Some(table) = forest_state.tables.get(&table_id) {
             for (_, run_metadata) in table.buffer.iter().rev() {
                 let run_id = run_metadata.id.clone();
                 let buffer_request = proto::ScanFromRunRequest {
@@ -594,7 +609,7 @@ mod tests {
 
     use super::*;
     use crate::forest::{Forest, MockForestTrait};
-    use crate::metadata::{BelongsTo, RunMetadata, SeqNo, TableName};
+    use crate::metadata::{BelongsTo, RunMetadata, SeqNo, TableConfig, TableID, TableName};
     use crate::proto::{
         GetBatchRequest, GetFromRunItem, GetFromRunRequest, GetFromRunResponse, ScanFromRunRequest,
         ScanFromRunResponse, ScanRequest, TableGetBatchRequest, get_from_run_item,
@@ -636,10 +651,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_batch() {
+        let table_id = TableID::from(1);
         let table_name = "test_table";
         let wal_run_id = RunId::from("wal_run_1");
         let buf_run_id = RunId::from("buf_run_1");
         let key = "the_key";
+
+        let table_cache = TableCache::new_for_test(HashMap::from([(
+            TableName::from(table_name.to_string()),
+            (table_id, TableConfig::default()),
+        )]));
 
         let forest = create_test_forest(SeqNo::from(1), vec![
             RunMetadata {
@@ -655,7 +676,7 @@ mod tests {
             },
             RunMetadata {
                 id: buf_run_id.clone(),
-                belongs_to: BelongsTo::TableBuffer(TableName::from(table_name), SeqNo::from(1)),
+                belongs_to: BelongsTo::TableBuffer(table_id, SeqNo::from(1)),
                 stats: Stats::StatsV1(StatsV1 {
                     min_key: "".to_string(),
                     max_key: "".to_string(),
@@ -676,13 +697,13 @@ mod tests {
                 function(move |req: &Request<GetFromRunRequest>| {
                     let inner = req.get_ref();
                     inner.run_ids == vec![wal_run_id.to_string()]
-                        && inner.keys == vec![format!("{}.{}", table_name, key)]
+                        && inner.keys == vec![format!("{}.{}", table_id, key)]
                 }),
             )
             .times(1)
             .returning(move |_routing_key, _req| {
                 create_run_response(vec![create_run_item(
-                    &format!("{}.{}", table_name, key),
+                    &format!("{}.{}", table_id, key),
                     Some("wal_value"),
                 )])
             });
@@ -701,7 +722,7 @@ mod tests {
                 create_run_response(vec![create_run_item(key, Some("buf_value"))])
             });
 
-        let reader = MyReader::new_for_test(forest, Arc::new(mock_conn));
+        let reader = MyReader::new_for_test(forest, table_cache, Arc::new(mock_conn));
 
         let request = GetBatchRequest {
             seq_no: 0,
@@ -724,10 +745,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_scan() {
+        let table_id = TableID::from(1);
         let table_name = "test_table";
         let wal_run_id = RunId::from("wal_run_1");
         let buf_run_id = RunId::from("buf_run_1");
         let exclusive_start_key = "key1";
+
+        let table_cache = TableCache::new_for_test(HashMap::from([(
+            TableName::from(table_name.to_string()),
+            (table_id, TableConfig::default()),
+        )]));
 
         let forest = create_test_forest(SeqNo::from(1), vec![
             RunMetadata {
@@ -743,7 +770,7 @@ mod tests {
             },
             RunMetadata {
                 id: buf_run_id.clone(),
-                belongs_to: BelongsTo::TableBuffer(TableName::from(table_name), SeqNo::from(1)),
+                belongs_to: BelongsTo::TableBuffer(table_id, SeqNo::from(1)),
                 stats: Stats::StatsV1(StatsV1 {
                     min_key: "".to_string(),
                     max_key: "".to_string(),
@@ -765,13 +792,13 @@ mod tests {
                     let inner = req.get_ref();
                     inner.run_ids == vec![wal_run_id.to_string()]
                         && inner.exclusive_start_key
-                            == format!("{}.{}", table_name, exclusive_start_key)
+                            == format!("{}.{}", table_id, exclusive_start_key)
                 }),
             )
             .times(1)
             .returning(move |_routing_key, _req| {
                 create_scan_response(vec![create_run_item(
-                    &format!("{}.key2", table_name),
+                    &format!("{}.key2", table_id),
                     Some("wal_value"),
                 )])
             });
@@ -790,7 +817,7 @@ mod tests {
                 create_scan_response(vec![create_run_item("key3", Some("buf_value"))])
             });
 
-        let reader = MyReader::new_for_test(forest, Arc::new(mock_conn));
+        let reader = MyReader::new_for_test(forest, table_cache, Arc::new(mock_conn));
 
         let request = ScanRequest {
             table_name: table_name.to_string(),

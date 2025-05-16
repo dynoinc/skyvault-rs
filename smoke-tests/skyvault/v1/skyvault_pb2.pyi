@@ -137,12 +137,12 @@ class ScanItem(_message.Message):
     def __init__(self, key: _Optional[str] = ..., value: _Optional[bytes] = ...) -> None: ...
 
 class TableTreeCompaction(_message.Message):
-    __slots__ = ("table_name", "level")
-    TABLE_NAME_FIELD_NUMBER: _ClassVar[int]
+    __slots__ = ("table_id", "level")
+    TABLE_ID_FIELD_NUMBER: _ClassVar[int]
     LEVEL_FIELD_NUMBER: _ClassVar[int]
-    table_name: str
+    table_id: int
     level: int
-    def __init__(self, table_name: _Optional[str] = ..., level: _Optional[int] = ...) -> None: ...
+    def __init__(self, table_id: _Optional[int] = ..., level: _Optional[int] = ...) -> None: ...
 
 class KickOffJobRequest(_message.Message):
     __slots__ = ("wal_compaction", "table_buffer_compaction", "table_tree_compaction")
@@ -150,9 +150,9 @@ class KickOffJobRequest(_message.Message):
     TABLE_BUFFER_COMPACTION_FIELD_NUMBER: _ClassVar[int]
     TABLE_TREE_COMPACTION_FIELD_NUMBER: _ClassVar[int]
     wal_compaction: bool
-    table_buffer_compaction: str
+    table_buffer_compaction: int
     table_tree_compaction: TableTreeCompaction
-    def __init__(self, wal_compaction: bool = ..., table_buffer_compaction: _Optional[str] = ..., table_tree_compaction: _Optional[_Union[TableTreeCompaction, _Mapping]] = ...) -> None: ...
+    def __init__(self, wal_compaction: bool = ..., table_buffer_compaction: _Optional[int] = ..., table_tree_compaction: _Optional[_Union[TableTreeCompaction, _Mapping]] = ...) -> None: ...
 
 class KickOffJobResponse(_message.Message):
     __slots__ = ("job_id",)
@@ -195,14 +195,14 @@ class Snapshot(_message.Message):
     def __init__(self, seq_no: _Optional[int] = ..., wal: _Optional[_Iterable[_Union[RunMetadata, _Mapping]]] = ..., tables: _Optional[_Iterable[_Union[Table, _Mapping]]] = ...) -> None: ...
 
 class Table(_message.Message):
-    __slots__ = ("name", "buffer", "levels")
-    NAME_FIELD_NUMBER: _ClassVar[int]
+    __slots__ = ("id", "buffer", "levels")
+    ID_FIELD_NUMBER: _ClassVar[int]
     BUFFER_FIELD_NUMBER: _ClassVar[int]
     LEVELS_FIELD_NUMBER: _ClassVar[int]
-    name: str
+    id: int
     buffer: _containers.RepeatedCompositeFieldContainer[RunMetadata]
     levels: _containers.RepeatedCompositeFieldContainer[TableLevel]
-    def __init__(self, name: _Optional[str] = ..., buffer: _Optional[_Iterable[_Union[RunMetadata, _Mapping]]] = ..., levels: _Optional[_Iterable[_Union[TableLevel, _Mapping]]] = ...) -> None: ...
+    def __init__(self, id: _Optional[int] = ..., buffer: _Optional[_Iterable[_Union[RunMetadata, _Mapping]]] = ..., levels: _Optional[_Iterable[_Union[TableLevel, _Mapping]]] = ...) -> None: ...
 
 class TableLevel(_message.Message):
     __slots__ = ("level", "tree")
@@ -255,20 +255,20 @@ class RunMetadata(_message.Message):
     def __init__(self, id: _Optional[str] = ..., wal_seq_no: _Optional[int] = ..., table_buffer: _Optional[_Union[TableBuffer, _Mapping]] = ..., table_tree: _Optional[_Union[TableTree, _Mapping]] = ..., stats_v1: _Optional[_Union[StatsV1, _Mapping]] = ...) -> None: ...
 
 class TableBuffer(_message.Message):
-    __slots__ = ("table_name", "seq_no")
-    TABLE_NAME_FIELD_NUMBER: _ClassVar[int]
+    __slots__ = ("table_id", "seq_no")
+    TABLE_ID_FIELD_NUMBER: _ClassVar[int]
     SEQ_NO_FIELD_NUMBER: _ClassVar[int]
-    table_name: str
+    table_id: int
     seq_no: int
-    def __init__(self, table_name: _Optional[str] = ..., seq_no: _Optional[int] = ...) -> None: ...
+    def __init__(self, table_id: _Optional[int] = ..., seq_no: _Optional[int] = ...) -> None: ...
 
 class TableTree(_message.Message):
-    __slots__ = ("table_name", "level")
-    TABLE_NAME_FIELD_NUMBER: _ClassVar[int]
+    __slots__ = ("table_id", "level")
+    TABLE_ID_FIELD_NUMBER: _ClassVar[int]
     LEVEL_FIELD_NUMBER: _ClassVar[int]
-    table_name: str
+    table_id: int
     level: int
-    def __init__(self, table_name: _Optional[str] = ..., level: _Optional[int] = ...) -> None: ...
+    def __init__(self, table_id: _Optional[int] = ..., level: _Optional[int] = ...) -> None: ...
 
 class StatsV1(_message.Message):
     __slots__ = ("min_key", "max_key", "size_bytes", "put_count", "delete_count")
@@ -295,3 +295,45 @@ class PersistSnapshotResponse(_message.Message):
     snapshot_id: str
     seq_no: int
     def __init__(self, snapshot_id: _Optional[str] = ..., seq_no: _Optional[int] = ...) -> None: ...
+
+class CreateTableRequest(_message.Message):
+    __slots__ = ("table_name", "config")
+    TABLE_NAME_FIELD_NUMBER: _ClassVar[int]
+    CONFIG_FIELD_NUMBER: _ClassVar[int]
+    table_name: str
+    config: TableConfig
+    def __init__(self, table_name: _Optional[str] = ..., config: _Optional[_Union[TableConfig, _Mapping]] = ...) -> None: ...
+
+class CreateTableResponse(_message.Message):
+    __slots__ = ("table_id",)
+    TABLE_ID_FIELD_NUMBER: _ClassVar[int]
+    table_id: int
+    def __init__(self, table_id: _Optional[int] = ...) -> None: ...
+
+class DropTableRequest(_message.Message):
+    __slots__ = ("table_name",)
+    TABLE_NAME_FIELD_NUMBER: _ClassVar[int]
+    table_name: str
+    def __init__(self, table_name: _Optional[str] = ...) -> None: ...
+
+class DropTableResponse(_message.Message):
+    __slots__ = ()
+    def __init__(self) -> None: ...
+
+class GetTableRequest(_message.Message):
+    __slots__ = ("table_name",)
+    TABLE_NAME_FIELD_NUMBER: _ClassVar[int]
+    table_name: str
+    def __init__(self, table_name: _Optional[str] = ...) -> None: ...
+
+class GetTableResponse(_message.Message):
+    __slots__ = ("table_id", "config")
+    TABLE_ID_FIELD_NUMBER: _ClassVar[int]
+    CONFIG_FIELD_NUMBER: _ClassVar[int]
+    table_id: int
+    config: TableConfig
+    def __init__(self, table_id: _Optional[int] = ..., config: _Optional[_Union[TableConfig, _Mapping]] = ...) -> None: ...
+
+class TableConfig(_message.Message):
+    __slots__ = ()
+    def __init__(self) -> None: ...

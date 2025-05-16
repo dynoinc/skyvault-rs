@@ -366,6 +366,21 @@ class OrchestratorServiceStub(object):
                 request_serializer=skyvault_dot_v1_dot_skyvault__pb2.GetJobStatusRequest.SerializeToString,
                 response_deserializer=skyvault_dot_v1_dot_skyvault__pb2.GetJobStatusResponse.FromString,
                 _registered_method=True)
+        self.CreateTable = channel.unary_unary(
+                '/skyvault.v1.OrchestratorService/CreateTable',
+                request_serializer=skyvault_dot_v1_dot_skyvault__pb2.CreateTableRequest.SerializeToString,
+                response_deserializer=skyvault_dot_v1_dot_skyvault__pb2.CreateTableResponse.FromString,
+                _registered_method=True)
+        self.DropTable = channel.unary_unary(
+                '/skyvault.v1.OrchestratorService/DropTable',
+                request_serializer=skyvault_dot_v1_dot_skyvault__pb2.DropTableRequest.SerializeToString,
+                response_deserializer=skyvault_dot_v1_dot_skyvault__pb2.DropTableResponse.FromString,
+                _registered_method=True)
+        self.GetTable = channel.unary_unary(
+                '/skyvault.v1.OrchestratorService/GetTable',
+                request_serializer=skyvault_dot_v1_dot_skyvault__pb2.GetTableRequest.SerializeToString,
+                response_deserializer=skyvault_dot_v1_dot_skyvault__pb2.GetTableResponse.FromString,
+                _registered_method=True)
         self.PersistSnapshot = channel.unary_unary(
                 '/skyvault.v1.OrchestratorService/PersistSnapshot',
                 request_serializer=skyvault_dot_v1_dot_skyvault__pb2.PersistSnapshotRequest.SerializeToString,
@@ -401,6 +416,24 @@ class OrchestratorServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def CreateTable(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def DropTable(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetTable(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def PersistSnapshot(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
@@ -429,6 +462,21 @@ def add_OrchestratorServiceServicer_to_server(servicer, server):
                     servicer.GetJobStatus,
                     request_deserializer=skyvault_dot_v1_dot_skyvault__pb2.GetJobStatusRequest.FromString,
                     response_serializer=skyvault_dot_v1_dot_skyvault__pb2.GetJobStatusResponse.SerializeToString,
+            ),
+            'CreateTable': grpc.unary_unary_rpc_method_handler(
+                    servicer.CreateTable,
+                    request_deserializer=skyvault_dot_v1_dot_skyvault__pb2.CreateTableRequest.FromString,
+                    response_serializer=skyvault_dot_v1_dot_skyvault__pb2.CreateTableResponse.SerializeToString,
+            ),
+            'DropTable': grpc.unary_unary_rpc_method_handler(
+                    servicer.DropTable,
+                    request_deserializer=skyvault_dot_v1_dot_skyvault__pb2.DropTableRequest.FromString,
+                    response_serializer=skyvault_dot_v1_dot_skyvault__pb2.DropTableResponse.SerializeToString,
+            ),
+            'GetTable': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetTable,
+                    request_deserializer=skyvault_dot_v1_dot_skyvault__pb2.GetTableRequest.FromString,
+                    response_serializer=skyvault_dot_v1_dot_skyvault__pb2.GetTableResponse.SerializeToString,
             ),
             'PersistSnapshot': grpc.unary_unary_rpc_method_handler(
                     servicer.PersistSnapshot,
@@ -545,6 +593,87 @@ class OrchestratorService(object):
             '/skyvault.v1.OrchestratorService/GetJobStatus',
             skyvault_dot_v1_dot_skyvault__pb2.GetJobStatusRequest.SerializeToString,
             skyvault_dot_v1_dot_skyvault__pb2.GetJobStatusResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def CreateTable(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/skyvault.v1.OrchestratorService/CreateTable',
+            skyvault_dot_v1_dot_skyvault__pb2.CreateTableRequest.SerializeToString,
+            skyvault_dot_v1_dot_skyvault__pb2.CreateTableResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def DropTable(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/skyvault.v1.OrchestratorService/DropTable',
+            skyvault_dot_v1_dot_skyvault__pb2.DropTableRequest.SerializeToString,
+            skyvault_dot_v1_dot_skyvault__pb2.DropTableResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetTable(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/skyvault.v1.OrchestratorService/GetTable',
+            skyvault_dot_v1_dot_skyvault__pb2.GetTableRequest.SerializeToString,
+            skyvault_dot_v1_dot_skyvault__pb2.GetTableResponse.FromString,
             options,
             channel_credentials,
             insecure,

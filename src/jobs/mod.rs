@@ -39,11 +39,11 @@ pub async fn execute(
         JobParams::WALCompaction => {
             wal_compaction::execute(metadata_store, object_store, job_id).await
         },
-        JobParams::TableBufferCompaction(table_name) => {
-            table_buffer_compaction::execute(metadata_store, object_store, job_id, table_name).await
+        JobParams::TableBufferCompaction(table_id) => {
+            table_buffer_compaction::execute(metadata_store, object_store, job_id, table_id).await
         },
-        JobParams::TableTreeCompaction(table_name, level) => {
-            table_tree_compaction::execute(metadata_store, object_store, job_id, table_name, level)
+        JobParams::TableTreeCompaction(table_id, level) => {
+            table_tree_compaction::execute(metadata_store, object_store, job_id, table_id, level)
                 .await
         },
     }

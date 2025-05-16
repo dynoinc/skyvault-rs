@@ -4,6 +4,7 @@ use futures::TryStreamExt;
 use thiserror::Error;
 use tonic::{Request, Response, Status};
 
+use crate::metadata::TableName;
 use crate::proto::writer_service_server::WriterService;
 use crate::proto::{self};
 use crate::{metadata, storage};
@@ -30,18 +31,20 @@ struct WriteReq {
 
 pub struct MyWriter {
     tx: tokio::sync::mpsc::Sender<WriteReq>,
+    table_cache: metadata::TableCache,
 }
 
 impl MyWriter {
     #[must_use]
     pub fn new(metadata: metadata::MetadataStore, storage: storage::ObjectStore) -> Self {
+        let table_cache = metadata::TableCache::new(metadata.clone());
         let (tx, rx) = tokio::sync::mpsc::channel(100);
 
         tokio::spawn(async move {
             Self::process_batch_queue(metadata, storage, rx).await;
         });
 
-        Self { tx }
+        Self { tx, table_cache }
     }
 
     async fn process_batch_queue(
@@ -148,7 +151,12 @@ impl WriterService for MyWriter {
             }
 
             for item in table.items.drain(..) {
-                let key = format!("{}.{}", table.table_name, item.key);
+                let table_id = self
+                    .table_cache
+                    .get_table_id(TableName::from(table.table_name.clone()))
+                    .await
+                    .map_err(|e| Status::internal(e.to_string()))?;
+                let key = format!("{}.{}", table_id, item.key);
                 match item.operation {
                     Some(proto::write_batch_item::Operation::Value(value)) => {
                         ops.push(crate::runs::WriteOperation::Put(key, value));
@@ -179,18 +187,30 @@ impl WriterService for MyWriter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::metadata::TableConfig;
     use crate::test_utils::{setup_test_db, setup_test_object_store};
 
     #[tokio::test]
     async fn test_writer_service() {
         let (metadata, _postgres) = setup_test_db().await.unwrap();
         let (storage, _minio) = setup_test_object_store().await.unwrap();
+
+        // Create a table
+        let table_name = "test_table";
+        metadata
+            .create_table(
+                TableName::from(table_name.to_string()),
+                TableConfig::default(),
+            )
+            .await
+            .unwrap();
+
         let writer = MyWriter::new(metadata, storage);
 
         let response = writer
             .write_batch(Request::new(proto::WriteBatchRequest {
                 tables: vec![proto::TableWriteBatchRequest {
-                    table_name: "test_table".to_string(),
+                    table_name: table_name.to_string(),
                     items: vec![proto::WriteBatchItem {
                         key: "test".to_string(),
                         operation: Some(proto::write_batch_item::Operation::Value(vec![1, 2, 3])),

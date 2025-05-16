@@ -1,12 +1,10 @@
-use std::ops::Deref;
-
 use futures::stream::{self, StreamExt, TryStreamExt};
 use tokio::sync::mpsc;
 
 use super::JobError;
 use crate::forest::ForestImpl;
 use crate::k_way;
-use crate::metadata::{self, MetadataStore, TableName};
+use crate::metadata::{self, MetadataStore, TableID};
 use crate::runs::{RunError, Stats, WriteOperation};
 use crate::storage::ObjectStore;
 
@@ -61,7 +59,7 @@ pub async fn execute(
 
     // Current table state: (table_name, sender, task)
     type TableState = (
-        TableName,
+        TableID,
         mpsc::Sender<Result<WriteOperation, RunError>>,
         tokio::task::JoinHandle<Result<(crate::runs::RunId, Stats), JobError>>,
     );
@@ -73,21 +71,25 @@ pub async fn execute(
         let op = result?;
 
         let (table_prefix_len, new_table) = {
-            // Parse key in format "table_name.key"
-            let (table_name, _) = op.key().split_once('.').ok_or_else(|| {
+            // Parse key in format "table_id.key"
+            let (table_id_str, _) = op.key().split_once('.').ok_or_else(|| {
                 JobError::InvalidInput(format!(
-                    "Key does not follow 'table_name.key' format: {}",
+                    "Key does not follow 'table_id.key' format: {}",
                     op.key()
                 ))
             })?;
 
-            let table_prefix_len = table_name.len() + 1;
+            let table_id = TableID::from(table_id_str.parse::<i64>().map_err(|e| {
+                JobError::InvalidInput(format!("Invalid table ID '{}': {}", table_id_str, e))
+            })?);
+
+            let table_prefix_len = format!("{}.", table_id).len();
             let new_table = match current_state
                 .as_ref()
-                .map(|(current_table, _, _)| current_table.deref())
-                != Some(table_name)
+                .map(|(current_table_id, _, _)| current_table_id)
+                != Some(&table_id)
             {
-                true => Some(TableName::from(table_name.to_string())),
+                true => Some(table_id),
                 false => None,
             };
 

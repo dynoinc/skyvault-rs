@@ -15,12 +15,12 @@ pub async fn execute(
     metadata_store: MetadataStore,
     object_store: ObjectStore,
     job_id: metadata::JobId,
-    table_name: metadata::TableName,
+    table_id: metadata::TableID,
 ) -> Result<(), JobError> {
     let forest = ForestImpl::latest(metadata_store.clone(), object_store.clone()).await?;
     let state = forest.get_state();
 
-    let table = match state.tables.get(&table_name) {
+    let table = match state.tables.get(&table_id) {
         Some(table) if table.buffer.is_empty() => return Ok(()),
         Some(table) => table,
         None => return Ok(()),
@@ -114,7 +114,7 @@ pub async fn execute(
         // Collect the run ID and stats
         new_runs.push(metadata::RunMetadata {
             id: run_id,
-            belongs_to: metadata::BelongsTo::TableTree(table_name.clone(), metadata::Level::zero()),
+            belongs_to: metadata::BelongsTo::TableTree(table_id, metadata::Level::zero()),
             stats,
         });
     }

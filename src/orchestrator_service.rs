@@ -6,15 +6,12 @@ use thiserror::Error;
 use tonic::{Request, Response, Status};
 
 use crate::forest::{Forest, ForestError, ForestImpl, Snapshot};
-use crate::metadata::{JobParams, Level, MetadataStore, SeqNo, SnapshotID, TableName};
-use crate::proto::orchestrator_service_server::OrchestratorService;
-use crate::proto::{
-    self, DumpChangelogRequest, DumpChangelogResponse, DumpSnapshotRequest, DumpSnapshotResponse,
-    GetJobStatusRequest, GetJobStatusResponse, KickOffJobRequest, KickOffJobResponse,
-    PersistSnapshotRequest, PersistSnapshotResponse,
+use crate::metadata::{
+    JobParams, Level, MetadataError, MetadataStore, SeqNo, SnapshotID, TableConfig, TableID, TableName
 };
+use crate::proto::orchestrator_service_server::OrchestratorService;
 use crate::storage::{self, ObjectStore};
-use crate::{Config, metadata};
+use crate::{Config, metadata, proto};
 
 #[derive(Clone)]
 pub struct MyOrchestrator {
@@ -120,7 +117,7 @@ impl MyOrchestrator {
                 }
             }
 
-            for (table_name, table) in state.tables.iter() {
+            for (table_id, table) in state.tables.iter() {
                 let total_buffer_size = table
                     .buffer
                     .values()
@@ -131,13 +128,13 @@ impl MyOrchestrator {
 
                 if total_buffer_size > 100_000_000 {
                     tracing::info!(
-                        "{table_name} table total size of buffer {total_buffer_size} exceeds \
-                         100MB, scheduling compaction"
+                        "{table_id} table total size of buffer {total_buffer_size} exceeds 100MB, \
+                         scheduling compaction"
                     );
 
                     if let Err(e) = self
                         .metadata
-                        .schedule_job(JobParams::TableBufferCompaction(table_name.clone()))
+                        .schedule_job(JobParams::TableBufferCompaction(*table_id))
                         .await
                     {
                         tracing::error!("Failed to schedule table buffer compaction: {}", e);
@@ -161,10 +158,7 @@ impl MyOrchestrator {
 
                         if let Err(e) = self
                             .metadata
-                            .schedule_job(JobParams::TableTreeCompaction(
-                                table_name.clone(),
-                                *level,
-                            ))
+                            .schedule_job(JobParams::TableTreeCompaction(*table_id, *level))
                             .await
                         {
                             tracing::error!("Failed to schedule table tree compaction: {}", e);
@@ -360,49 +354,47 @@ impl MyOrchestrator {
 impl OrchestratorService for MyOrchestrator {
     async fn dump_snapshot(
         &self,
-        _request: Request<DumpSnapshotRequest>,
-    ) -> Result<Response<DumpSnapshotResponse>, Status> {
+        _request: Request<proto::DumpSnapshotRequest>,
+    ) -> Result<Response<proto::DumpSnapshotResponse>, Status> {
         let state = self.forest.get_state();
 
-        Ok(Response::new(DumpSnapshotResponse {
+        Ok(Response::new(proto::DumpSnapshotResponse {
             snapshot: Some(Arc::unwrap_or_clone(state).into()),
         }))
     }
 
     async fn dump_changelog(
         &self,
-        request: Request<DumpChangelogRequest>,
-    ) -> Result<Response<DumpChangelogResponse>, Status> {
+        request: Request<proto::DumpChangelogRequest>,
+    ) -> Result<Response<proto::DumpChangelogResponse>, Status> {
         let from_seq_no = SeqNo::from(request.into_inner().from_seq_no);
         let entries = match self.metadata.get_changelog(from_seq_no).await {
             Ok(entries) => entries,
             Err(e) => return Err(Status::internal(e.to_string())),
         };
 
-        Ok(Response::new(DumpChangelogResponse {
+        Ok(Response::new(proto::DumpChangelogResponse {
             entries: entries.into_iter().map(|e| e.into()).collect(),
         }))
     }
 
     async fn kick_off_job(
         &self,
-        request: Request<KickOffJobRequest>,
-    ) -> Result<Response<KickOffJobResponse>, Status> {
+        request: Request<proto::KickOffJobRequest>,
+    ) -> Result<Response<proto::KickOffJobResponse>, Status> {
         let r = match request.into_inner().job {
             Some(proto::kick_off_job_request::Job::WalCompaction(true)) => {
                 self.metadata.schedule_job(JobParams::WALCompaction).await
             },
-            Some(proto::kick_off_job_request::Job::TableBufferCompaction(table_name)) => {
+            Some(proto::kick_off_job_request::Job::TableBufferCompaction(table_id)) => {
                 self.metadata
-                    .schedule_job(JobParams::TableBufferCompaction(TableName::from(
-                        table_name,
-                    )))
+                    .schedule_job(JobParams::TableBufferCompaction(TableID::from(table_id)))
                     .await
             },
             Some(proto::kick_off_job_request::Job::TableTreeCompaction(table_tree_compaction)) => {
                 self.metadata
                     .schedule_job(JobParams::TableTreeCompaction(
-                        TableName::from(table_tree_compaction.table_name),
+                        TableID::from(table_tree_compaction.table_id),
                         Level::from(table_tree_compaction.level),
                     ))
                     .await
@@ -415,39 +407,94 @@ impl OrchestratorService for MyOrchestrator {
             Err(e) => return Err(Status::internal(format!("Failed to schedule job: {}", e))),
         };
 
-        Ok(Response::new(KickOffJobResponse {
+        Ok(Response::new(proto::KickOffJobResponse {
             job_id: job_id.into(),
         }))
     }
 
     async fn get_job_status(
         &self,
-        request: Request<GetJobStatusRequest>,
-    ) -> Result<Response<GetJobStatusResponse>, Status> {
+        request: Request<proto::GetJobStatusRequest>,
+    ) -> Result<Response<proto::GetJobStatusResponse>, Status> {
         let job_id = metadata::JobId::from(request.into_inner().job_id);
         let status = match self.metadata.get_job_status(job_id).await {
             Ok(status) => status,
             Err(e) => return Err(Status::internal(e.to_string())),
         };
 
-        Ok(Response::new(GetJobStatusResponse {
+        Ok(Response::new(proto::GetJobStatusResponse {
             status: Some(status.into()),
         }))
     }
 
     async fn persist_snapshot(
         &self,
-        _request: Request<PersistSnapshotRequest>,
-    ) -> Result<Response<PersistSnapshotResponse>, Status> {
+        _request: Request<proto::PersistSnapshotRequest>,
+    ) -> Result<Response<proto::PersistSnapshotResponse>, Status> {
         let state = self.forest.get_state();
         let (snapshot_id, seq_no) = match self.persist_snapshot(state).await {
             Ok((snapshot_id, seq_no)) => (snapshot_id, seq_no),
             Err(e) => return Err(Status::internal(e.to_string())),
         };
 
-        Ok(Response::new(PersistSnapshotResponse {
+        Ok(Response::new(proto::PersistSnapshotResponse {
             snapshot_id: snapshot_id.into(),
             seq_no: seq_no.into(),
+        }))
+    }
+
+    async fn create_table(
+        &self,
+        request: Request<proto::CreateTableRequest>,
+    ) -> Result<Response<proto::CreateTableResponse>, Status> {
+        let request = request.into_inner();
+        let table_name = TableName::from(request.table_name);
+        let config = request.config.map(TableConfig::from).unwrap_or_default();
+
+        let table_id = match self.metadata.create_table(table_name, config).await {
+            Ok(table_id) => table_id,
+            Err(MetadataError::TableAlreadyExists(_)) => {
+                return Err(Status::already_exists("Table already exists"));
+            },
+            Err(e) => return Err(Status::internal(e.to_string())),
+        };
+
+        Ok(Response::new(proto::CreateTableResponse {
+            table_id: table_id.into(),
+        }))
+    }
+
+    async fn drop_table(
+        &self,
+        request: Request<proto::DropTableRequest>,
+    ) -> Result<Response<proto::DropTableResponse>, Status> {
+        let request = request.into_inner();
+        let table_name = TableName::from(request.table_name);
+
+        match self.metadata.drop_table(table_name).await {
+            Ok(_) => Ok(Response::new(proto::DropTableResponse {})),
+            Err(e) => Err(Status::internal(e.to_string())),
+        }
+    }
+
+    async fn get_table(
+        &self,
+        request: Request<proto::GetTableRequest>,
+    ) -> Result<Response<proto::GetTableResponse>, Status> {
+        let request = request.into_inner();
+        let table_name = TableName::from(request.table_name);
+
+        let (table_id, config) = match self.metadata.get_table(table_name).await {
+            Ok((table_id, config)) => (table_id, config),
+            Err(MetadataError::TableNotFound(_)) => {
+                return Err(Status::not_found("Table not found"));
+            },
+            Err(e) => return Err(Status::internal(e.to_string())),
+        };
+
+        Ok(Response::new(proto::GetTableResponse {
+            table_id: table_id.into(),
+            config: Some(config.into()),
         }))
     }
 }

@@ -5,8 +5,8 @@ import time
 import sys
 import pytest
 
-from proto.skyvault.v1 import skyvault_pb2
-from proto.skyvault.v1 import skyvault_pb2_grpc
+from skyvault.v1 import skyvault_pb2
+from skyvault.v1 import skyvault_pb2_grpc
 
 #
 # Fixtures
@@ -65,6 +65,14 @@ def stubs(service_connection):
 #
 # Helper functions
 #
+
+def create_table(stub, table_name):
+    try:
+        request = skyvault_pb2.CreateTableRequest(table_name=table_name)
+        stub.CreateTable(request, timeout=10)
+    except grpc.RpcError as e:
+        if e.code() != grpc.StatusCode.ALREADY_EXISTS:
+            raise
 
 
 def perform_write(stub, table_name, key, value_bytes):
@@ -137,34 +145,26 @@ def persist_snapshot(stub):
     return response.seq_no
 
 
-#
-# Test constants
-#
-
-TABLE_NAME = "smoke_test_table"
-KEY_ONE = "smoke_test_key_1"
-VALUE_ONE = b"smoke_test_value_1_verified"
-KEY_TWO = "smoke_test_key_2_compact"
-VALUE_TWO = b"smoke_test_value_2_compact_verified"
-
-#
-# Tests
-#
-
-
 @pytest.mark.smoke
 def test_simple_write_and_read(stubs):
     """Test basic write and read operations work correctly."""
     writer_stub = stubs["writer"]
     reader_stub = stubs["reader"]
+    orchestrator_stub = stubs["orchestrator"]
+
+    table_name = "test_simple_write_and_read"
+    key = "test_simple_write_and_read_key"
+    value = b"test_simple_write_and_read_value"
+
+    create_table(orchestrator_stub, table_name)
 
     # Write key-value pair
-    seq_no = perform_write(writer_stub, TABLE_NAME, KEY_ONE, VALUE_ONE)
+    seq_no = perform_write(writer_stub, table_name, key, value)
 
     # Verify read works
-    assert perform_read_with_retry(
-        reader_stub, TABLE_NAME, seq_no, KEY_ONE, VALUE_ONE
-    ), f"Failed to read back key '{KEY_ONE}' after writing"
+    assert perform_read_with_retry(reader_stub, table_name, seq_no, key, value), (
+        f"Failed to read back key '{key}' after writing"
+    )
 
 
 @pytest.mark.smoke
@@ -174,26 +174,33 @@ def test_write_compact_read(stubs):
     reader_stub = stubs["reader"]
     orchestrator_stub = stubs["orchestrator"]
 
+    table_name = "test_write_compact_read"
+    key_one = "test_write_compact_read_key_one"
+    value_one = b"test_write_compact_read_value_one"
+    key_two = "test_write_compact_read_key_two"
+    value_two = b"test_write_compact_read_value_two"
+
+    create_table(orchestrator_stub, table_name)
+
     # Write second key
-    seq_no = perform_write(writer_stub, TABLE_NAME, KEY_TWO, VALUE_TWO)
+    seq_no = perform_write(writer_stub, table_name, key_two, value_two)
 
     # Verify second key is readable before compaction
     assert perform_read_with_retry(
-        reader_stub, TABLE_NAME, seq_no, KEY_TWO, VALUE_TWO
-    ), f"Failed to read back key '{KEY_TWO}' before compaction"
+        reader_stub, table_name, seq_no, key_two, value_two
+    ), f"Failed to read back key '{key_two}' before compaction"
 
     # Trigger compaction
-    trigger_wal_compaction(orchestrator_stub)
-    time.sleep(5)  # Wait for readers to pick up the new compaction
+    seq_no = trigger_wal_compaction(orchestrator_stub)
 
     # Verify second key is still readable after compaction
-    assert perform_read(reader_stub, TABLE_NAME, KEY_TWO, VALUE_TWO), (
-        f"Failed to read back key '{KEY_TWO}' after compaction"
+    assert perform_read_with_retry(reader_stub, table_name, seq_no, key_two, value_two), (
+        f"Failed to read back key '{key_two}' after compaction"
     )
 
     # Verify first key is also still readable after compaction
-    assert perform_read(reader_stub, TABLE_NAME, KEY_ONE, VALUE_ONE), (
-        f"Failed to read back key '{KEY_ONE}' after compaction"
+    assert perform_read_with_retry(reader_stub, table_name, seq_no, key_one, value_one), (
+        f"Failed to read back key '{key_one}' after compaction"
     )
 
 
@@ -204,13 +211,19 @@ def test_snapshot_persistence(stubs):
     reader_stub = stubs["reader"]
     orchestrator_stub = stubs["orchestrator"]
 
+    table_name = "test_snapshot_persistence"
+    key = "test_snapshot_persistence_key"
+    value = b"test_snapshot_persistence_value"
+
+    create_table(orchestrator_stub, table_name)
+
     # Write some data
-    perform_write(writer_stub, TABLE_NAME, KEY_ONE, VALUE_ONE)
+    perform_write(writer_stub, table_name, key, value)
 
     # Trigger snapshot persistence
     persist_snapshot(orchestrator_stub)
 
     # Verify snapshot is persisted
-    assert perform_read(reader_stub, TABLE_NAME, KEY_ONE, VALUE_ONE), (
-        f"Failed to read back key '{KEY_ONE}' after snapshot persistence"
+    assert perform_read(reader_stub, table_name, key, value), (
+        f"Failed to read back key '{key}' after snapshot persistence"
     )

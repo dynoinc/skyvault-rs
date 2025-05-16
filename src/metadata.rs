@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fmt::{self, Display};
 use std::ops::Deref;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_stream::stream;
@@ -31,6 +31,12 @@ pub enum MetadataError {
 
     #[error("Job is not in pending state")]
     InvalidJobState(String),
+
+    #[error("Table already exists")]
+    TableAlreadyExists(TableName),
+
+    #[error("Table not found")]
+    TableNotFound(TableName),
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Eq, PartialEq, Clone, Copy, sqlx::Type)]
@@ -187,23 +193,23 @@ impl Deref for TableName {
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub enum BelongsTo {
     WalSeqNo(SeqNo),
-    TableBuffer(TableName, SeqNo),
-    TableTree(TableName, Level),
+    TableBuffer(TableID, SeqNo),
+    TableTree(TableID, Level),
 }
 
 impl From<BelongsTo> for proto::run_metadata::BelongsTo {
     fn from(belongs_to: BelongsTo) -> Self {
         match belongs_to {
             BelongsTo::WalSeqNo(seq_no) => proto::run_metadata::BelongsTo::WalSeqNo(seq_no.0),
-            BelongsTo::TableBuffer(table_name, seq_no) => {
+            BelongsTo::TableBuffer(table_id, seq_no) => {
                 proto::run_metadata::BelongsTo::TableBuffer(proto::TableBuffer {
-                    table_name: table_name.0,
+                    table_id: table_id.0,
                     seq_no: seq_no.0,
                 })
             },
-            BelongsTo::TableTree(table_name, level) => {
+            BelongsTo::TableTree(table_id, level) => {
                 proto::run_metadata::BelongsTo::TableTree(proto::TableTree {
-                    table_name: table_name.0,
+                    table_id: table_id.0,
                     level: level.0,
                 })
             },
@@ -215,12 +221,11 @@ impl From<proto::run_metadata::BelongsTo> for BelongsTo {
     fn from(belongs_to: proto::run_metadata::BelongsTo) -> Self {
         match belongs_to {
             proto::run_metadata::BelongsTo::WalSeqNo(seq_no) => BelongsTo::WalSeqNo(SeqNo(seq_no)),
-            proto::run_metadata::BelongsTo::TableBuffer(table_buffer) => BelongsTo::TableBuffer(
-                TableName(table_buffer.table_name),
-                SeqNo(table_buffer.seq_no),
-            ),
+            proto::run_metadata::BelongsTo::TableBuffer(table_buffer) => {
+                BelongsTo::TableBuffer(TableID(table_buffer.table_id), SeqNo(table_buffer.seq_no))
+            },
             proto::run_metadata::BelongsTo::TableTree(table_tree) => {
-                BelongsTo::TableTree(TableName(table_tree.table_name), Level(table_tree.level))
+                BelongsTo::TableTree(TableID(table_tree.table_id), Level(table_tree.level))
             },
         }
     }
@@ -308,8 +313,8 @@ impl From<ChangelogEntryWithID> for proto::ChangelogEntryWithId {
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub enum JobParams {
     WALCompaction,
-    TableBufferCompaction(TableName),
-    TableTreeCompaction(TableName, Level),
+    TableBufferCompaction(TableID),
+    TableTreeCompaction(TableID, Level),
 }
 
 pub enum JobStatus {
@@ -323,6 +328,42 @@ impl From<JobStatus> for proto::get_job_status_response::Status {
             JobStatus::Pending => proto::get_job_status_response::Status::Pending(true),
             JobStatus::Completed(seq_no) => proto::get_job_status_response::Status::SeqNo(seq_no.0),
         }
+    }
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Eq, PartialEq, Hash, Copy)]
+pub struct TableID(i64);
+
+impl From<i64> for TableID {
+    fn from(value: i64) -> Self {
+        TableID(value)
+    }
+}
+
+impl From<TableID> for i64 {
+    fn from(value: TableID) -> Self {
+        value.0
+    }
+}
+
+impl Display for TableID {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Default, Debug)]
+pub struct TableConfig {}
+
+impl From<proto::TableConfig> for TableConfig {
+    fn from(_config: proto::TableConfig) -> Self {
+        TableConfig {}
+    }
+}
+
+impl From<TableConfig> for proto::TableConfig {
+    fn from(_config: TableConfig) -> Self {
+        proto::TableConfig {}
     }
 }
 
@@ -341,6 +382,7 @@ pub trait MetadataStoreTrait: Send + Sync + 'static {
         snapshot_id: SnapshotID,
         seq_no: SeqNo,
     ) -> Result<(), MetadataError>;
+
     // CHANGELOG
     async fn stream_changelog(
         &self,
@@ -359,7 +401,7 @@ pub trait MetadataStoreTrait: Send + Sync + 'static {
         &self,
         job_id: JobId,
         compacted: Vec<crate::runs::RunId>,
-        new_table_runs: Vec<(crate::runs::RunId, TableName, crate::runs::Stats)>,
+        new_table_runs: Vec<(crate::runs::RunId, TableID, crate::runs::Stats)>,
     ) -> Result<SeqNo, MetadataError>;
     async fn append_table_compaction(
         &self,
@@ -377,6 +419,18 @@ pub trait MetadataStoreTrait: Send + Sync + 'static {
     async fn get_job_status(&self, job_id: JobId) -> Result<JobStatus, MetadataError>;
     async fn get_pending_jobs(&self) -> Result<Vec<(JobId, JobParams)>, MetadataError>;
     async fn get_job(&self, job_id: JobId) -> Result<JobParams, MetadataError>;
+
+    // TABLES
+    async fn create_table(
+        &self,
+        table_name: TableName,
+        config: TableConfig,
+    ) -> Result<TableID, MetadataError>;
+    async fn drop_table(&self, table_name: TableName) -> Result<(), MetadataError>;
+    async fn get_table(
+        &self,
+        table_name: TableName,
+    ) -> Result<(TableID, TableConfig), MetadataError>;
 }
 
 pub type MetadataStore = Arc<dyn MetadataStoreTrait>;
@@ -512,7 +566,7 @@ impl PostgresMetadataStore {
         transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         job_id: JobId,
         compacted: &[crate::runs::RunId],
-        new_table_runs: &[(crate::runs::RunId, TableName, crate::runs::Stats)],
+        new_table_runs: &[(crate::runs::RunId, TableID, crate::runs::Stats)],
     ) -> Result<SeqNo, MetadataError> {
         let compacted_strings: Vec<String> = compacted.iter().map(|id| id.to_string()).collect();
         let deleted_count_result = sqlx::query!(
@@ -604,10 +658,10 @@ impl PostgresMetadataStore {
             let belongs_to_values: Vec<serde_json::Value> = new_table_runs
                 .iter()
                 .enumerate()
-                .map(|(i, (_, table_name, _))| {
+                .map(|(i, (_, table_id, _))| {
                     // Assign unique sequence number: first_seq_no + i
                     serde_json::to_value(BelongsTo::TableBuffer(
-                        table_name.clone(),
+                        *table_id,
                         SeqNo::from(first_seq_no + i as i64), // Use unique ID here
                     ))
                 })
@@ -787,7 +841,7 @@ impl MetadataStoreTrait for PostgresMetadataStore {
         &self,
         job_id: JobId,
         compacted: Vec<crate::runs::RunId>,
-        new_table_runs: Vec<(crate::runs::RunId, TableName, crate::runs::Stats)>,
+        new_table_runs: Vec<(crate::runs::RunId, TableID, crate::runs::Stats)>,
     ) -> Result<SeqNo, MetadataError> {
         loop {
             // Retry loop
@@ -1069,12 +1123,147 @@ impl MetadataStoreTrait for PostgresMetadataStore {
 
         Ok(params)
     }
+
+    async fn create_table(
+        &self,
+        table_name: TableName,
+        config: TableConfig,
+    ) -> Result<TableID, MetadataError> {
+        let mut transaction = self.pg_pool.begin().await?;
+
+        let result = sqlx::query_scalar!(
+            r#"
+            INSERT INTO tables (name, config)
+            VALUES ($1, $2)
+            RETURNING id
+            "#,
+            table_name.to_string(),
+            serde_json::to_value(config)?
+        )
+        .fetch_one(&mut *transaction)
+        .await;
+
+        match result {
+            Ok(id) => {
+                transaction.commit().await?;
+                Ok(TableID::from(id))
+            },
+            Err(sqlx::Error::Database(db_error)) if db_error.code().as_deref() == Some("23505") => {
+                transaction.rollback().await?;
+                Err(MetadataError::TableAlreadyExists(table_name))
+            },
+            Err(e) => {
+                transaction.rollback().await?;
+                Err(e.into())
+            }
+        }
+    }
+
+    async fn drop_table(&self, table_name: TableName) -> Result<(), MetadataError> {
+        let mut transaction = self.pg_pool.begin().await?;
+
+        sqlx::query!(
+            r#"
+            DELETE FROM tables WHERE name = $1 AND deleted_at IS NULL
+            "#,
+            table_name.to_string()
+        )
+        .execute(&mut *transaction)
+        .await?;
+
+        transaction.commit().await?;
+
+        Ok(())
+    }
+
+    async fn get_table(
+        &self,
+        table_name: TableName,
+    ) -> Result<(TableID, TableConfig), MetadataError> {
+        let row = sqlx::query!(
+            r#"
+            SELECT id, name, config FROM tables WHERE name = $1 AND deleted_at IS NULL
+            "#,
+            table_name.to_string()
+        )
+        .fetch_optional(&self.pg_pool)
+        .await?;
+
+        match row {
+            Some(row) => {
+                let config: TableConfig =
+                    serde_json::from_value(row.config).map_err(MetadataError::JsonSerdeError)?;
+                Ok((TableID::from(row.id), config))
+            }
+            None => Err(MetadataError::TableNotFound(table_name))
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct TableCache {
+    cache: Arc<Mutex<HashMap<TableName, (TableID, TableConfig)>>>,
+    metadata_store: Option<MetadataStore>,
+}
+
+impl TableCache {
+    pub fn new(metadata_store: MetadataStore) -> Self {
+        Self {
+            cache: Arc::new(Mutex::new(HashMap::new())),
+            metadata_store: Some(metadata_store),
+        }
+    }
+
+    #[cfg(test)]
+    pub fn new_for_test(cache: HashMap<TableName, (TableID, TableConfig)>) -> Self {
+        Self {
+            cache: Arc::new(Mutex::new(cache)),
+            metadata_store: None,
+        }
+    }
+
+    pub async fn get_table_id(&self, table_name: TableName) -> Result<TableID, MetadataError> {
+        if let Some((table_id, _)) = self.cache.lock().unwrap().get(&table_name) {
+            return Ok(*table_id);
+        }
+
+        let (table_id, config) = match self.metadata_store {
+            Some(ref metadata_store) => metadata_store.get_table(table_name.clone()).await?,
+            None => return Err(MetadataError::TableNotFound(table_name)),
+        };
+
+        self.cache
+            .lock()
+            .unwrap()
+            .insert(table_name, (table_id, config));
+        Ok(table_id)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::test_utils::setup_test_db;
+
+    #[tokio::test]
+    async fn test_tables() {
+        // Setup test database
+        let (metadata_store, _container) = setup_test_db().await.unwrap();
+
+        let result = metadata_store.get_table(TableName::from("test_table")).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), MetadataError::TableNotFound(_)));
+
+        // Create a table
+        metadata_store.create_table(TableName::from("test_table"), TableConfig::default()).await.unwrap();
+        
+        // Try to create the same table again
+        let result = metadata_store.create_table(TableName::from("test_table"), TableConfig::default()).await;
+
+        // Verify that the second creation returns an error
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), MetadataError::TableAlreadyExists(_)));
+    }
 
     #[tokio::test]
     async fn test_schedule_and_get_wal_compaction_job() {
