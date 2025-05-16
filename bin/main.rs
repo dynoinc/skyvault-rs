@@ -43,11 +43,18 @@ async fn main() -> Result<()> {
     info!(config = ?config, version = version, current_namespace = %current_namespace, "Starting skyvault");
 
     // Resolve metadata_url using K8s secret
-    let metadata_url = config
+    let metadata_url = match config
         .postgres
         .resolve_metadata_url(k8s_client.clone(), &current_namespace)
         .await
-        .context("Failed to resolve metadata URL from Kubernetes secret")?;
+        .context("Failed to resolve metadata URL from Kubernetes secret") {
+            Ok(url) => url,
+            Err(e) => {
+                eprintln!("Failed to resolve metadata URL: {}", e);
+                tokio::time::sleep(std::time::Duration::from_secs(600)).await;
+                return Err(e);
+            }
+        };
 
     // Create metadata client
     let metadata = Arc::new(metadata::PostgresMetadataStore::new(metadata_url).await?);

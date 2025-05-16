@@ -98,8 +98,7 @@ impl PostgresConfig {
                 Ok(self.to_url_with_password(&password_str))
             },
             Err(e) => Err(anyhow!(
-                "Failed to get secret '{}' in namespace '{}': {}. Ensure the service account has \
-                 GET permissions on Secrets.",
+                "Failed to get secret '{}' in namespace '{}': {}",
                 PASSWORD_SECRET_NAME,
                 namespace,
                 e
