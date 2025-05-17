@@ -14,6 +14,7 @@ use sqlx::types::JsonValue;
 use thiserror::Error;
 
 use crate::proto;
+use crate::runs::{RunId, Stats};
 
 #[derive(Error, Debug)]
 pub enum MetadataError {
@@ -233,9 +234,9 @@ impl From<proto::run_metadata::BelongsTo> for BelongsTo {
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct RunMetadata {
-    pub id: crate::runs::RunId,
+    pub id: RunId,
     pub belongs_to: BelongsTo,
-    pub stats: crate::runs::Stats,
+    pub stats: Stats,
 }
 
 impl From<RunMetadata> for proto::RunMetadata {
@@ -266,8 +267,8 @@ impl From<proto::RunMetadata> for RunMetadata {
 
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 pub struct ChangelogEntryV1 {
-    pub runs_added: Vec<crate::runs::RunId>,
-    pub runs_removed: Vec<crate::runs::RunId>,
+    pub runs_added: Vec<RunId>,
+    pub runs_removed: Vec<RunId>,
 }
 
 impl From<ChangelogEntryV1> for proto::ChangelogEntryV1 {
@@ -393,26 +394,23 @@ pub trait MetadataStoreTrait: Send + Sync + 'static {
     ) -> Result<Vec<ChangelogEntryWithID>, MetadataError>;
 
     // WAL & COMPACTIONS
-    async fn append_wal(
-        &self,
-        run_ids: Vec<(crate::runs::RunId, crate::runs::Stats)>,
-    ) -> Result<SeqNo, MetadataError>;
+    async fn append_wal(&self, run_ids: Vec<(RunId, Stats)>) -> Result<SeqNo, MetadataError>;
     async fn append_wal_compaction(
         &self,
         job_id: JobId,
-        compacted: Vec<crate::runs::RunId>,
-        new_table_runs: Vec<(crate::runs::RunId, TableID, crate::runs::Stats)>,
+        compacted: Vec<RunId>,
+        new_table_runs: Vec<(RunId, TableID, Stats)>,
     ) -> Result<SeqNo, MetadataError>;
     async fn append_table_compaction(
         &self,
         job_id: JobId,
-        compacted: Vec<crate::runs::RunId>,
+        compacted: Vec<RunId>,
         new_runs: Vec<RunMetadata>,
     ) -> Result<SeqNo, MetadataError>;
     async fn get_run_metadata_batch(
         &self,
-        run_ids: Vec<crate::runs::RunId>,
-    ) -> Result<HashMap<crate::runs::RunId, RunMetadata>, MetadataError>;
+        run_ids: Vec<RunId>,
+    ) -> Result<HashMap<RunId, RunMetadata>, MetadataError>;
 
     // JOBS
     async fn schedule_job(&self, job_params: JobParams) -> Result<JobId, MetadataError>;
@@ -461,7 +459,7 @@ impl PostgresMetadataStore {
     async fn append_wal_attempt(
         &self,
         transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-        run_ids_with_stats: &[(crate::runs::RunId, crate::runs::Stats)],
+        run_ids_with_stats: &[(RunId, Stats)],
     ) -> Result<SeqNo, sqlx::Error> {
         let first_seq_no: i64 = sqlx::query_scalar("SELECT nextval('changelog_id_seq')")
             .fetch_one(&mut **transaction) // Deref the mutable reference
@@ -566,8 +564,8 @@ impl PostgresMetadataStore {
         &self,
         transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         job_id: JobId,
-        compacted: &[crate::runs::RunId],
-        new_table_runs: &[(crate::runs::RunId, TableID, crate::runs::Stats)],
+        compacted: &[RunId],
+        new_table_runs: &[(RunId, TableID, Stats)],
     ) -> Result<SeqNo, MetadataError> {
         let compacted_strings: Vec<String> = compacted.iter().map(|id| id.to_string()).collect();
         let deleted_count_result = sqlx::query!(
@@ -795,7 +793,7 @@ impl MetadataStoreTrait for PostgresMetadataStore {
 
     async fn append_wal(
         &self,
-        run_ids_with_stats: Vec<(crate::runs::RunId, crate::runs::Stats)>,
+        run_ids_with_stats: Vec<(RunId, Stats)>,
     ) -> Result<SeqNo, MetadataError> {
         loop {
             // Retry loop for transaction serialization failures
@@ -841,8 +839,8 @@ impl MetadataStoreTrait for PostgresMetadataStore {
     async fn append_wal_compaction(
         &self,
         job_id: JobId,
-        compacted: Vec<crate::runs::RunId>,
-        new_table_runs: Vec<(crate::runs::RunId, TableID, crate::runs::Stats)>,
+        compacted: Vec<RunId>,
+        new_table_runs: Vec<(RunId, TableID, Stats)>,
     ) -> Result<SeqNo, MetadataError> {
         loop {
             // Retry loop
@@ -902,7 +900,7 @@ impl MetadataStoreTrait for PostgresMetadataStore {
     async fn append_table_compaction(
         &self,
         job_id: JobId,
-        compacted: Vec<crate::runs::RunId>,
+        compacted: Vec<RunId>,
         new_runs: Vec<RunMetadata>,
     ) -> Result<SeqNo, MetadataError> {
         let mut transaction = self.pg_pool.begin().await?;
@@ -994,8 +992,8 @@ impl MetadataStoreTrait for PostgresMetadataStore {
 
     async fn get_run_metadata_batch(
         &self,
-        run_ids: Vec<crate::runs::RunId>,
-    ) -> Result<HashMap<crate::runs::RunId, RunMetadata>, MetadataError> {
+        run_ids: Vec<RunId>,
+    ) -> Result<HashMap<RunId, RunMetadata>, MetadataError> {
         let run_ids_strings: Vec<String> = run_ids.iter().map(|id| id.to_string()).collect();
         let rows = sqlx::query!(
             r#"
@@ -1012,11 +1010,11 @@ impl MetadataStoreTrait for PostgresMetadataStore {
             .map(|row| {
                 let belongs_to: BelongsTo = serde_json::from_value(row.belongs_to)
                     .map_err(MetadataError::JsonSerdeError)?;
-                let stats: crate::runs::Stats =
+                let stats: Stats =
                     serde_json::from_value(row.stats).map_err(MetadataError::JsonSerdeError)?;
 
                 Ok(RunMetadata {
-                    id: crate::runs::RunId(row.id),
+                    id: RunId(row.id),
                     belongs_to,
                     stats,
                 })

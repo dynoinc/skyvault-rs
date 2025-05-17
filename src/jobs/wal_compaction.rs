@@ -3,9 +3,9 @@ use tokio::sync::mpsc;
 
 use super::JobError;
 use crate::forest::ForestImpl;
-use crate::k_way;
+use crate::k_way::merge;
 use crate::metadata::{self, MetadataStore, TableID};
-use crate::runs::{RunError, Stats, WriteOperation};
+use crate::runs::{RunError, RunId, Stats, WriteOperation, build_runs, read_run_stream};
 use crate::storage::ObjectStore;
 
 pub async fn execute(
@@ -48,11 +48,11 @@ pub async fn execute(
                 })
             });
 
-            (seq_no, crate::runs::read_run_stream(bytes_stream))
+            (seq_no, read_run_stream(bytes_stream))
         })
         .collect::<Vec<_>>();
 
-    let merged_stream = k_way::merge(run_streams);
+    let merged_stream = merge(run_streams);
 
     // Vector to collect (run_id, table_name, stats) for each table
     let mut table_runs = Vec::new();
@@ -61,7 +61,7 @@ pub async fn execute(
     type TableState = (
         TableID,
         mpsc::Sender<Result<WriteOperation, RunError>>,
-        tokio::task::JoinHandle<Result<(crate::runs::RunId, Stats), JobError>>,
+        tokio::task::JoinHandle<Result<(RunId, Stats), JobError>>,
     );
     let mut current_state: Option<TableState> = None;
 
@@ -141,7 +141,7 @@ pub async fn execute(
             let task = tokio::spawn(async move {
                 // Build run from stream
                 // build_runs returns a stream. For now, collect it and expect exactly one run.
-                let results: Vec<_> = crate::runs::build_runs(rx_stream)
+                let results: Vec<_> = build_runs(rx_stream)
                     .try_collect()
                     .await
                     .map_err(JobError::Run)?;
@@ -156,7 +156,7 @@ pub async fn execute(
                 // Panic if the stream was empty, which shouldn't happen after the check above.
                 let (run_data, stats) = results.into_iter().next().unwrap();
 
-                let run_id = crate::runs::RunId(ulid::Ulid::new().to_string());
+                let run_id = RunId(ulid::Ulid::new().to_string());
 
                 // Persist run
                 object_store_clone

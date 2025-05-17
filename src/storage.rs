@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
+use crate::metadata::SnapshotID;
+use crate::runs::RunId;
 use async_trait::async_trait;
 use aws_sdk_s3::Client as S3Client;
 use aws_sdk_s3::operation::create_bucket::CreateBucketError;
@@ -53,18 +55,11 @@ impl From<SdkError<GetObjectError, HttpResponse>> for StorageError {
 
 #[async_trait]
 pub trait ObjectStoreTrait: Send + Sync + 'static {
-    async fn put_run(&self, run_id: crate::runs::RunId, data: Bytes) -> Result<(), StorageError>;
-    async fn get_run(&self, run_id: crate::runs::RunId) -> Result<ByteStream, StorageError>;
+    async fn put_run(&self, run_id: RunId, data: Bytes) -> Result<(), StorageError>;
+    async fn get_run(&self, run_id: RunId) -> Result<ByteStream, StorageError>;
 
-    async fn put_snapshot(
-        &self,
-        snapshot_id: crate::metadata::SnapshotID,
-        data: Bytes,
-    ) -> Result<(), StorageError>;
-    async fn get_snapshot(
-        &self,
-        snapshot_id: crate::metadata::SnapshotID,
-    ) -> Result<Bytes, StorageError>;
+    async fn put_snapshot(&self, snapshot_id: SnapshotID, data: Bytes) -> Result<(), StorageError>;
+    async fn get_snapshot(&self, snapshot_id: SnapshotID) -> Result<Bytes, StorageError>;
 }
 
 pub type ObjectStore = Arc<dyn ObjectStoreTrait>;
@@ -96,11 +91,7 @@ impl S3ObjectStore {
 
 #[async_trait]
 impl ObjectStoreTrait for S3ObjectStore {
-    async fn put_snapshot(
-        &self,
-        snapshot_id: crate::metadata::SnapshotID,
-        data: Bytes,
-    ) -> Result<(), StorageError> {
+    async fn put_snapshot(&self, snapshot_id: SnapshotID, data: Bytes) -> Result<(), StorageError> {
         let byte_stream = ByteStream::from(data);
 
         match self
@@ -117,7 +108,7 @@ impl ObjectStoreTrait for S3ObjectStore {
         }
     }
 
-    async fn put_run(&self, run_id: crate::runs::RunId, data: Bytes) -> Result<(), StorageError> {
+    async fn put_run(&self, run_id: RunId, data: Bytes) -> Result<(), StorageError> {
         let byte_stream = ByteStream::from(data);
 
         match self
@@ -135,10 +126,7 @@ impl ObjectStoreTrait for S3ObjectStore {
         }
     }
 
-    async fn get_snapshot(
-        &self,
-        snapshot_id: crate::metadata::SnapshotID,
-    ) -> Result<Bytes, StorageError> {
+    async fn get_snapshot(&self, snapshot_id: SnapshotID) -> Result<Bytes, StorageError> {
         let key = format!("snapshots/{}", snapshot_id);
         let response = match self
             .client
@@ -163,7 +151,7 @@ impl ObjectStoreTrait for S3ObjectStore {
         Ok(bytes)
     }
 
-    async fn get_run(&self, run_id: crate::runs::RunId) -> Result<ByteStream, StorageError> {
+    async fn get_run(&self, run_id: RunId) -> Result<ByteStream, StorageError> {
         let key = format!("runs/{}", run_id);
         let response = match self
             .client
@@ -194,7 +182,7 @@ pub struct StorageCache {
     storage: ObjectStore,
 
     /// In-memory cache of run data
-    cache: Arc<RwLock<HashMap<crate::runs::RunId, Bytes>>>,
+    cache: Arc<RwLock<HashMap<RunId, Bytes>>>,
 }
 
 impl StorageCache {
@@ -207,7 +195,7 @@ impl StorageCache {
     }
 
     /// Get run data from cache or storage if not cached
-    pub async fn get_run(&self, run_id: crate::runs::RunId) -> Result<Bytes, StorageError> {
+    pub async fn get_run(&self, run_id: RunId) -> Result<Bytes, StorageError> {
         // First check if the run is in the cache
         {
             let cache = self.cache.read().unwrap();
