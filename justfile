@@ -5,7 +5,7 @@ sqlx:
 
 check:
     buf generate
-    cargo +nightly-2025-05-14 fmt --all
+    cargo fmt --all
     cargo clippy -- -D warnings
     RUST_BACKTRACE=1 cargo test
 
