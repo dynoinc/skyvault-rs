@@ -7,9 +7,9 @@ pull requests or update the code.
 
 - If you modify any `.proto` files under `proto/`, run `buf generate` to update
   the generated code in `gen/`.
-- Format Rust code with the nightly formatter used in `justfile`:
+- Format Rust code before committing:
   ```bash
-  cargo +nightly-2025-05-14 fmt --all
+  cargo fmt --all
   ```
 - Run the linter before committing:
   ```bash
