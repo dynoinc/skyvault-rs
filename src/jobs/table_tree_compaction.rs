@@ -5,9 +5,10 @@ use futures::stream::{self, BoxStream, StreamExt, TryStreamExt};
 
 use super::JobError;
 use crate::forest::ForestImpl;
-use crate::k_way::merge;
+use crate::k_way;
 use crate::metadata::{self, MetadataStore};
-use crate::runs::{RunError, RunId, Stats, StatsV1, WriteOperation, build_runs, read_run_stream};
+use crate::runs::{RunError, RunId, Stats, StatsV1, WriteOperation};
+use crate::runs as runs;
 use crate::storage::ObjectStore;
 
 // Define a type alias for the boxed stream
@@ -103,7 +104,7 @@ pub async fn execute(
                 }
             })
         });
-        Box::pin(read_run_stream(adapted_stream))
+        Box::pin(runs::read_run_stream(adapted_stream))
     };
     let level_run_stream = level_run_stream_fut.await;
 
@@ -128,7 +129,7 @@ pub async fn execute(
                         }
                     })
                 });
-                Box::pin(read_run_stream(adapted_stream))
+                Box::pin(runs::read_run_stream(adapted_stream))
             }
         })
         .flatten(); // Flatten the stream of streams into a single stream
@@ -146,7 +147,7 @@ pub async fn execute(
     ];
 
     let next_level = level.next();
-    let mut merged_stream: RunStream = Box::pin(merge(streams_to_merge));
+    let mut merged_stream: RunStream = Box::pin(k_way::merge(streams_to_merge));
     if next_level == metadata::Level::max() {
         // At the max level, we filter out all Delete operations
         // since they're no longer needed (nothing can be below this level)
@@ -155,7 +156,7 @@ pub async fn execute(
         }));
     }
 
-    let run_builder_stream = build_runs(merged_stream);
+    let run_builder_stream = runs::build_runs(merged_stream);
 
     let mut new_runs = Vec::new();
 

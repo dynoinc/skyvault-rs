@@ -4,7 +4,8 @@ use futures::{Stream, StreamExt, TryStreamExt, pin_mut};
 use thiserror::Error;
 use tonic::{Request, Response, Status};
 
-use crate::runs::{RunError, RunId, SearchResult, WriteOperation, read_run_stream, search_run};
+use crate::runs::{RunError, RunId, SearchResult, WriteOperation};
+use crate::runs as runs;
 use crate::storage::{self, StorageCache};
 use crate::{k_way, metadata, proto};
 
@@ -50,7 +51,7 @@ impl proto::cache_service_server::CacheService for MyCache {
                 },
             };
 
-            remaining_keys.retain(|key| match search_run(run.as_ref(), key.as_str()) {
+            remaining_keys.retain(|key| match runs::search_run(run.as_ref(), key.as_str()) {
                 SearchResult::Found(value) => {
                     response.items.push(proto::GetFromRunItem {
                         key: key.clone(),
@@ -103,7 +104,7 @@ impl proto::cache_service_server::CacheService for MyCache {
                     )));
                 },
             };
-            let stream = read_run_stream(futures::stream::once(futures::future::ok(run_data)));
+            let stream = runs::read_run_stream(futures::stream::once(futures::future::ok(run_data)));
 
             let filtered_stream = {
                 let exclusive_start_key = exclusive_start_key.clone();
@@ -160,7 +161,8 @@ mod tests {
 
     use super::*;
     use crate::proto::cache_service_server::CacheService;
-    use crate::runs::{RunError, RunId, Stats, WriteOperation, build_runs};
+    use crate::runs::{RunError, RunId, Stats, WriteOperation};
+    use crate::runs as runs;
     use crate::storage::ObjectStore;
     use crate::test_utils::setup_test_object_store;
     use crate::{proto, requires_docker};
@@ -172,7 +174,7 @@ mod tests {
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let ops_stream = stream::iter(operations.into_iter().map(Ok::<_, RunError>));
 
-        let mut run_items: Vec<(Bytes, Stats)> = build_runs(ops_stream).try_collect().await?;
+        let mut run_items: Vec<(Bytes, Stats)> = runs::build_runs(ops_stream).try_collect().await?;
 
         if run_items.len() != 1 {
             return Err(format!(

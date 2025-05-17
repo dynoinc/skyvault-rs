@@ -6,7 +6,8 @@ use tonic::{Request, Response, Status};
 
 use crate::metadata::TableName;
 use crate::proto::{self};
-use crate::runs::{RunError as RunsError, RunId, WriteOperation, build_runs};
+use crate::runs::{RunError as RunsError, RunId, WriteOperation};
+use crate::runs as runs;
 use crate::{metadata, storage};
 
 #[derive(Error, Debug)]
@@ -118,7 +119,7 @@ impl MyWriter {
             .collect::<BTreeMap<_, _>>();
 
         let ops_stream = futures::stream::iter(sorted_ops.into_values().map(Ok));
-        let wal_runs: Vec<_> = build_runs(ops_stream).try_collect().await?;
+        let wal_runs: Vec<_> = runs::build_runs(ops_stream).try_collect().await?;
 
         let mut wal_run_ids = Vec::new();
         for (run_data, stats) in wal_runs {

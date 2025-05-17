@@ -3,9 +3,10 @@ use futures::stream::{self, BoxStream, StreamExt, TryStreamExt};
 
 use super::JobError;
 use crate::forest::ForestImpl;
-use crate::k_way::merge;
+use crate::k_way;
 use crate::metadata::{self, MetadataStore};
-use crate::runs::{RunError, RunId, WriteOperation, build_runs, read_run_stream};
+use crate::runs::{RunError, RunId, WriteOperation};
+use crate::runs as runs;
 use crate::storage::ObjectStore;
 
 // Define a type alias for the boxed stream
@@ -56,7 +57,7 @@ pub async fn execute(
             });
 
             // Box the stream to unify the type
-            let boxed_stream: RunStream = Box::pin(read_run_stream(bytes_stream));
+            let boxed_stream: RunStream = Box::pin(runs::read_run_stream(bytes_stream));
             (seq_no, boxed_stream)
         })
         .collect::<Vec<_>>();
@@ -89,7 +90,7 @@ pub async fn execute(
                         })
                     });
 
-                    Box::pin(read_run_stream(adapted_stream))
+                    Box::pin(runs::read_run_stream(adapted_stream))
                 }
             })
             .flatten();
@@ -98,8 +99,8 @@ pub async fn execute(
         run_streams.push((metadata::SeqNo::from(0), Box::pin(level0_streams)));
     }
 
-    let merged_stream = merge(run_streams);
-    let run_stream = build_runs(merged_stream);
+    let merged_stream = k_way::merge(run_streams);
+    let run_stream = runs::build_runs(merged_stream);
 
     let mut new_runs = Vec::new();
 
