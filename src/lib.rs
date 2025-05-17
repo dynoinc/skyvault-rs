@@ -31,6 +31,7 @@ mod pod_watcher;
 mod runs;
 #[cfg(test)]
 pub mod test_utils;
+mod tracing_utils;
 
 /// Error types for the skyvault2 library.
 #[derive(thiserror::Error, Debug)]
