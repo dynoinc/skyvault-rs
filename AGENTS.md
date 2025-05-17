@@ -5,8 +5,6 @@ pull requests or update the code.
 
 ## Formatting and Linting
 
-- If you modify any `.proto` files under `proto/`, run `buf generate` to update
-  the generated code in `gen/`.
 - Format Rust code before committing:
   ```bash
   cargo fmt --all
@@ -15,13 +13,6 @@ pull requests or update the code.
   ```bash
   cargo clippy -- -D warnings
   ```
-- When editing Python code in `smoke-tests/` or `skycli/`, format and lint each
-  directory with ruff:
-  ```bash
-  uv run ruff format .
-  uv run ruff check .
-  ```
-- For Helm chart changes, ensure `helm lint charts/skyvault` succeeds.
 
 ## Tests
 
