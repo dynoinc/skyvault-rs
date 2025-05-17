@@ -48,11 +48,28 @@ impl MyWriter {
         Self { tx, table_cache }
     }
 
+    #[cfg(test)]
+    pub fn new_for_test(
+        metadata: metadata::MetadataStore,
+        storage: storage::ObjectStore,
+        table_cache: metadata::TableCache,
+    ) -> Self {
+        let (tx, rx) = tokio::sync::mpsc::channel(100);
+
+        tokio::spawn(async move {
+            Self::process_batch_queue(metadata, storage, rx).await;
+        });
+
+        Self { tx, table_cache }
+    }
+
     async fn process_batch_queue(
         metadata: metadata::MetadataStore,
         storage: storage::ObjectStore,
         mut rx: tokio::sync::mpsc::Receiver<WriteReq>,
     ) {
+        let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(4));
+
         while let Some(item) = rx.recv().await {
             let mut ops_count = item.ops.len();
             let mut ops = vec![item.ops];
@@ -89,19 +106,26 @@ impl MyWriter {
                 }
             }
 
-            match Self::process_batch(&metadata, &storage, ops).await {
-                Ok(seq_no) => {
-                    for item in tx.drain(..) {
-                        let _ = item.send(Ok(seq_no));
-                    }
-                },
-                Err(e) => {
-                    let status = Status::internal(e.to_string());
-                    for item in tx.drain(..) {
-                        let _ = item.send(Err(status.clone()));
-                    }
-                },
-            }
+            let permit = semaphore.clone().acquire_owned().await.unwrap();
+            let metadata_clone = metadata.clone();
+            let storage_clone = storage.clone();
+            tokio::spawn(async move {
+                let result = Self::process_batch(&metadata_clone, &storage_clone, ops).await;
+                match result {
+                    Ok(seq_no) => {
+                        for item in tx.drain(..) {
+                            let _ = item.send(Ok(seq_no));
+                        }
+                    },
+                    Err(e) => {
+                        let status = Status::internal(e.to_string());
+                        for item in tx.drain(..) {
+                            let _ = item.send(Err(status.clone()));
+                        }
+                    },
+                }
+                drop(permit);
+            });
         }
 
         tracing::info!("Batch queue closed");
@@ -193,6 +217,15 @@ mod tests {
     use crate::requires_docker;
     use crate::test_utils::{setup_test_db, setup_test_object_store};
 
+    use crate::metadata::{MockMetadataStoreTrait, SeqNo, TableCache, TableID, TableName};
+    use crate::storage::MockObjectStoreTrait;
+    use std::collections::HashMap;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+    use std::time::Duration;
+
     #[tokio::test]
     async fn test_writer_service() {
         requires_docker!();
@@ -226,5 +259,82 @@ mod tests {
 
         let seq_no = response.into_inner().seq_no;
         assert_eq!(seq_no, 1);
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_batch_upload_limit() {
+        let mut mock_meta = MockMetadataStoreTrait::new();
+        mock_meta
+            .expect_append_wal()
+            .times(8)
+            .returning(|_runs| Box::pin(async { Ok(SeqNo::from(1)) }));
+
+        let active = Arc::new(AtomicUsize::new(0));
+        let max_active = Arc::new(AtomicUsize::new(0));
+        let delay = Duration::from_millis(1000);
+
+        let mut mock_store = MockObjectStoreTrait::new();
+        let active_clone = active.clone();
+        let max_clone = max_active.clone();
+        mock_store
+            .expect_put_run()
+            .times(8)
+            .returning(move |_id, _data| {
+                let active = active_clone.clone();
+                let max = max_clone.clone();
+                Box::pin(async move {
+                    let current = active.fetch_add(1, Ordering::SeqCst) + 1;
+                    loop {
+                        let prev = max.load(Ordering::SeqCst);
+                        if current > prev {
+                            if max
+                                .compare_exchange(prev, current, Ordering::SeqCst, Ordering::SeqCst)
+                                .is_ok()
+                            {
+                                break;
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+                    tokio::time::sleep(delay).await;
+                    active.fetch_sub(1, Ordering::SeqCst);
+                    Ok(())
+                })
+            });
+
+        let table_cache = TableCache::new_for_test(HashMap::from([(
+            TableName::from("tbl".to_string()),
+            (TableID::from(1_i64), TableConfig::default()),
+        )]));
+
+        let writer = MyWriter::new_for_test(Arc::new(mock_meta), Arc::new(mock_store), table_cache);
+
+        let writer = Arc::new(writer);
+
+        let mut handles = Vec::new();
+        for i in 0..8 {
+            let w = writer.clone();
+            handles.push(tokio::spawn(async move {
+                w.write_batch(Request::new(proto::WriteBatchRequest {
+                    tables: vec![proto::TableWriteBatchRequest {
+                        table_name: "tbl".to_string(),
+                        items: vec![proto::WriteBatchItem {
+                            key: format!("key{i}"),
+                            operation: Some(proto::write_batch_item::Operation::Value(vec![1])),
+                        }],
+                    }],
+                }))
+                .await
+                .unwrap();
+            }));
+            tokio::time::sleep(Duration::from_millis(260)).await;
+        }
+
+        for h in handles {
+            h.await.unwrap();
+        }
+
+        assert_eq!(max_active.load(Ordering::SeqCst), 4);
     }
 }
