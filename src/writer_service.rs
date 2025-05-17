@@ -7,7 +7,7 @@ use tonic::{Request, Response, Status};
 use crate::metadata::TableName;
 use crate::proto::{self};
 use crate::runs::{RunError as RunsError, RunId, WriteOperation};
-use crate::{metadata, runs, storage};
+use crate::{metadata, runs, storage, tracing_utils};
 
 #[derive(Error, Debug)]
 pub enum WriterServiceError {
@@ -62,6 +62,7 @@ impl MyWriter {
         Self { tx, table_cache }
     }
 
+    #[tracing::instrument(skip(metadata, storage, rx), level = "debug")]
     async fn process_batch_queue(
         metadata: metadata::MetadataStore,
         storage: storage::ObjectStore,
@@ -130,6 +131,7 @@ impl MyWriter {
         tracing::info!("Batch queue closed");
     }
 
+    #[tracing::instrument(skip(metadata, storage, batch), level = "debug", fields(batch_size = batch.len()))]
     async fn process_batch(
         metadata: &metadata::MetadataStore,
         storage: &storage::ObjectStore,
@@ -158,6 +160,13 @@ impl MyWriter {
 
 #[tonic::async_trait]
 impl proto::writer_service_server::WriterService for MyWriter {
+    #[tracing::instrument(
+        skip(self, req),
+        fields(
+            req_id = %tracing_utils::request_id(&req).unwrap_or_default(),
+            table_count = req.get_ref().tables.len()
+        )
+    )]
     async fn write_batch(
         &self,
         req: Request<proto::WriteBatchRequest>,

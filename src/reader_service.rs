@@ -13,7 +13,7 @@ use crate::metadata::{self, MetadataStore, SeqNo, TableCache};
 use crate::pod_watcher::{self, PodChange, PodWatcherError};
 use crate::runs::{RunError, Stats, WriteOperation};
 use crate::storage::ObjectStore;
-use crate::{k_way, proto};
+use crate::{k_way, proto, tracing_utils};
 
 #[derive(Debug, Error)]
 pub enum ReaderServiceError {
@@ -578,6 +578,14 @@ impl proto::reader_service_server::ReaderService for MyReader {
         Ok(Response::new(response))
     }
 
+    #[tracing::instrument(
+        skip(self, request),
+        fields(
+            req_id = %tracing_utils::request_id(&request).unwrap_or_default(),
+            table_name = %request.get_ref().table_name,
+            max_results = request.get_ref().max_results
+        )
+    )]
     async fn scan(
         &self,
         request: Request<proto::ScanRequest>,

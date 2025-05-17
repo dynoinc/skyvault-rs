@@ -12,7 +12,7 @@ use crate::metadata::{
 };
 use crate::runs::Stats;
 use crate::storage::{self, ObjectStore};
-use crate::{k8s, metadata, proto};
+use crate::{k8s, metadata, proto, tracing_utils};
 
 #[derive(Clone)]
 pub struct MyOrchestrator {
@@ -65,6 +65,7 @@ impl MyOrchestrator {
 }
 
 impl MyOrchestrator {
+    #[tracing::instrument(skip(self), level = "debug")]
     pub async fn run(&self) {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
 
@@ -208,6 +209,7 @@ impl MyOrchestrator {
         }
     }
 
+    #[tracing::instrument(skip(self, state), level = "debug", fields(seq_no = %state.seq_no))]
     async fn persist_snapshot(
         &self,
         state: Arc<Snapshot>,
@@ -225,6 +227,7 @@ impl MyOrchestrator {
         Ok((snapshot_id, state.seq_no))
     }
 
+    #[tracing::instrument(skip(self), level = "info", fields(job_id = %job_id, job_type))]
     async fn create_k8s_job(&self, job_id: String, job_type: &str) -> Result<(), kube::Error> {
         use k8s_openapi::api::batch::v1::Job;
         use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
@@ -339,10 +342,15 @@ impl MyOrchestrator {
 
 #[tonic::async_trait]
 impl proto::orchestrator_service_server::OrchestratorService for MyOrchestrator {
+    #[tracing::instrument(
+        skip(self, request),
+        fields(req_id = %tracing_utils::request_id(&request).unwrap_or_default())
+    )]
     async fn dump_snapshot(
         &self,
-        _request: Request<proto::DumpSnapshotRequest>,
+        request: Request<proto::DumpSnapshotRequest>,
     ) -> Result<Response<proto::DumpSnapshotResponse>, Status> {
+        let _ = &request;
         let state = self.forest.get_state();
 
         Ok(Response::new(proto::DumpSnapshotResponse {
@@ -350,6 +358,13 @@ impl proto::orchestrator_service_server::OrchestratorService for MyOrchestrator 
         }))
     }
 
+    #[tracing::instrument(
+        skip(self, request),
+        fields(
+            req_id = %tracing_utils::request_id(&request).unwrap_or_default(),
+            from_seq_no = request.get_ref().from_seq_no
+        )
+    )]
     async fn dump_changelog(
         &self,
         request: Request<proto::DumpChangelogRequest>,
@@ -365,6 +380,10 @@ impl proto::orchestrator_service_server::OrchestratorService for MyOrchestrator 
         }))
     }
 
+    #[tracing::instrument(
+        skip(self, request),
+        fields(req_id = %tracing_utils::request_id(&request).unwrap_or_default())
+    )]
     async fn kick_off_job(
         &self,
         request: Request<proto::KickOffJobRequest>,
@@ -399,6 +418,10 @@ impl proto::orchestrator_service_server::OrchestratorService for MyOrchestrator 
         }))
     }
 
+    #[tracing::instrument(
+        skip(self, request),
+        fields(req_id = %tracing_utils::request_id(&request).unwrap_or_default(), job_id = request.get_ref().job_id)
+    )]
     async fn get_job_status(
         &self,
         request: Request<proto::GetJobStatusRequest>,
@@ -414,10 +437,15 @@ impl proto::orchestrator_service_server::OrchestratorService for MyOrchestrator 
         }))
     }
 
+    #[tracing::instrument(
+        skip(self, request),
+        fields(req_id = %tracing_utils::request_id(&request).unwrap_or_default())
+    )]
     async fn persist_snapshot(
         &self,
-        _request: Request<proto::PersistSnapshotRequest>,
+        request: Request<proto::PersistSnapshotRequest>,
     ) -> Result<Response<proto::PersistSnapshotResponse>, Status> {
+        let _ = &request;
         let state = self.forest.get_state();
         let (snapshot_id, seq_no) = match self.persist_snapshot(state).await {
             Ok((snapshot_id, seq_no)) => (snapshot_id, seq_no),
@@ -430,6 +458,13 @@ impl proto::orchestrator_service_server::OrchestratorService for MyOrchestrator 
         }))
     }
 
+    #[tracing::instrument(
+        skip(self, request),
+        fields(
+            req_id = %tracing_utils::request_id(&request).unwrap_or_default(),
+            table_name = %request.get_ref().table_name
+        )
+    )]
     async fn create_table(
         &self,
         request: Request<proto::CreateTableRequest>,
@@ -451,6 +486,13 @@ impl proto::orchestrator_service_server::OrchestratorService for MyOrchestrator 
         }))
     }
 
+    #[tracing::instrument(
+        skip(self, request),
+        fields(
+            req_id = %tracing_utils::request_id(&request).unwrap_or_default(),
+            table_name = %request.get_ref().table_name
+        )
+    )]
     async fn drop_table(
         &self,
         request: Request<proto::DropTableRequest>,
@@ -464,6 +506,13 @@ impl proto::orchestrator_service_server::OrchestratorService for MyOrchestrator 
         }
     }
 
+    #[tracing::instrument(
+        skip(self, request),
+        fields(
+            req_id = %tracing_utils::request_id(&request).unwrap_or_default(),
+            table_name = %request.get_ref().table_name
+        )
+    )]
     async fn get_table(
         &self,
         request: Request<proto::GetTableRequest>,
@@ -485,10 +534,15 @@ impl proto::orchestrator_service_server::OrchestratorService for MyOrchestrator 
         }))
     }
 
+    #[tracing::instrument(
+        skip(self, request),
+        fields(req_id = %tracing_utils::request_id(&request).unwrap_or_default())
+    )]
     async fn list_tables(
         &self,
-        _request: Request<proto::ListTablesRequest>,
+        request: Request<proto::ListTablesRequest>,
     ) -> Result<Response<proto::ListTablesResponse>, Status> {
+        let _ = &request;
         let tables = match self.metadata.list_tables().await {
             Ok(tables) => tables,
             Err(e) => return Err(Status::internal(e.to_string())),
