@@ -100,7 +100,7 @@ impl ObjectStoreTrait for S3ObjectStore {
             .client
             .put_object()
             .bucket(self.bucket_name.clone())
-            .key(format!("snapshots/{}", snapshot_id))
+            .key(format!("snapshots/{snapshot_id}"))
             .body(byte_stream)
             .send()
             .await
@@ -117,7 +117,7 @@ impl ObjectStoreTrait for S3ObjectStore {
             .client
             .put_object()
             .bucket(self.bucket_name.clone())
-            .key(format!("runs/{}", run_id))
+            .key(format!("runs/{run_id}"))
             .body(byte_stream)
             .if_none_match("*".to_string())
             .send()
@@ -129,7 +129,7 @@ impl ObjectStoreTrait for S3ObjectStore {
     }
 
     async fn get_snapshot(&self, snapshot_id: SnapshotID) -> Result<Bytes, StorageError> {
-        let key = format!("snapshots/{}", snapshot_id);
+        let key = format!("snapshots/{snapshot_id}");
         let response = match self
             .client
             .get_object()
@@ -154,7 +154,7 @@ impl ObjectStoreTrait for S3ObjectStore {
     }
 
     async fn get_run(&self, run_id: RunId) -> Result<ByteStream, StorageError> {
-        let key = format!("runs/{}", run_id);
+        let key = format!("runs/{run_id}");
         let response = match self
             .client
             .get_object()

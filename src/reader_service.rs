@@ -121,8 +121,7 @@ impl ConnectionManager for ConsistentHashCM {
             Ok(conn) => conn,
             Err(e) => {
                 return Err(Status::internal(format!(
-                    "No connection to reader service pod for run: {}",
-                    e
+                    "No connection to reader service pod for run: {e}"
                 )));
             },
         };
@@ -150,8 +149,7 @@ impl ConnectionManager for ConsistentHashCM {
             Ok(conn) => conn,
             Err(e) => {
                 return Err(Status::internal(format!(
-                    "No connection to reader service pod for scan: {}",
-                    e
+                    "No connection to reader service pod for scan: {e}"
                 )));
             },
         };
@@ -226,7 +224,7 @@ impl MyReader {
             .get_table_id(table_name.clone())
             .await
             .map_err(|e| Status::internal(e.to_string()))?;
-        let table_prefix_len = format!("{}.", table_id).len();
+        let table_prefix_len = format!("{table_id}.").len();
 
         let mut responses = Vec::new();
         if !forest_state.wal.is_empty() {
@@ -369,7 +367,7 @@ impl MyReader {
             .get_table_id(table_name.clone())
             .await
             .map_err(|e| Status::internal(e.to_string()))?;
-        let table_prefix_len = format!("{}.", table_id).len();
+        let table_prefix_len = format!("{table_id}.").len();
 
         let mut streams_to_merge = Vec::new();
         let mut seq_counter = i64::MAX;
@@ -522,7 +520,7 @@ impl MyReader {
             .take(request.max_results as usize)
             .map_err(|run_error: RunError| {
                 error!("Error during k-way merge or run scan: {}", run_error);
-                Status::internal(format!("Scan failed: {}", run_error))
+                Status::internal(format!("Scan failed: {run_error}"))
             })
             .try_collect::<Vec<_>>()
             .await?;

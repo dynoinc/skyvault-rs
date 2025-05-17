@@ -3,10 +3,17 @@ use aws_sdk_s3::config::Credentials;
 use http::Request;
 use k8s_openapi::api::core::v1::Secret;
 use kube::{Api, Client};
+use tokio::fs;
 
 pub const AWS_SECRET_NAME: &str = "skyvault-aws-credentials";
 pub const AWS_ACCESS_KEY_ID_KEY: &str = "AWS_ACCESS_KEY_ID";
 pub const AWS_SECRET_ACCESS_KEY_KEY: &str = "AWS_SECRET_ACCESS_KEY";
+
+pub async fn get_namespace() -> std::result::Result<String, std::io::Error> {
+    let namespace_path = "/var/run/secrets/kubernetes.io/serviceaccount/namespace";
+    let current_namespace = fs::read_to_string(namespace_path).await?.trim().to_string();
+    Ok(current_namespace)
+}
 
 pub async fn create_k8s_client() -> std::result::Result<Client, kube::Error> {
     let client = Client::try_default().await?;
@@ -48,12 +55,11 @@ pub async fn get_aws_credentials(client: Client, namespace: &str) -> AnyhowResul
             })?;
 
             let access_key = String::from_utf8(access_bytes.0.clone()).context(format!(
-                "Failed to decode key '{}' from secret '{}'",
-                AWS_ACCESS_KEY_ID_KEY, AWS_SECRET_NAME
+                "Failed to decode key '{AWS_ACCESS_KEY_ID_KEY}' from secret '{AWS_SECRET_NAME}'"
             ))?;
             let secret_key = String::from_utf8(secret_bytes.0.clone()).context(format!(
-                "Failed to decode key '{}' from secret '{}'",
-                AWS_SECRET_ACCESS_KEY_KEY, AWS_SECRET_NAME
+                "Failed to decode key '{AWS_SECRET_ACCESS_KEY_KEY}' from secret \
+                 '{AWS_SECRET_NAME}'"
             ))?;
 
             Ok(Credentials::new(access_key, secret_key, None, None, "k8s"))

@@ -639,8 +639,7 @@ impl PostgresMetadataStore {
             if matches!(e, sqlx::Error::RowNotFound) {
                 // Map specific error for clarity
                 sqlx::Error::Protocol(format!(
-                    "Job {} update failed or not in pending state.",
-                    job_id
+                    "Job {job_id} update failed or not in pending state."
                 ))
             } else {
                 e // Propagate other DB errors
@@ -952,7 +951,7 @@ impl MetadataStoreTrait for PostgresMetadataStore {
         .await
         .map_err(|e| {
             if matches!(e, sqlx::Error::RowNotFound) {
-                MetadataError::InvalidJobState(format!("Job {} is not in pending state", job_id))
+                MetadataError::InvalidJobState(format!("Job {job_id} is not in pending state"))
             } else {
                 MetadataError::DatabaseError(e) // Map other errors
             }

@@ -134,7 +134,7 @@ pub async fn execute(
                 .tree
                 .get(&metadata::Level::zero())
                 .into_iter()
-                .flat_map(|level0| level0.iter().map(|(_, metadata)| metadata.id.clone())),
+                .flat_map(|level0| level0.values().map(|metadata| metadata.id.clone())),
         )
         .collect();
 

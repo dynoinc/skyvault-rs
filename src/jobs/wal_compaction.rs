@@ -80,10 +80,10 @@ pub async fn execute(
             })?;
 
             let table_id = TableID::from(table_id_str.parse::<i64>().map_err(|e| {
-                JobError::InvalidInput(format!("Invalid table ID '{}': {}", table_id_str, e))
+                JobError::InvalidInput(format!("Invalid table ID '{table_id_str}': {e}"))
             })?);
 
-            let table_prefix_len = format!("{}.", table_id).len();
+            let table_prefix_len = format!("{table_id}.").len();
             let new_table = match current_state
                 .as_ref()
                 .map(|(current_table_id, _, _)| current_table_id)
@@ -114,7 +114,7 @@ pub async fn execute(
                 // Wait for task to complete
                 if let Ok((run_id, stats)) = task
                     .await
-                    .map_err(|e| JobError::Internal(format!("Table task failed: {}", e)))?
+                    .map_err(|e| JobError::Internal(format!("Table task failed: {e}")))?
                 {
                     // Add the completed run to our results
                     table_runs.push((run_id, old_table, stats));
@@ -133,7 +133,7 @@ pub async fn execute(
                 })
             })
             .map(|item_result| {
-                item_result.map_err(|e| RunError::Format(format!("Channel receive error: {}", e)))
+                item_result.map_err(|e| RunError::Format(format!("Channel receive error: {e}")))
             }); // Handle channel error -> RunError::Format
 
             // Start task to build run for this table
@@ -189,7 +189,7 @@ pub async fn execute(
         // Wait for task to complete
         if let Ok((run_id, stats)) = task
             .await
-            .map_err(|e| JobError::Internal(format!("Table task failed: {}", e)))?
+            .map_err(|e| JobError::Internal(format!("Table task failed: {e}")))?
         {
             // Add the completed run to our results
             table_runs.push((run_id, old_table, stats));

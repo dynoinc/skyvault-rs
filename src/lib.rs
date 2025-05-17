@@ -101,8 +101,8 @@ impl PostgresConfig {
                 e
             )
             .context(format!(
-                "Attempting to read secret: '{}', key: '{}' in namespace: '{}'",
-                PASSWORD_SECRET_NAME, PASSWORD_KEY, namespace
+                "Attempting to read secret: '{PASSWORD_SECRET_NAME}', key: '{PASSWORD_KEY}' in \
+                 namespace: '{namespace}'"
             ))),
         }
     }

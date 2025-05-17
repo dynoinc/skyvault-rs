@@ -105,7 +105,7 @@ impl From<proto::Snapshot> for Snapshot {
                 Some(proto::run_metadata::BelongsTo::WalSeqNo(seq_no)) => {
                     wal.insert(SeqNo::from(seq_no), run.into());
                 },
-                Some(other) => panic!("Invalid belongs to for wal: {:?}", other),
+                Some(other) => panic!("Invalid belongs to for wal: {other:?}"),
                 None => panic!("Belongs to is not present"),
             }
         }

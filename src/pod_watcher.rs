@@ -1,5 +1,3 @@
-use std::fs;
-
 use async_stream::stream;
 use futures::{Stream, StreamExt, pin_mut};
 use k8s_openapi::api::core::v1::Pod;
@@ -34,11 +32,7 @@ pub async fn watch()
 -> Result<impl Stream<Item = Result<PodChange, PodWatcherError>>, PodWatcherError> {
     // Create Kubernetes client
     let client = k8s::create_k8s_client().await?;
-
-    // Read namespace from the mounted ServiceAccount secret
-    let namespace = fs::read_to_string("/var/run/secrets/kubernetes.io/serviceaccount/namespace")?
-        .trim()
-        .to_string();
+    let namespace = k8s::get_namespace().await?;
 
     // Get pod name from hostname
     let pod_name = hostname::get()?.to_string_lossy().into_owned();
@@ -55,7 +49,7 @@ pub async fn watch()
         .clone();
 
     // Create label selector for pods with matching instance-id
-    let label_selector = format!("app.kubernetes.io/instance-id={}", instance_id);
+    let label_selector = format!("app.kubernetes.io/instance-id={instance_id}");
     let raw_stream = watcher(
         pods_api,
         watcher::Config::default()

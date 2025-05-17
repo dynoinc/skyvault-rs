@@ -242,7 +242,7 @@ impl MyOrchestrator {
         let jobs: Api<Job> = Api::default_namespaced(self.k8s_client.clone());
 
         // Create a Kubernetes job specification
-        let job_name = format!("{}-{}", job_type, job_id);
+        let job_name = format!("{job_type}-{job_id}");
         let job = Job {
             metadata: ObjectMeta {
                 name: Some(job_name.clone()),
@@ -308,6 +308,16 @@ impl MyOrchestrator {
                                     value_from: None,
                                 },
                                 k8s_openapi::api::core::v1::EnvVar {
+                                    name: "AWS_ENDPOINT_URL_S3".to_string(),
+                                    value: std::env::var("AWS_ENDPOINT_URL_S3").ok(),
+                                    value_from: None,
+                                },
+                                k8s_openapi::api::core::v1::EnvVar {
+                                    name: "RUST_LOG".to_string(),
+                                    value: std::env::var("RUST_LOG").ok(),
+                                    value_from: None,
+                                },
+                                k8s_openapi::api::core::v1::EnvVar {
                                     name: "AWS_ACCESS_KEY_ID".to_string(),
                                     value: None,
                                     value_from: Some(k8s_openapi::api::core::v1::EnvVarSource {
@@ -334,11 +344,6 @@ impl MyOrchestrator {
                                         ),
                                         ..Default::default()
                                     }),
-                                },
-                                k8s_openapi::api::core::v1::EnvVar {
-                                    name: "AWS_ENDPOINT_URL_S3".to_string(),
-                                    value: std::env::var("AWS_ENDPOINT_URL_S3").ok(),
-                                    value_from: None,
                                 },
                             ]),
                             ..k8s_openapi::api::core::v1::Container::default()
@@ -423,7 +428,7 @@ impl proto::orchestrator_service_server::OrchestratorService for MyOrchestrator 
 
         let job_id = match r {
             Ok(job_id) => job_id,
-            Err(e) => return Err(Status::internal(format!("Failed to schedule job: {}", e))),
+            Err(e) => return Err(Status::internal(format!("Failed to schedule job: {e}"))),
         };
 
         Ok(Response::new(proto::KickOffJobResponse {

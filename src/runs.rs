@@ -287,7 +287,7 @@ pub fn search_run(run_data: &[u8], search_key: &str) -> SearchResult {
     // Read and check version
     let version = cursor.read_u8().expect("Failed to read version byte");
     if version != CURRENT_VERSION {
-        panic!("Unsupported version: {}", version);
+        panic!("Unsupported version: {version}");
     }
 
     // Iterate through entries
@@ -299,7 +299,7 @@ pub fn search_run(run_data: &[u8], search_key: &str) -> SearchResult {
 
         let marker = cursor.read_u8().expect("Failed to read marker byte");
         if marker != MARKER_PUT && marker != MARKER_DELETE {
-            panic!("Invalid marker byte: {}", marker);
+            panic!("Invalid marker byte: {marker}");
         }
 
         // Check if we have enough data to read the key length
@@ -383,7 +383,7 @@ pub fn search_run(run_data: &[u8], search_key: &str) -> SearchResult {
                         SearchResult::Found(value)
                     },
                     MARKER_DELETE => SearchResult::Tombstone,
-                    _ => panic!("Invalid marker byte: {}", marker),
+                    _ => panic!("Invalid marker byte: {marker}"),
                 };
             },
             std::cmp::Ordering::Greater => {
@@ -507,7 +507,7 @@ where
                     yield Ok(WriteOperation::Delete(key));
                 },
                 _ => {
-                    yield Err(RunError::Format(format!("Invalid marker byte: {}", marker)));
+                    yield Err(RunError::Format(format!("Invalid marker byte: {marker}")));
                     return;
                 }
             }

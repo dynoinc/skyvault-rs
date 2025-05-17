@@ -43,10 +43,7 @@ impl proto::cache_service_server::CacheService for MyCache {
             let run = match self.storage_cache.get_run(RunId(run_id.clone())).await {
                 Ok(run) => run,
                 Err(e) => {
-                    return Err(Status::internal(format!(
-                        "Error getting run {}: {}",
-                        run_id, e
-                    )));
+                    return Err(Status::internal(format!("Error getting run {run_id}: {e}")));
                 },
             };
 
@@ -98,8 +95,7 @@ impl proto::cache_service_server::CacheService for MyCache {
                 Ok(run_data) => run_data,
                 Err(e) => {
                     return Err(Status::internal(format!(
-                        "Error getting run {}: {}",
-                        run_id_str, e
+                        "Error getting run {run_id_str}: {e}"
                     )));
                 },
             };
@@ -134,7 +130,7 @@ impl proto::cache_service_server::CacheService for MyCache {
 
         while let Some(result) = merged_stream.next().await {
             let write_op =
-                result.map_err(|e| Status::internal(format!("Merge stream error: {}", e)))?;
+                result.map_err(|e| Status::internal(format!("Merge stream error: {e}")))?;
 
             count += if matches!(write_op, WriteOperation::Put(_, _)) {
                 1

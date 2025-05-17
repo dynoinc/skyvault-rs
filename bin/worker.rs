@@ -7,9 +7,8 @@ use clap::Parser;
 use rustls::crypto::aws_lc_rs;
 use skyvault::metadata::JobId;
 use skyvault::{PostgresConfig, jobs, k8s, metadata, storage};
-use tokio::fs;
 use tracing::info;
-use tracing::level_filters::LevelFilter;
+use tracing_subscriber::EnvFilter;
 
 #[derive(Debug, Parser)]
 #[command(name = "worker", about = "A worker for skyvault.")]
@@ -28,13 +27,17 @@ pub struct Config {
 fn parse_job_id(s: &str) -> Result<JobId, String> {
     s.parse::<i64>()
         .map(JobId::from)
-        .map_err(|e| format!("Failed to parse job_id '{}' as integer: {}", s, e))
+        .map_err(|e| format!("Failed to parse job_id '{s}' as integer: {e}"))
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
-        .with_max_level(LevelFilter::INFO)
+        .compact()
+        .with_file(true)
+        .with_line_number(true)
+        .with_thread_ids(true)
+        .with_env_filter(EnvFilter::from_default_env())
         .init();
 
     aws_lc_rs::default_provider()
@@ -45,21 +48,12 @@ async fn main() -> Result<()> {
     let version = env!("CARGO_PKG_VERSION");
 
     // Initialize K8s client
+    let current_namespace = k8s::get_namespace()
+        .await
+        .context("Failed to get namespace")?;
     let k8s_client = k8s::create_k8s_client()
         .await
         .context("Failed to create Kubernetes client")?;
-
-    // Determine namespace - we're always running in Kubernetes
-    let namespace_path = "/var/run/secrets/kubernetes.io/serviceaccount/namespace";
-    let current_namespace = fs::read_to_string(namespace_path)
-        .await
-        .context(format!(
-            "Failed to read namespace from {}. This worker must run within a Kubernetes pod with \
-             a service account.",
-            namespace_path
-        ))?
-        .trim()
-        .to_string();
 
     info!(config = ?config, version = version, job_id = ?config.job_id, namespace = %current_namespace, "Starting worker");
 
