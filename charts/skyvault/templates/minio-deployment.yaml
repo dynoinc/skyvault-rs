@@ -33,9 +33,15 @@ spec:
               protocol: TCP
           env:
             - name: MINIO_ROOT_USER
-              value: {{ .Values.common.env.AWS_ACCESS_KEY_ID | quote }}
+              valueFrom:
+                secretKeyRef:
+                  name: skyvault-aws-credentials
+                  key: AWS_ACCESS_KEY_ID
             - name: MINIO_ROOT_PASSWORD
-              value: {{ .Values.common.env.AWS_SECRET_ACCESS_KEY | quote }}
+              valueFrom:
+                secretKeyRef:
+                  name: skyvault-aws-credentials
+                  key: AWS_SECRET_ACCESS_KEY
           args:
             - server
             - /data # MinIO still needs a path, even without PVC

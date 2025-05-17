@@ -37,8 +37,10 @@ spec:
           env:
             # Common environment variables
             {{- range $key, $value := $.Values.common.env }}
+            {{- if not (or (eq $key "AWS_ACCESS_KEY_ID") (eq $key "AWS_SECRET_ACCESS_KEY")) }}
             - name: {{ $key }}
               value: {{ $value | quote }}
+            {{- end }}
             {{- end }}
             
             # Instance-specific environment variables

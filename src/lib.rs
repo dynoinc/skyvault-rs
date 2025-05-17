@@ -25,6 +25,7 @@ pub mod writer_service;
 mod consistent_hashring;
 mod forest;
 pub mod jobs;
+pub mod k8s;
 mod k_way;
 pub mod metadata;
 mod pod_watcher;
