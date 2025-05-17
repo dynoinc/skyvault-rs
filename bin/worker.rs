@@ -2,9 +2,10 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use aws_sdk_s3::Client as S3Client;
+use aws_sdk_s3::config::SharedCredentialsProvider;
 use clap::Parser;
-use kube::Client;
 use rustls::crypto::aws_lc_rs;
+use skyvault::k8s;
 use skyvault::metadata::JobId;
 use skyvault::{PostgresConfig, jobs, metadata, storage};
 use tokio::fs;
@@ -45,7 +46,7 @@ async fn main() -> Result<()> {
     let version = env!("CARGO_PKG_VERSION");
 
     // Initialize K8s client
-    let k8s_client = Client::try_default()
+    let k8s_client = k8s::create_k8s_client()
         .await
         .context("Failed to create Kubernetes client")?;
 
@@ -74,7 +75,13 @@ async fn main() -> Result<()> {
     let metadata_store = Arc::new(metadata::PostgresMetadataStore::new(metadata_url).await?);
 
     // Create S3 client with path style URLs
-    let aws_config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
+    let aws_creds = k8s::get_aws_credentials(k8s_client.clone(), &current_namespace)
+        .await
+        .context("Failed to load AWS credentials from Kubernetes secret")?;
+    let aws_config = aws_config::defaults(aws_config::BehaviorVersion::latest())
+        .credentials_provider(SharedCredentialsProvider::new(aws_creds))
+        .load()
+        .await;
     let s3_config = aws_sdk_s3::config::Builder::from(&aws_config)
         .force_path_style(true)
         .build();

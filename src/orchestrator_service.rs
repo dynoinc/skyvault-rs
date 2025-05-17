@@ -12,7 +12,7 @@ use crate::metadata::{
 };
 use crate::runs::Stats;
 use crate::storage::{self, ObjectStore};
-use crate::{Config, metadata, proto};
+use crate::{Config, k8s, metadata, proto};
 
 #[derive(Clone)]
 pub struct MyOrchestrator {
@@ -49,7 +49,7 @@ impl MyOrchestrator {
         config: Config,
     ) -> Result<Self, OrchestratorError> {
         let forest = ForestImpl::watch(metadata.clone(), storage.clone()).await?;
-        let k8s_client = kube::Client::try_default().await?;
+        let k8s_client = k8s::create_k8s_client().await?;
         let orchestrator = Self {
             metadata,
             storage,
@@ -309,13 +309,31 @@ impl MyOrchestrator {
                                 },
                                 k8s_openapi::api::core::v1::EnvVar {
                                     name: "AWS_ACCESS_KEY_ID".to_string(),
-                                    value: std::env::var("AWS_ACCESS_KEY_ID").ok(),
-                                    value_from: None,
+                                    value: None,
+                                    value_from: Some(k8s_openapi::api::core::v1::EnvVarSource {
+                                        secret_key_ref: Some(
+                                            k8s_openapi::api::core::v1::SecretKeySelector {
+                                                name: k8s::AWS_SECRET_NAME.to_string(),
+                                                key: k8s::AWS_ACCESS_KEY_ID_KEY.to_string(),
+                                                ..Default::default()
+                                            },
+                                        ),
+                                        ..Default::default()
+                                    }),
                                 },
                                 k8s_openapi::api::core::v1::EnvVar {
                                     name: "AWS_SECRET_ACCESS_KEY".to_string(),
-                                    value: std::env::var("AWS_SECRET_ACCESS_KEY").ok(),
-                                    value_from: None,
+                                    value: None,
+                                    value_from: Some(k8s_openapi::api::core::v1::EnvVarSource {
+                                        secret_key_ref: Some(
+                                            k8s_openapi::api::core::v1::SecretKeySelector {
+                                                name: k8s::AWS_SECRET_NAME.to_string(),
+                                                key: k8s::AWS_SECRET_ACCESS_KEY_KEY.to_string(),
+                                                ..Default::default()
+                                            },
+                                        ),
+                                        ..Default::default()
+                                    }),
                                 },
                                 k8s_openapi::api::core::v1::EnvVar {
                                     name: "AWS_ENDPOINT_URL_S3".to_string(),
