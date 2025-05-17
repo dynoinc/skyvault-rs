@@ -2,7 +2,6 @@ use std::fs;
 
 use async_stream::stream;
 use futures::{Stream, StreamExt, pin_mut};
-
 use k8s_openapi::api::core::v1::Pod;
 use kube::Client;
 use kube::api::Api;

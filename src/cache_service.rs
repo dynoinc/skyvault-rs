@@ -5,9 +5,8 @@ use thiserror::Error;
 use tonic::{Request, Response, Status};
 
 use crate::runs::{RunError, RunId, SearchResult, WriteOperation};
-use crate::runs as runs;
 use crate::storage::{self, StorageCache};
-use crate::{k_way, metadata, proto};
+use crate::{k_way, metadata, proto, runs};
 
 #[derive(Debug, Error)]
 pub enum CacheServiceError {
@@ -104,7 +103,8 @@ impl proto::cache_service_server::CacheService for MyCache {
                     )));
                 },
             };
-            let stream = runs::read_run_stream(futures::stream::once(futures::future::ok(run_data)));
+            let stream =
+                runs::read_run_stream(futures::stream::once(futures::future::ok(run_data)));
 
             let filtered_stream = {
                 let exclusive_start_key = exclusive_start_key.clone();
@@ -162,10 +162,9 @@ mod tests {
     use super::*;
     use crate::proto::cache_service_server::CacheService;
     use crate::runs::{RunError, RunId, Stats, WriteOperation};
-    use crate::runs as runs;
     use crate::storage::ObjectStore;
     use crate::test_utils::setup_test_object_store;
-    use crate::{proto, requires_docker};
+    use crate::{proto, requires_docker, runs};
 
     async fn create_and_store_run(
         object_store: &ObjectStore,

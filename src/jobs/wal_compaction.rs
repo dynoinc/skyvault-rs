@@ -3,11 +3,10 @@ use tokio::sync::mpsc;
 
 use super::JobError;
 use crate::forest::ForestImpl;
-use crate::k_way;
 use crate::metadata::{self, MetadataStore, TableID};
 use crate::runs::{RunError, RunId, Stats, WriteOperation};
-use crate::runs as runs;
 use crate::storage::ObjectStore;
+use crate::{k_way, runs};
 
 pub async fn execute(
     metadata_store: MetadataStore,

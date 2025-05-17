@@ -65,7 +65,7 @@ impl From<WriteOperation> for proto::GetFromRunItem {
     }
 }
 // Result of searching within a run
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum SearchResult {
     Found(Value),
     Tombstone,
@@ -518,11 +518,182 @@ where
 #[cfg(test)]
 mod tests {
     use futures::stream;
+    use proptest::collection::btree_map;
+    use proptest::prelude::*;
 
     use super::*;
 
     fn value(s: &str) -> Vec<u8> {
         s.as_bytes().to_vec()
+    }
+
+    // Helper to generate a WriteOperation, ensuring keys are valid for sorting
+    // and values are reasonable for testing.
+    prop_compose! {
+        fn arb_key()(s in "[a-zA-Z0-9]+") -> String {
+            s
+        }
+    }
+
+    prop_compose! {
+        fn arb_value()(v in prop::collection::vec(any::<u8>(), 0..100)) -> Vec<u8> {
+            v
+        }
+    }
+
+    prop_compose! {
+        fn arb_write_operation()(key in arb_key(), value in arb_value(), is_put in any::<bool>()) -> WriteOperation {
+            if is_put {
+                WriteOperation::Put(key, value)
+            } else {
+                WriteOperation::Delete(key)
+            }
+        }
+    }
+
+    // Strategy to generate a BTreeMap of keys to values/tombstones, which ensures unique, sorted
+    // keys.
+    fn arb_write_operations_map()
+    -> impl Strategy<Value = std::collections::BTreeMap<String, Option<Vec<u8>>>> {
+        btree_map(
+            arb_key(),
+            prop_oneof![Just(None), arb_value().prop_map(Some)],
+            1..50,
+        ) // 1 to 50 operations
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: 25, // Keep cases low for faster tests, increase for more thoroughness
+            .. ProptestConfig::default()
+        })]
+        #[test]
+        fn proptest_build_and_search_run(
+            ops_map in arb_write_operations_map()
+        ) {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async {
+                let mut original_ops = Vec::new();
+                for (key, value_opt) in ops_map.iter() {
+                    if let Some(value) = value_opt {
+                        original_ops.push(WriteOperation::Put(key.clone(), value.clone()));
+                    } else {
+                        original_ops.push(WriteOperation::Delete(key.clone()));
+                    }
+                }
+
+                if original_ops.is_empty() {
+                    // build_runs on empty input yields an empty stream, which is valid.
+                    let results: Vec<_> = build_runs(stream::iter(vec![])).collect().await;
+                    prop_assert!(results.is_empty());
+                    return Ok(());
+                }
+
+                let run_results: Vec<Result<(Bytes, Stats), RunError>> =
+                    build_runs(stream::iter(original_ops.clone().into_iter().map(Ok))).collect().await;
+
+                // Ensure no errors during run building
+                for result in &run_results {
+                    prop_assert!(result.is_ok(), "build_runs returned an error: {:?}", result.as_ref().err());
+                }
+
+                let built_runs: Vec<(Bytes, Stats)> = run_results.into_iter().map(|r| r.unwrap()).collect();
+                prop_assert!(!built_runs.is_empty() || original_ops.is_empty() , "No runs were built for non-empty input.");
+
+                // Verify searches
+                for original_op in &original_ops {
+                    let search_key = original_op.key();
+                    let mut _found_in_a_run = false;
+                    let expected_search_result = match original_op {
+                        WriteOperation::Put(_, value) => SearchResult::Found(value.clone()),
+                        WriteOperation::Delete(_) => SearchResult::Tombstone,
+                    };
+
+                    for (run_data, stats) in &built_runs {
+                        // Optimization: Only search in runs that could contain the key
+                        let s = match stats {
+                            Stats::StatsV1(s) => s,
+                        };
+                        if search_key >= s.min_key.as_str() && search_key <= s.max_key.as_str() {
+                            let result = search_run(run_data, search_key);
+                            // If found, it must match. If not found, it might be in another run (if multiple runs)
+                            // or it's a NotFound/Tombstone. The last run containing the key range determines the result.
+                            match result {
+                                SearchResult::Found(_) => {
+                                    if let WriteOperation::Put(_, ov) = original_op {
+                                        prop_assert_eq!(&result, &SearchResult::Found(ov.clone()),
+                                            "Search for PUT key {} produced {:?}, expected {:?}, in run with stats {:?}",
+                                            search_key, result, SearchResult::Found(ov.clone()), s
+                                        );
+                                        _found_in_a_run = true;
+                                    }
+                                    // If the original op was a delete but we found a value, it's an error if this is the "definitive" run.
+                                },
+                                SearchResult::Tombstone => {
+                                    if let WriteOperation::Delete(_) = original_op {
+                                         prop_assert_eq!(&result, &SearchResult::Tombstone,
+                                            "Search for DELETE key {} produced {:?}, expected {:?}, in run with stats {:?}",
+                                            search_key, result, SearchResult::Tombstone, s
+                                         );
+                                        _found_in_a_run = true;
+                                    }
+                                },
+                                SearchResult::NotFound => {
+                                    // This is okay, key might be in a different run or genuinely not found if it was deleted
+                                    // and this run doesn't cover it, or if it was never inserted.
+                                }
+                            }
+                        }
+                    }
+
+                    // After checking all runs, if we expected to find it (Put/Delete), it should have been found.
+                    // This logic gets tricky with multiple runs and sparse keys.
+                    // A simpler check: iterate through built_runs. The *last* run that *could* contain the key
+                    // (based on min_key/max_key) determines the result.
+                    let mut final_search_outcome = SearchResult::NotFound;
+                    for (run_data, stats) in built_runs.iter().rev() { // Iterate runs in reverse
+                        let s = match stats {
+                            Stats::StatsV1(s) => s,
+                        };
+                        if search_key >= s.min_key.as_str() && search_key <= s.max_key.as_str() {
+                            final_search_outcome = search_run(run_data, search_key);
+                            break; // Found the definitive run for this key
+                        }
+                    }
+                    let final_outcome_clone = final_search_outcome.clone();
+                    let expected_result_clone = expected_search_result.clone();
+                    prop_assert_eq!(final_outcome_clone, expected_result_clone,
+                        "Search for key {} (original op: {:?}) yielded {:?}, expected {:?}. Original ops count: {}",
+                        search_key, original_op, final_search_outcome, expected_search_result, original_ops.len());
+                }
+
+                // Test a few keys not in the original map
+                for i in 0..5 {
+                    let non_existent_key = format!("__PROPTTest_NON_EXISTENT_KEY_{}__", i);
+                    if ops_map.contains_key(&non_existent_key) { // Highly unlikely but good to check
+                        continue;
+                    }
+
+                    let mut final_search_outcome_for_non_existent = SearchResult::NotFound;
+                    for (run_data, stats) in built_runs.iter().rev() {
+                        let s = match stats {
+                            Stats::StatsV1(s) => s,
+                        };
+                        if non_existent_key.as_str() >= s.min_key.as_str() && non_existent_key.as_str() <= s.max_key.as_str() {
+                            final_search_outcome_for_non_existent = search_run(run_data, &non_existent_key);
+                            break;
+                        }
+                    }
+                    let non_existent_outcome_clone = final_search_outcome_for_non_existent.clone();
+                    prop_assert_eq!(non_existent_outcome_clone, SearchResult::NotFound,
+                        "Search for non-existent key {} yielded {:?}, expected NotFound",
+                        non_existent_key, final_search_outcome_for_non_existent
+                    );
+                }
+
+                Ok(())
+            }).unwrap()
+        }
     }
 
     #[tokio::test]

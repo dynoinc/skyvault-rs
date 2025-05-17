@@ -9,12 +9,11 @@ use tracing::{error, info};
 
 use crate::consistent_hashring::ConsistentHashRing;
 use crate::forest::{Forest, ForestError, ForestImpl, Snapshot as ForestState};
-use crate::k_way;
 use crate::metadata::{self, MetadataStore, SeqNo, TableCache};
 use crate::pod_watcher::{self, PodChange, PodWatcherError};
-use crate::proto;
 use crate::runs::{RunError, Stats, WriteOperation};
 use crate::storage::ObjectStore;
+use crate::{k_way, proto};
 
 #[derive(Debug, Error)]
 pub enum ReaderServiceError {

@@ -7,8 +7,7 @@ use tonic::{Request, Response, Status};
 use crate::metadata::TableName;
 use crate::proto::{self};
 use crate::runs::{RunError as RunsError, RunId, WriteOperation};
-use crate::runs as runs;
-use crate::{metadata, storage};
+use crate::{metadata, runs, storage};
 
 #[derive(Error, Debug)]
 pub enum WriterServiceError {
@@ -211,20 +210,19 @@ impl proto::writer_service_server::WriterService for MyWriter {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+
     use super::*;
-    use crate::metadata::TableConfig;
+    use crate::metadata::{
+        MockMetadataStoreTrait, SeqNo, TableCache, TableConfig, TableID, TableName,
+    };
     use crate::proto::writer_service_server::WriterService;
     use crate::requires_docker;
-    use crate::test_utils::{setup_test_db, setup_test_object_store};
-
-    use crate::metadata::{MockMetadataStoreTrait, SeqNo, TableCache, TableID, TableName};
     use crate::storage::MockObjectStoreTrait;
-    use std::collections::HashMap;
-    use std::sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    };
-    use std::time::Duration;
+    use crate::test_utils::{setup_test_db, setup_test_object_store};
 
     #[tokio::test]
     async fn test_writer_service() {

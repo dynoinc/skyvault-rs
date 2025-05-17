@@ -3,11 +3,10 @@ use futures::stream::{self, BoxStream, StreamExt, TryStreamExt};
 
 use super::JobError;
 use crate::forest::ForestImpl;
-use crate::k_way;
 use crate::metadata::{self, MetadataStore};
 use crate::runs::{RunError, RunId, WriteOperation};
-use crate::runs as runs;
 use crate::storage::ObjectStore;
+use crate::{k_way, runs};
 
 // Define a type alias for the boxed stream
 type RunStream = BoxStream<'static, Result<WriteOperation, RunError>>;
