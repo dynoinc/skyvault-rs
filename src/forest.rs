@@ -231,7 +231,7 @@ impl ForestImpl {
         let processor = forest.clone();
         tokio::spawn(async move {
             if let Err(e) = processor.process_changelog_stream(stream).await {
-                error!("Changelog processor terminated with error: {e}");
+                error!(error = %e, "Changelog processor terminated");
             }
         });
 
@@ -253,7 +253,7 @@ impl ForestImpl {
                     self.process_changelog_entry(entry).await?;
                 },
                 Err(e) => {
-                    error!("Error reading from changelog: {e}");
+                    error!(error = %e, "Error reading from changelog");
                     // Continue processing despite errors
                 },
             }
