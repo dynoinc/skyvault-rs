@@ -12,11 +12,10 @@ use crate::metadata::{
 };
 use crate::runs::Stats;
 use crate::storage::{self, ObjectStore};
-use crate::{Config, k8s, metadata, proto};
+use crate::{k8s, metadata, proto};
 
 #[derive(Clone)]
 pub struct MyOrchestrator {
-    config: Config,
     metadata: MetadataStore,
     storage: ObjectStore,
     forest: Forest,
@@ -46,7 +45,6 @@ impl MyOrchestrator {
     pub async fn new(
         metadata: MetadataStore,
         storage: ObjectStore,
-        config: Config,
     ) -> Result<Self, OrchestratorError> {
         let forest = ForestImpl::watch(metadata.clone(), storage.clone()).await?;
         let k8s_client = k8s::create_k8s_client().await?;
@@ -55,7 +53,6 @@ impl MyOrchestrator {
             storage,
             forest,
             k8s_client,
-            config,
         };
 
         let orchestrator_clone = orchestrator.clone();
@@ -262,7 +259,7 @@ impl MyOrchestrator {
                         ..ObjectMeta::default()
                     }),
                     spec: Some(k8s_openapi::api::core::v1::PodSpec {
-                        service_account_name: Some(self.config.worker_service_account_name.clone()),
+                        service_account_name: Some("skyvault-serviceaccount".to_string()),
                         containers: vec![k8s_openapi::api::core::v1::Container {
                             name: "worker".to_string(),
                             command: Some(vec![
@@ -270,36 +267,36 @@ impl MyOrchestrator {
                                 "--job-id".to_string(),
                                 job_id.clone(),
                             ]),
-                            image: Some(self.config.image_id.clone()),
+                            image: std::env::var("SKYVAULT_IMAGE_ID").ok(),
                             env: Some(vec![
                                 k8s_openapi::api::core::v1::EnvVar {
-                                    name: "POSTGRES_USER".to_string(),
-                                    value: Some(self.config.postgres.user.clone()),
+                                    name: "SKYVAULT_POSTGRES_USER".to_string(),
+                                    value: std::env::var("SKYVAULT_POSTGRES_USER").ok(),
                                     value_from: None,
                                 },
                                 k8s_openapi::api::core::v1::EnvVar {
-                                    name: "POSTGRES_HOST".to_string(),
-                                    value: Some(self.config.postgres.host.clone()),
+                                    name: "SKYVAULT_POSTGRES_HOST".to_string(),
+                                    value: std::env::var("SKYVAULT_POSTGRES_HOST").ok(),
                                     value_from: None,
                                 },
                                 k8s_openapi::api::core::v1::EnvVar {
-                                    name: "POSTGRES_PORT".to_string(),
-                                    value: Some(self.config.postgres.port.to_string()),
+                                    name: "SKYVAULT_POSTGRES_PORT".to_string(),
+                                    value: std::env::var("SKYVAULT_POSTGRES_PORT").ok(),
                                     value_from: None,
                                 },
                                 k8s_openapi::api::core::v1::EnvVar {
-                                    name: "POSTGRES_DB".to_string(),
-                                    value: Some(self.config.postgres.db_name.clone()),
+                                    name: "SKYVAULT_POSTGRES_DB".to_string(),
+                                    value: std::env::var("SKYVAULT_POSTGRES_DB").ok(),
                                     value_from: None,
                                 },
                                 k8s_openapi::api::core::v1::EnvVar {
-                                    name: "POSTGRES_SSLMODE".to_string(),
-                                    value: Some(self.config.postgres.sslmode.clone()),
+                                    name: "SKYVAULT_POSTGRES_SSLMODE".to_string(),
+                                    value: std::env::var("SKYVAULT_POSTGRES_SSLMODE").ok(),
                                     value_from: None,
                                 },
                                 k8s_openapi::api::core::v1::EnvVar {
-                                    name: "SKYVAULT_BUCKET_NAME".to_string(),
-                                    value: Some(self.config.bucket_name.clone()),
+                                    name: "SKYVAULT_S3_BUCKET".to_string(),
+                                    value: std::env::var("SKYVAULT_S3_BUCKET").ok(),
                                     value_from: None,
                                 },
                                 k8s_openapi::api::core::v1::EnvVar {
@@ -316,34 +313,6 @@ impl MyOrchestrator {
                                     name: "RUST_LOG".to_string(),
                                     value: std::env::var("RUST_LOG").ok(),
                                     value_from: None,
-                                },
-                                k8s_openapi::api::core::v1::EnvVar {
-                                    name: "AWS_ACCESS_KEY_ID".to_string(),
-                                    value: None,
-                                    value_from: Some(k8s_openapi::api::core::v1::EnvVarSource {
-                                        secret_key_ref: Some(
-                                            k8s_openapi::api::core::v1::SecretKeySelector {
-                                                name: k8s::AWS_SECRET_NAME.to_string(),
-                                                key: k8s::AWS_ACCESS_KEY_ID_KEY.to_string(),
-                                                ..Default::default()
-                                            },
-                                        ),
-                                        ..Default::default()
-                                    }),
-                                },
-                                k8s_openapi::api::core::v1::EnvVar {
-                                    name: "AWS_SECRET_ACCESS_KEY".to_string(),
-                                    value: None,
-                                    value_from: Some(k8s_openapi::api::core::v1::EnvVarSource {
-                                        secret_key_ref: Some(
-                                            k8s_openapi::api::core::v1::SecretKeySelector {
-                                                name: k8s::AWS_SECRET_NAME.to_string(),
-                                                key: k8s::AWS_SECRET_ACCESS_KEY_KEY.to_string(),
-                                                ..Default::default()
-                                            },
-                                        ),
-                                        ..Default::default()
-                                    }),
                                 },
                             ]),
                             ..k8s_openapi::api::core::v1::Container::default()
@@ -440,7 +409,7 @@ impl proto::orchestrator_service_server::OrchestratorService for MyOrchestrator 
         &self,
         request: Request<proto::GetJobStatusRequest>,
     ) -> Result<Response<proto::GetJobStatusResponse>, Status> {
-        let job_id = metadata::JobId::from(request.into_inner().job_id);
+        let job_id = metadata::JobID::from(request.into_inner().job_id);
         let status = match self.metadata.get_job_status(job_id).await {
             Ok(status) => status,
             Err(e) => return Err(Status::internal(e.to_string())),

@@ -2,7 +2,6 @@ use std::process::{Command, Stdio};
 use std::sync::Arc;
 
 use aws_config::{BehaviorVersion, Region, SdkConfig};
-use aws_sdk_s3::Client as S3Client;
 use aws_sdk_s3::config::{Credentials, SharedCredentialsProvider};
 use testcontainers_modules::minio;
 use testcontainers_modules::postgres::Postgres;
@@ -90,10 +89,8 @@ pub async fn setup_test_object_store()
         .force_path_style(true)
         .build();
 
-    let client = S3Client::from_conf(s3_config);
-
     // Create the S3ObjectStore
-    let object_store = S3ObjectStore::new(client, bucket_name).await?;
+    let object_store = S3ObjectStore::new(s3_config, bucket_name).await?;
 
     Ok((Arc::new(object_store), container))
 }

@@ -11,7 +11,7 @@ use crate::{k_way, runs};
 pub async fn execute(
     metadata_store: MetadataStore,
     object_store: ObjectStore,
-    job_id: metadata::JobId,
+    job_id: metadata::JobID,
 ) -> Result<(), JobError> {
     let forest = ForestImpl::latest(metadata_store.clone(), object_store.clone()).await?;
     let state = forest.get_state();

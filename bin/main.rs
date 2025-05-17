@@ -1,13 +1,35 @@
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use aws_sdk_s3::Client as S3Client;
-use aws_sdk_s3::config::SharedCredentialsProvider;
 use clap::Parser;
 use rustls::crypto::aws_lc_rs;
-use skyvault::{Config, k8s, metadata, storage};
+use skyvault::config::{PostgresConfig, S3Config};
+use skyvault::{k8s, metadata, storage};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
+
+#[derive(Debug, Parser, Clone)]
+#[command(name = "skyvault", about = "A gRPC server for skyvault.")]
+pub struct Config {
+    #[arg(long, env = "SKYVAULT_GRPC_ADDR", value_parser = clap::value_parser!(SocketAddr), default_value = "0.0.0.0:50051")]
+    pub grpc_addr: SocketAddr,
+
+    #[clap(flatten)]
+    pub postgres: PostgresConfig,
+
+    #[clap(flatten)]
+    pub s3: S3Config,
+
+    #[arg(long, env = "SKYVAULT_ENABLE_WRITER", default_value = "true")]
+    pub enable_writer: bool,
+
+    #[arg(long, env = "SKYVAULT_ENABLE_READER", default_value = "true")]
+    pub enable_reader: bool,
+
+    #[arg(long, env = "SKYVAULT_ENABLE_ORCHESTRATOR", default_value = "true")]
+    pub enable_orchestrator: bool,
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -36,31 +58,25 @@ async fn main() -> Result<()> {
 
     info!(config = ?config, version = version, current_namespace = %current_namespace, "Starting skyvault");
 
-    // Resolve metadata_url using K8s secret
+    // Create metadata client
     let metadata_url = config
         .postgres
-        .resolve_metadata_url(k8s_client.clone(), &current_namespace)
-        .await
-        .context("Failed to resolve metadata URL from Kubernetes secret")?;
-
-    // Create metadata client
+        .to_url(k8s_client.clone(), &current_namespace)
+        .await?;
     let metadata = Arc::new(metadata::PostgresMetadataStore::new(metadata_url).await?);
 
-    // Create S3 client with path style URLs
-    let aws_creds = k8s::get_aws_credentials(k8s_client.clone(), &current_namespace)
-        .await
-        .context("Failed to load AWS credentials from Kubernetes secret")?;
-    let aws_config = aws_config::defaults(aws_config::BehaviorVersion::latest())
-        .credentials_provider(SharedCredentialsProvider::new(aws_creds))
-        .load()
-        .await;
-    let s3_config = aws_sdk_s3::config::Builder::from(&aws_config)
-        .force_path_style(true)
-        .build();
-    let s3_client = S3Client::from_conf(s3_config);
-    let storage = Arc::new(storage::S3ObjectStore::new(s3_client, &config.bucket_name).await?);
+    // Create storage client
+    let s3_config = config
+        .s3
+        .to_config(k8s_client.clone(), &current_namespace)
+        .await?;
+    let storage = Arc::new(storage::S3ObjectStore::new(s3_config, &config.s3.bucket_name).await?);
 
-    skyvault::server(config, metadata, storage)
+    skyvault::Builder::new(config.grpc_addr, metadata, storage)
+        .with_writer(config.enable_writer)
+        .with_reader(config.enable_reader)
+        .with_orchestrator(config.enable_orchestrator)
+        .start()
         .await
         .with_context(|| "Failed to start gRPC server")?;
     info!("gRPC server stopped");

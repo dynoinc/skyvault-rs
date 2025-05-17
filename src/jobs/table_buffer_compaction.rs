@@ -14,7 +14,7 @@ type RunStream = BoxStream<'static, Result<WriteOperation, RunError>>;
 pub async fn execute(
     metadata_store: MetadataStore,
     object_store: ObjectStore,
-    job_id: metadata::JobId,
+    job_id: metadata::JobID,
     table_id: metadata::TableID,
 ) -> Result<(), JobError> {
     let forest = ForestImpl::latest(metadata_store.clone(), object_store.clone()).await?;

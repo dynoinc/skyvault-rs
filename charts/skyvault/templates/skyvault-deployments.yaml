@@ -51,9 +51,6 @@ spec:
             
             - name: SKYVAULT_IMAGE_ID
               value: "{{ $.Values.common.image.id }}"
-
-            - name: SKYVAULT_WORKER_SERVICE_ACCOUNT_NAME
-              value: "skyvault-serviceaccount"
 ---
 # Service for each Skyvault instance
 apiVersion: v1

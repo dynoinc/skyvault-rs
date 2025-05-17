@@ -1,5 +1,4 @@
 use anyhow::{Context, Result as AnyhowResult, anyhow};
-use aws_sdk_s3::config::Credentials;
 use http::Request;
 use k8s_openapi::api::core::v1::Secret;
 use kube::{Api, Client};
@@ -25,48 +24,39 @@ pub async fn create_k8s_client() -> std::result::Result<Client, kube::Error> {
     Ok(client)
 }
 
-pub async fn get_aws_credentials(client: Client, namespace: &str) -> AnyhowResult<Credentials> {
+pub async fn read_secret(
+    client: Client,
+    namespace: &str,
+    secret_name: &str,
+    key: &str,
+) -> AnyhowResult<String> {
     let api: Api<Secret> = Api::namespaced(client, namespace);
-    match api.get(AWS_SECRET_NAME).await {
+    match api.get(secret_name).await {
         Ok(secret) => {
             let data = secret.data.ok_or_else(|| {
                 anyhow!(
                     "Secret '{}' in namespace '{}' does not contain any data",
-                    AWS_SECRET_NAME,
+                    secret_name,
                     namespace
                 )
             })?;
 
-            let access_bytes = data.get(AWS_ACCESS_KEY_ID_KEY).ok_or_else(|| {
+            let value_bytes = data.get(key).ok_or_else(|| {
                 anyhow!(
                     "Secret '{}' in namespace '{}' does not contain key '{}'",
-                    AWS_SECRET_NAME,
+                    secret_name,
                     namespace,
-                    AWS_ACCESS_KEY_ID_KEY
-                )
-            })?;
-            let secret_bytes = data.get(AWS_SECRET_ACCESS_KEY_KEY).ok_or_else(|| {
-                anyhow!(
-                    "Secret '{}' in namespace '{}' does not contain key '{}'",
-                    AWS_SECRET_NAME,
-                    namespace,
-                    AWS_SECRET_ACCESS_KEY_KEY
+                    key
                 )
             })?;
 
-            let access_key = String::from_utf8(access_bytes.0.clone()).context(format!(
-                "Failed to decode key '{AWS_ACCESS_KEY_ID_KEY}' from secret '{AWS_SECRET_NAME}'"
-            ))?;
-            let secret_key = String::from_utf8(secret_bytes.0.clone()).context(format!(
-                "Failed to decode key '{AWS_SECRET_ACCESS_KEY_KEY}' from secret \
-                 '{AWS_SECRET_NAME}'"
-            ))?;
-
-            Ok(Credentials::new(access_key, secret_key, None, None, "k8s"))
+            String::from_utf8(value_bytes.0.clone()).with_context(|| {
+                format!("Failed to decode key '{key}' from secret '{secret_name}'")
+            })
         },
         Err(e) => Err(anyhow!(
             "Failed to get secret '{}' in namespace '{}': {}",
-            AWS_SECRET_NAME,
+            secret_name,
             namespace,
             e
         )),

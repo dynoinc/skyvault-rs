@@ -9,15 +9,18 @@ common:
   env:
     # S3
     AWS_REGION: us-east-1
-    AWS_ACCESS_KEY_ID: minioadmin
-    AWS_SECRET_ACCESS_KEY: minioadmin
     AWS_ENDPOINT_URL_S3: http://skyvault-minio:9000
+    SKYVAULT_S3_BUCKET: skyvault-bucket
+    AWS_ACCESS_KEY_ID: minioadmin # used via secret
+    AWS_SECRET_ACCESS_KEY: minioadmin # used via secret
 
     # Postgres
-    POSTGRES_USER: postgres
-    POSTGRES_DB: skyvault
-    POSTGRES_PASSWORD: postgres
-    POSTGRES_HOST: skyvault-postgres
+    SKYVAULT_POSTGRES_USER: postgres
+    SKYVAULT_POSTGRES_DB: skyvault
+    SKYVAULT_POSTGRES_HOST: skyvault-postgres
+    SKYVAULT_POSTGRES_PORT: 5432
+    SKYVAULT_POSTGRES_SSLMODE: prefer 
+    SKYVAULT_POSTGRES_PASSWORD: postgres # used via secret
 
     # Rust
     RUST_BACKTRACE: 1

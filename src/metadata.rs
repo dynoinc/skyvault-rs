@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::fmt::{self, Display};
 use std::ops::Deref;
 use std::pin::Pin;
+use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -42,21 +43,28 @@ pub enum MetadataError {
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Eq, PartialEq, Clone, Copy, sqlx::Type)]
 #[sqlx(transparent)]
-pub struct JobId(i64);
+pub struct JobID(i64);
 
-impl From<i64> for JobId {
+impl From<i64> for JobID {
     fn from(value: i64) -> Self {
-        JobId(value)
+        JobID(value)
     }
 }
 
-impl From<JobId> for i64 {
-    fn from(value: JobId) -> Self {
+impl From<JobID> for i64 {
+    fn from(value: JobID) -> Self {
         value.0
     }
 }
 
-impl Display for JobId {
+impl FromStr for JobID {
+    type Err = std::num::ParseIntError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(JobID(s.parse()?))
+    }
+}
+
+impl Display for JobID {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
     }
@@ -398,13 +406,13 @@ pub trait MetadataStoreTrait: Send + Sync + 'static {
     async fn append_wal(&self, run_ids: Vec<(RunId, Stats)>) -> Result<SeqNo, MetadataError>;
     async fn append_wal_compaction(
         &self,
-        job_id: JobId,
+        job_id: JobID,
         compacted: Vec<RunId>,
         new_table_runs: Vec<(RunId, TableID, Stats)>,
     ) -> Result<SeqNo, MetadataError>;
     async fn append_table_compaction(
         &self,
-        job_id: JobId,
+        job_id: JobID,
         compacted: Vec<RunId>,
         new_runs: Vec<RunMetadata>,
     ) -> Result<SeqNo, MetadataError>;
@@ -414,10 +422,10 @@ pub trait MetadataStoreTrait: Send + Sync + 'static {
     ) -> Result<HashMap<RunId, RunMetadata>, MetadataError>;
 
     // JOBS
-    async fn schedule_job(&self, job_params: JobParams) -> Result<JobId, MetadataError>;
-    async fn get_job_status(&self, job_id: JobId) -> Result<JobStatus, MetadataError>;
-    async fn get_pending_jobs(&self) -> Result<Vec<(JobId, JobParams)>, MetadataError>;
-    async fn get_job(&self, job_id: JobId) -> Result<JobParams, MetadataError>;
+    async fn schedule_job(&self, job_params: JobParams) -> Result<JobID, MetadataError>;
+    async fn get_job_status(&self, job_id: JobID) -> Result<JobStatus, MetadataError>;
+    async fn get_pending_jobs(&self) -> Result<Vec<(JobID, JobParams)>, MetadataError>;
+    async fn get_job(&self, job_id: JobID) -> Result<JobParams, MetadataError>;
 
     // TABLES
     async fn create_table(
@@ -531,7 +539,7 @@ impl PostgresMetadataStore {
     /// otherwise returns an error.
     async fn mark_job_completed(
         transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-        job_id: JobId,
+        job_id: JobID,
         output: JsonValue,
     ) -> Result<(), sqlx::Error> {
         let job_update_result = sqlx::query!(
@@ -564,7 +572,7 @@ impl PostgresMetadataStore {
     async fn append_wal_compaction_attempt(
         &self,
         transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-        job_id: JobId,
+        job_id: JobID,
         compacted: &[RunId],
         new_table_runs: &[(RunId, TableID, Stats)],
     ) -> Result<SeqNo, MetadataError> {
@@ -838,7 +846,7 @@ impl MetadataStoreTrait for PostgresMetadataStore {
 
     async fn append_wal_compaction(
         &self,
-        job_id: JobId,
+        job_id: JobID,
         compacted: Vec<RunId>,
         new_table_runs: Vec<(RunId, TableID, Stats)>,
     ) -> Result<SeqNo, MetadataError> {
@@ -899,7 +907,7 @@ impl MetadataStoreTrait for PostgresMetadataStore {
 
     async fn append_table_compaction(
         &self,
-        job_id: JobId,
+        job_id: JobID,
         compacted: Vec<RunId>,
         new_runs: Vec<RunMetadata>,
     ) -> Result<SeqNo, MetadataError> {
@@ -1027,7 +1035,7 @@ impl MetadataStoreTrait for PostgresMetadataStore {
             .collect())
     }
 
-    async fn schedule_job(&self, job_params: JobParams) -> Result<JobId, MetadataError> {
+    async fn schedule_job(&self, job_params: JobParams) -> Result<JobID, MetadataError> {
         let mut transaction = self.pg_pool.begin().await?;
 
         // Check if there's already a job in pending or running state
@@ -1062,10 +1070,10 @@ impl MetadataStoreTrait for PostgresMetadataStore {
 
         transaction.commit().await?;
 
-        Ok(JobId::from(job_id))
+        Ok(JobID::from(job_id))
     }
 
-    async fn get_job_status(&self, job_id: JobId) -> Result<JobStatus, MetadataError> {
+    async fn get_job_status(&self, job_id: JobID) -> Result<JobStatus, MetadataError> {
         let row = sqlx::query!(
             r#"
             SELECT status, output FROM jobs WHERE id = $1
@@ -1093,7 +1101,7 @@ impl MetadataStoreTrait for PostgresMetadataStore {
         Ok(status)
     }
 
-    async fn get_pending_jobs(&self) -> Result<Vec<(JobId, JobParams)>, MetadataError> {
+    async fn get_pending_jobs(&self) -> Result<Vec<(JobID, JobParams)>, MetadataError> {
         let jobs = sqlx::query!(
             r#"
             SELECT id, job FROM jobs WHERE status = 'pending'
@@ -1105,14 +1113,14 @@ impl MetadataStoreTrait for PostgresMetadataStore {
         .map(|row| {
             let job_params: JobParams =
                 serde_json::from_value(row.job).map_err(MetadataError::JsonSerdeError)?;
-            Ok((JobId::from(row.id), job_params))
+            Ok((JobID::from(row.id), job_params))
         })
-        .collect::<Result<Vec<(JobId, JobParams)>, MetadataError>>()?;
+        .collect::<Result<Vec<(JobID, JobParams)>, MetadataError>>()?;
 
         Ok(jobs)
     }
 
-    async fn get_job(&self, job_id: JobId) -> Result<JobParams, MetadataError> {
+    async fn get_job(&self, job_id: JobID) -> Result<JobParams, MetadataError> {
         let row = sqlx::query!(r#"SELECT id, job FROM jobs WHERE id = $1"#, job_id.0)
             .fetch_one(&self.pg_pool)
             .await?;

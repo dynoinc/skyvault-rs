@@ -73,7 +73,12 @@ pub struct S3ObjectStore {
 }
 
 impl S3ObjectStore {
-    pub async fn new(client: S3Client, bucket_name: &str) -> Result<Self, StorageError> {
+    pub async fn new(
+        s3_config: aws_sdk_s3::config::Config,
+        bucket_name: &str,
+    ) -> Result<Self, StorageError> {
+        let client = S3Client::from_conf(s3_config);
+
         // Create the bucket if it doesn't exist
         // Ignore the error if the bucket already exists
         match client.create_bucket().bucket(bucket_name).send().await {

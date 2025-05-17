@@ -31,7 +31,7 @@ pub enum JobError {
 pub async fn execute(
     metadata_store: MetadataStore,
     object_store: ObjectStore,
-    job_id: metadata::JobId,
+    job_id: metadata::JobID,
 ) -> Result<(), JobError> {
     let job_params = metadata_store.get_job(job_id).await?;
 
