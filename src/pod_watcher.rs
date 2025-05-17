@@ -1,6 +1,5 @@
 use std::fs;
 
-use crate::k8s;
 use async_stream::stream;
 use futures::{Stream, StreamExt, pin_mut};
 use k8s_openapi::api::core::v1::Pod;
@@ -8,6 +7,8 @@ use kube::api::Api;
 use kube::runtime::watcher;
 use thiserror::Error;
 use tracing::warn;
+
+use crate::k8s;
 
 #[derive(Error, Debug)]
 pub enum PodWatcherError {
