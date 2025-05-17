@@ -2,7 +2,7 @@ use std::fs;
 
 use async_stream::stream;
 use futures::{Stream, StreamExt, pin_mut};
-use hostname::get as get_hostname;
+
 use k8s_openapi::api::core::v1::Pod;
 use kube::Client;
 use kube::api::Api;
@@ -41,7 +41,7 @@ pub async fn watch()
         .to_string();
 
     // Get pod name from hostname
-    let pod_name = get_hostname()?.to_string_lossy().into_owned();
+    let pod_name = hostname::get()?.to_string_lossy().into_owned();
 
     // Fetch our own pod
     let pods_api: Api<Pod> = Api::namespaced(client.clone(), &namespace);

@@ -9,7 +9,7 @@ use tracing::{error, info};
 
 use crate::consistent_hashring::ConsistentHashRing;
 use crate::forest::{Forest, ForestError, ForestImpl, Snapshot as ForestState};
-use crate::k_way::merge;
+use crate::k_way;
 use crate::metadata::{self, MetadataStore, SeqNo, TableCache};
 use crate::pod_watcher::{self, PodChange, PodWatcherError};
 use crate::proto;
@@ -511,7 +511,7 @@ impl MyReader {
             }
         }
 
-        let merged_stream = merge(streams_to_merge);
+        let merged_stream = k_way::merge(streams_to_merge);
 
         let merged_items = merged_stream
             .try_filter_map(|write_op| async {
