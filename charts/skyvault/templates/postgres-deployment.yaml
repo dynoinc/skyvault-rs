@@ -29,9 +29,9 @@ spec:
               protocol: TCP
           env:
             - name: POSTGRES_USER
-              value: {{ .Values.postgres.env.POSTGRES_USER | quote }}
+              value: {{ .Values.common.env.POSTGRES_USER | quote }}
             - name: POSTGRES_DB
-              value: {{ .Values.postgres.env.POSTGRES_DB | quote }}
+              value: {{ .Values.common.env.POSTGRES_DB | quote }}
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:

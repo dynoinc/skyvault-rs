@@ -39,15 +39,15 @@ pub mod test_utils;
 
 #[derive(Debug, Parser, Clone)]
 pub struct PostgresConfig {
-    #[arg(long, env = "SKYVAULT_POSTGRES_USER", default_value = "postgres")]
+    #[arg(long, env = "POSTGRES_USER", default_value = "postgres")]
     pub user: String,
-    #[arg(long, env = "SKYVAULT_POSTGRES_HOST", default_value = "localhost")]
+    #[arg(long, env = "POSTGRES_HOST", default_value = "localhost")]
     pub host: String,
-    #[arg(long, env = "SKYVAULT_POSTGRES_PORT", default_value = "5432")]
+    #[arg(long, env = "POSTGRES_PORT", default_value = "5432")]
     pub port: u16,
-    #[arg(long, env = "SKYVAULT_POSTGRES_DB", default_value = "skyvault")]
+    #[arg(long, env = "POSTGRES_DB", default_value = "skyvault")]
     pub db_name: String,
-    #[arg(long, env = "SKYVAULT_POSTGRES_SSLMODE", default_value = "prefer")]
+    #[arg(long, env = "POSTGRES_SSLMODE", default_value = "prefer")]
     pub sslmode: String,
 }
 

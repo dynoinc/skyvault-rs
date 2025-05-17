@@ -427,6 +427,7 @@ pub trait MetadataStoreTrait: Send + Sync + 'static {
         config: TableConfig,
     ) -> Result<TableID, MetadataError>;
     async fn drop_table(&self, table_name: TableName) -> Result<(), MetadataError>;
+    async fn list_tables(&self) -> Result<Vec<TableName>, MetadataError>;
     async fn get_table(
         &self,
         table_name: TableName,
@@ -1155,7 +1156,7 @@ impl MetadataStoreTrait for PostgresMetadataStore {
             Err(e) => {
                 transaction.rollback().await?;
                 Err(e.into())
-            }
+            },
         }
     }
 
@@ -1194,9 +1195,23 @@ impl MetadataStoreTrait for PostgresMetadataStore {
                 let config: TableConfig =
                     serde_json::from_value(row.config).map_err(MetadataError::JsonSerdeError)?;
                 Ok((TableID::from(row.id), config))
-            }
-            None => Err(MetadataError::TableNotFound(table_name))
+            },
+            None => Err(MetadataError::TableNotFound(table_name)),
         }
+    }
+
+    async fn list_tables(&self) -> Result<Vec<TableName>, MetadataError> {
+        let rows = sqlx::query!(
+            r#"
+            SELECT name FROM tables WHERE deleted_at IS NULL
+            "#
+        )
+        .fetch_all(&self.pg_pool)
+        .await?;
+
+        rows.into_iter()
+            .map(|row| Ok(TableName::from(row.name)))
+            .collect()
     }
 }
 
@@ -1250,19 +1265,32 @@ mod tests {
         // Setup test database
         let (metadata_store, _container) = setup_test_db().await.unwrap();
 
-        let result = metadata_store.get_table(TableName::from("test_table")).await;
+        let result = metadata_store
+            .get_table(TableName::from("test_table"))
+            .await;
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), MetadataError::TableNotFound(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            MetadataError::TableNotFound(_)
+        ));
 
         // Create a table
-        metadata_store.create_table(TableName::from("test_table"), TableConfig::default()).await.unwrap();
-        
+        metadata_store
+            .create_table(TableName::from("test_table"), TableConfig::default())
+            .await
+            .unwrap();
+
         // Try to create the same table again
-        let result = metadata_store.create_table(TableName::from("test_table"), TableConfig::default()).await;
+        let result = metadata_store
+            .create_table(TableName::from("test_table"), TableConfig::default())
+            .await;
 
         // Verify that the second creation returns an error
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), MetadataError::TableAlreadyExists(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            MetadataError::TableAlreadyExists(_)
+        ));
     }
 
     #[tokio::test]

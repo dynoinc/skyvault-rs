@@ -4,15 +4,15 @@ sqlx:
     sqlx database reset -f
 
 check:
+    buf generate
     cargo +nightly-2025-05-14 fmt --all
     cargo clippy -- -D warnings
     RUST_BACKTRACE=1 cargo test
 
     helm lint charts/skyvault
 
-    cd smoke-tests && uv run ruff check .
-    cd smoke-tests && uv run ruff format .
-    cd smoke-tests && uv run python3 -m grpc_tools.protoc -I../proto --python_out=. --pyi_out=. --grpc_python_out=. ../proto/skyvault/v1/skyvault.proto
+    for dir in smoke-tests skycli; do pushd $dir; uv run ruff format .; popd; done
+    for dir in smoke-tests skycli; do pushd $dir; uv run ruff check .; popd; done
 
 build:
     cargo sqlx prepare
@@ -22,10 +22,13 @@ build:
     kubectl delete pod -l app.kubernetes.io/component=skyvault
 
 deploy:
-    helm upgrade --install dev ./charts/skyvault
+    helm upgrade --install dev ./charts/skyvault --set deployments.dev.enabled=true
 
 pgshell:
     kubectl exec -it $(kubectl get pods -l app.kubernetes.io/component=postgres -o jsonpath="{.items[0].metadata.name}") -- psql -U postgres -d skyvault
 
-smoke:
-    cd smoke-tests && uv run pytest
+cli *args:
+    cd skycli && uv run python main.py {{args}}
+
+smoke *args:
+    cd smoke-tests && uv run pytest {{args}}

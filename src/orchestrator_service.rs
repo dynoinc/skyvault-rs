@@ -7,7 +7,8 @@ use tonic::{Request, Response, Status};
 
 use crate::forest::{Forest, ForestError, ForestImpl, Snapshot};
 use crate::metadata::{
-    JobParams, Level, MetadataError, MetadataStore, SeqNo, SnapshotID, TableConfig, TableID, TableName
+    JobParams, Level, MetadataError, MetadataStore, SeqNo, SnapshotID, TableConfig, TableID,
+    TableName,
 };
 use crate::proto::orchestrator_service_server::OrchestratorService;
 use crate::storage::{self, ObjectStore};
@@ -272,27 +273,27 @@ impl MyOrchestrator {
                             image: Some(self.config.image_id.clone()),
                             env: Some(vec![
                                 k8s_openapi::api::core::v1::EnvVar {
-                                    name: "SKYVAULT_POSTGRES_USER".to_string(),
+                                    name: "POSTGRES_USER".to_string(),
                                     value: Some(self.config.postgres.user.clone()),
                                     value_from: None,
                                 },
                                 k8s_openapi::api::core::v1::EnvVar {
-                                    name: "SKYVAULT_POSTGRES_HOST".to_string(),
+                                    name: "POSTGRES_HOST".to_string(),
                                     value: Some(self.config.postgres.host.clone()),
                                     value_from: None,
                                 },
                                 k8s_openapi::api::core::v1::EnvVar {
-                                    name: "SKYVAULT_POSTGRES_PORT".to_string(),
+                                    name: "POSTGRES_PORT".to_string(),
                                     value: Some(self.config.postgres.port.to_string()),
                                     value_from: None,
                                 },
                                 k8s_openapi::api::core::v1::EnvVar {
-                                    name: "SKYVAULT_POSTGRES_DB".to_string(),
+                                    name: "POSTGRES_DB".to_string(),
                                     value: Some(self.config.postgres.db_name.clone()),
                                     value_from: None,
                                 },
                                 k8s_openapi::api::core::v1::EnvVar {
-                                    name: "SKYVAULT_POSTGRES_SSLMODE".to_string(),
+                                    name: "POSTGRES_SSLMODE".to_string(),
                                     value: Some(self.config.postgres.sslmode.clone()),
                                     value_from: None,
                                 },
@@ -495,6 +496,20 @@ impl OrchestratorService for MyOrchestrator {
         Ok(Response::new(proto::GetTableResponse {
             table_id: table_id.into(),
             config: Some(config.into()),
+        }))
+    }
+
+    async fn list_tables(
+        &self,
+        _request: Request<proto::ListTablesRequest>,
+    ) -> Result<Response<proto::ListTablesResponse>, Status> {
+        let tables = match self.metadata.list_tables().await {
+            Ok(tables) => tables,
+            Err(e) => return Err(Status::internal(e.to_string())),
+        };
+
+        Ok(Response::new(proto::ListTablesResponse {
+            table_names: tables.into_iter().map(|t| t.to_string()).collect(),
         }))
     }
 }

@@ -8,12 +8,16 @@ use rustls::crypto::aws_lc_rs;
 use skyvault::{Config, metadata, storage};
 use tokio::fs;
 use tracing::info;
-use tracing::level_filters::LevelFilter;
+use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
-        .with_max_level(LevelFilter::INFO)
+        .compact()
+        .with_file(true)
+        .with_line_number(true)
+        .with_thread_ids(true)
+        .with_env_filter(EnvFilter::from_default_env())
         .init();
 
     aws_lc_rs::default_provider()
@@ -47,14 +51,15 @@ async fn main() -> Result<()> {
         .postgres
         .resolve_metadata_url(k8s_client.clone(), &current_namespace)
         .await
-        .context("Failed to resolve metadata URL from Kubernetes secret") {
-            Ok(url) => url,
-            Err(e) => {
-                eprintln!("Failed to resolve metadata URL: {}", e);
-                tokio::time::sleep(std::time::Duration::from_secs(600)).await;
-                return Err(e);
-            }
-        };
+        .context("Failed to resolve metadata URL from Kubernetes secret")
+    {
+        Ok(url) => url,
+        Err(e) => {
+            eprintln!("Failed to resolve metadata URL: {}", e);
+            tokio::time::sleep(std::time::Duration::from_secs(600)).await;
+            return Err(e);
+        },
+    };
 
     // Create metadata client
     let metadata = Arc::new(metadata::PostgresMetadataStore::new(metadata_url).await?);

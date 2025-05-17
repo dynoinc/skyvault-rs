@@ -116,6 +116,7 @@ service OrchestratorService {
   rpc GetJobStatus (GetJobStatusRequest) returns (GetJobStatusResponse);
 
   rpc CreateTable (CreateTableRequest) returns (CreateTableResponse);
+  rpc ListTables (ListTablesRequest) returns (ListTablesResponse);
   rpc DropTable (DropTableRequest) returns (DropTableResponse);
   rpc GetTable (GetTableRequest) returns (GetTableResponse);
 
@@ -242,6 +243,13 @@ message CreateTableRequest {
 
 message CreateTableResponse {
   int64 table_id = 1;
+}
+
+message ListTablesRequest {
+}
+
+message ListTablesResponse {
+  repeated string table_names = 1;
 }
 
 message DropTableRequest {

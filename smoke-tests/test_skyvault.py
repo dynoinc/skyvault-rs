@@ -5,6 +5,8 @@ import time
 import sys
 import pytest
 
+sys.path.append("../gen")
+
 from skyvault.v1 import skyvault_pb2
 from skyvault.v1 import skyvault_pb2_grpc
 
@@ -20,7 +22,7 @@ def service_connection():
     command = [
         "minikube",
         "service",
-        "skyvault-primary",
+        "skyvault-dev",
         "--url",
         "--format={{.IP}}:{{.Port}}",
     ]
@@ -65,6 +67,7 @@ def stubs(service_connection):
 #
 # Helper functions
 #
+
 
 def create_table(stub, table_name):
     try:
@@ -183,6 +186,7 @@ def test_write_compact_read(stubs):
     create_table(orchestrator_stub, table_name)
 
     # Write second key
+    seq_no = perform_write(writer_stub, table_name, key_one, value_one)
     seq_no = perform_write(writer_stub, table_name, key_two, value_two)
 
     # Verify second key is readable before compaction
@@ -194,14 +198,14 @@ def test_write_compact_read(stubs):
     seq_no = trigger_wal_compaction(orchestrator_stub)
 
     # Verify second key is still readable after compaction
-    assert perform_read_with_retry(reader_stub, table_name, seq_no, key_two, value_two), (
-        f"Failed to read back key '{key_two}' after compaction"
-    )
+    assert perform_read_with_retry(
+        reader_stub, table_name, seq_no, key_two, value_two
+    ), f"Failed to read back key '{key_two}' after compaction"
 
     # Verify first key is also still readable after compaction
-    assert perform_read_with_retry(reader_stub, table_name, seq_no, key_one, value_one), (
-        f"Failed to read back key '{key_one}' after compaction"
-    )
+    assert perform_read_with_retry(
+        reader_stub, table_name, seq_no, key_one, value_one
+    ), f"Failed to read back key '{key_one}' after compaction"
 
 
 @pytest.mark.smoke

@@ -102,6 +102,7 @@ impl ConsistentHashCM {
 
 #[tonic::async_trait]
 impl ConnectionManager for ConsistentHashCM {
+    #[tracing::instrument(skip(self), level = "debug")]
     async fn table_get_batch_run(
         &self,
         routing_key: String,
@@ -130,6 +131,7 @@ impl ConnectionManager for ConsistentHashCM {
         run_conn.get_from_run(request).await
     }
 
+    #[tracing::instrument(skip(self), level = "debug")]
     async fn table_scan_run(
         &self,
         routing_key: String,

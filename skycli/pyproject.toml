@@ -1,12 +1,13 @@
 [project]
-name = "skyvault-smoke-tests"
+name = "skycli"
 version = "0.1.0"
-description = "Python smoke tests for Skyvault gRPC service"
+description = "Skyvault CLI"
+readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "typer>=0.15.4",
     "grpcio>=1.71.0",
     "protobuf>=6.31.0",
-    "pytest>=8.3.5",
 ]
 
 [dependency-groups]

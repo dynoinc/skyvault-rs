@@ -6,20 +6,27 @@ common:
     id: localhost/skyvault:dev
     pullPolicy: IfNotPresent
 
-  # Common environment variables for all deployments
   env:
+    # S3
     AWS_REGION: us-east-1
     AWS_ACCESS_KEY_ID: minioadmin
     AWS_SECRET_ACCESS_KEY: minioadmin
     AWS_ENDPOINT_URL_S3: http://skyvault-minio:9000
 
-# Multiple deployment instances configuration
+    # Postgres
+    POSTGRES_USER: postgres
+    POSTGRES_DB: skyvault
+    POSTGRES_PASSWORD: postgres
+    POSTGRES_HOST: skyvault-postgres
+
+    # Rust
+    RUST_BACKTRACE: 1
+
 deployments:
-  # First instance - you can have multiple of these with different keys
-  instance1:
-    enabled: true
-    instanceName: "primary"
-    replicaCount: 4
+  dev:
+    enabled: false
+    instanceName: "dev"
+    replicaCount: 1
     resources:
       limits:
         cpu: 500m
@@ -33,26 +40,7 @@ deployments:
       nodePort: 30051
     # Instance-specific environment variables
     env:
-      LOG_LEVEL: "info"
-
-  # Second instance example with different config
-  instance2:
-    enabled: false
-    instanceName: "secondary"
-    replicaCount: 1
-    resources:
-      limits:
-        cpu: 250m
-        memory: 256Mi
-      requests:
-        cpu: 100m
-        memory: 128Mi
-    service:
-      type: NodePort
-      port: 50052
-      nodePort: 30052
-    env:
-      LOG_LEVEL: "debug"
+      RUST_LOG: "skyvault=debug"
 
 # Service account configuration
 serviceAccount:
@@ -69,10 +57,6 @@ minio:
   service:
     port: 9000
     type: ClusterIP
-  # MinIO required environment variables
-  env:
-    MINIO_ROOT_USER: minioadmin
-    MINIO_ROOT_PASSWORD: minioadmin
 
 # Values for the PostgreSQL service
 postgres:
@@ -84,10 +68,3 @@ postgres:
   service:
     port: 5432
     type: ClusterIP
-  # PostgreSQL environment variables
-  env:
-    POSTGRES_USER: postgres
-    POSTGRES_DB: skyvault
-    POSTGRES_PASSWORD: postgres
-    POSTGRES_HOST: skyvault-postgres
-    POSTGRES_SSLMODE: disable
