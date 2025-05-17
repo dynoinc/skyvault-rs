@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use rustls::crypto::aws_lc_rs;
 use skyvault::config::{PostgresConfig, S3Config};
-use skyvault::{k8s, metadata, storage, telemetry};
+use skyvault::{k8s, metadata, metrics, storage, telemetry};
 use tracing::info;
 
 #[derive(Debug, Parser, Clone)]
@@ -28,6 +28,9 @@ pub struct Config {
 
     #[arg(long, env = "SKYVAULT_ENABLE_ORCHESTRATOR", default_value = "true")]
     pub enable_orchestrator: bool,
+
+    #[arg(long, env = "SKYVAULT_METRICS_ADDR", value_parser = clap::value_parser!(SocketAddr), default_value = "0.0.0.0:9095")]
+    pub metrics_addr: SocketAddr,
 }
 
 #[tokio::main]
@@ -40,6 +43,9 @@ async fn main() -> Result<()> {
 
     let config = Config::parse();
     let version = env!("CARGO_PKG_VERSION");
+
+    let handle = metrics::init_recorder();
+    tokio::spawn(metrics::serve(config.metrics_addr, handle.clone()));
 
     // Initialize K8s client
     let current_namespace = k8s::get_namespace()
