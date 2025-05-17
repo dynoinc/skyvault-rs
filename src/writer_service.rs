@@ -188,15 +188,13 @@ impl proto::writer_service_server::WriterService for MyWriter {
 mod tests {
     use super::*;
     use crate::metadata::TableConfig;
+    use crate::requires_docker;
+    use crate::test_utils::{setup_test_db, setup_test_object_store};
     use crate::proto::writer_service_server::WriterService;
-    use crate::test_utils::{docker_is_available, setup_test_db, setup_test_object_store};
 
     #[tokio::test]
     async fn test_writer_service() {
-        if !docker_is_available() {
-            eprintln!("Docker not running - skipping test");
-            return;
-        }
+        requires_docker!();
         let (metadata, _postgres) = setup_test_db().await.unwrap();
         let (storage, _minio) = setup_test_object_store().await.unwrap();
 

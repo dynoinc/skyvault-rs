@@ -1256,14 +1256,12 @@ impl TableCache {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::{docker_is_available, setup_test_db};
+    use crate::requires_docker;
+    use crate::test_utils::setup_test_db;
 
     #[tokio::test]
     async fn test_tables() {
-        if !docker_is_available() {
-            eprintln!("Docker not running - skipping test");
-            return;
-        }
+        requires_docker!();
         // Setup test database
         let (metadata_store, _container) = setup_test_db().await.unwrap();
 
@@ -1297,10 +1295,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_schedule_and_get_wal_compaction_job() {
-        if !docker_is_available() {
-            eprintln!("Docker not running - skipping test");
-            return;
-        }
+        requires_docker!();
         // Setup test database
         let (metadata_store, _container) = setup_test_db().await.unwrap();
 

@@ -3,11 +3,11 @@ use std::sync::Arc;
 use aws_config::{BehaviorVersion, Region, SdkConfig};
 use aws_sdk_s3::Client as S3Client;
 use aws_sdk_s3::config::{Credentials, SharedCredentialsProvider};
+use std::process::{Command, Stdio};
 use testcontainers_modules::minio;
 use testcontainers_modules::postgres::Postgres;
 use testcontainers_modules::testcontainers::ContainerAsync;
 use testcontainers_modules::testcontainers::runners::AsyncRunner;
-use std::process::{Command, Stdio};
 
 use crate::metadata::{MetadataError, MetadataStore, PostgresMetadataStore};
 use crate::storage::{ObjectStore, S3ObjectStore, StorageError};
@@ -21,6 +21,17 @@ pub fn docker_is_available() -> bool {
         .status()
         .map(|s| s.success())
         .unwrap_or(false)
+}
+
+/// Macro to skip tests when Docker is not available.
+#[macro_export]
+macro_rules! requires_docker {
+    () => {
+        if !$crate::test_utils::docker_is_available() {
+            eprintln!("Docker not running - skipping test");
+            return;
+        }
+    };
 }
 
 /// Sets up a test PostgreSQL instance in a container for testing.
