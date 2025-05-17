@@ -372,6 +372,7 @@ type ChangelogStream =
     Pin<Box<dyn Stream<Item = Result<ChangelogEntryWithID, MetadataError>> + Send + 'static>>;
 
 #[async_trait::async_trait]
+#[cfg_attr(test, mockall::automock)]
 pub trait MetadataStoreTrait: Send + Sync + 'static {
     // SNAPSHOTS
     async fn get_latest_snapshot_id(&self) -> Result<Option<(SnapshotID, SeqNo)>, MetadataError>;

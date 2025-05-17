@@ -55,6 +55,7 @@ impl From<SdkError<GetObjectError, HttpResponse>> for StorageError {
 }
 
 #[async_trait]
+#[cfg_attr(test, mockall::automock)]
 pub trait ObjectStoreTrait: Send + Sync + 'static {
     async fn put_run(&self, run_id: RunId, data: Bytes) -> Result<(), StorageError>;
     async fn get_run(&self, run_id: RunId) -> Result<ByteStream, StorageError>;
