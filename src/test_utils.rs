@@ -7,9 +7,21 @@ use testcontainers_modules::minio;
 use testcontainers_modules::postgres::Postgres;
 use testcontainers_modules::testcontainers::ContainerAsync;
 use testcontainers_modules::testcontainers::runners::AsyncRunner;
+use std::process::{Command, Stdio};
 
 use crate::metadata::{MetadataError, MetadataStore, PostgresMetadataStore};
 use crate::storage::{ObjectStore, S3ObjectStore, StorageError};
+
+/// Returns `true` if Docker is available and responding, otherwise `false`.
+pub fn docker_is_available() -> bool {
+    Command::new("docker")
+        .arg("info")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
 
 /// Sets up a test PostgreSQL instance in a container for testing.
 /// Returns the metadata store connected to the test DB and the container handle.
