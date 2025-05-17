@@ -8,12 +8,11 @@ use tonic::{Request, Response, Status};
 use tracing::{error, info};
 
 use crate::consistent_hashring::ConsistentHashRing;
-use crate::forest::{Forest, ForestError, Snapshot as ForestState};
+use crate::forest::{Forest, ForestError, ForestImpl, Snapshot as ForestState};
+use crate::k_way::merge;
 use crate::metadata::{self, MetadataStore, SeqNo, TableCache};
 use crate::pod_watcher::{self, PodChange, PodWatcherError};
 use crate::proto;
-use crate::proto::cache_service_client::CacheServiceClient;
-use crate::proto::reader_service_server::ReaderService;
 use crate::runs::{RunError, Stats, WriteOperation};
 use crate::storage::ObjectStore;
 
@@ -32,7 +31,8 @@ pub enum ReaderServiceError {
 #[derive(Clone)]
 struct ConsistentHashCM {
     port: u16,
-    connections: Arc<Mutex<HashMap<String, CacheServiceClient<Channel>>>>,
+    connections:
+        Arc<Mutex<HashMap<String, proto::cache_service_client::CacheServiceClient<Channel>>>>,
     consistent_hashring: Arc<Mutex<ConsistentHashRing<String>>>,
 }
 
@@ -74,7 +74,7 @@ impl ConsistentHashCM {
     async fn get_connection(
         &self,
         pod: &str,
-    ) -> Result<CacheServiceClient<Channel>, ReaderServiceError> {
+    ) -> Result<proto::cache_service_client::CacheServiceClient<Channel>, ReaderServiceError> {
         // First check if connection exists
         {
             let connections = self.connections.lock().unwrap();
@@ -85,7 +85,7 @@ impl ConsistentHashCM {
 
         // Connection not found, create a new one outside the lock
         let addr = format!("http://{}:{}", pod, self.port);
-        let conn = match CacheServiceClient::connect(addr).await {
+        let conn = match proto::cache_service_client::CacheServiceClient::connect(addr).await {
             Ok(conn) => conn,
             Err(e) => return Err(ReaderServiceError::ConnectionError(e)),
         };
@@ -191,7 +191,7 @@ impl MyReader {
         port: u16,
     ) -> Result<Self, ReaderServiceError> {
         let table_cache = TableCache::new(metadata.clone());
-        let forest = crate::forest::ForestImpl::watch(metadata, object_store).await?;
+        let forest = ForestImpl::watch(metadata, object_store).await?;
         let connection_manager = ConsistentHashCM::new(port).await?;
 
         Ok(Self {
@@ -511,7 +511,7 @@ impl MyReader {
             }
         }
 
-        let merged_stream = crate::k_way::merge(streams_to_merge);
+        let merged_stream = merge(streams_to_merge);
 
         let merged_items = merged_stream
             .try_filter_map(|write_op| async {
@@ -535,7 +535,7 @@ impl MyReader {
 }
 
 #[tonic::async_trait]
-impl ReaderService for MyReader {
+impl proto::reader_service_server::ReaderService for MyReader {
     async fn get_batch(
         &self,
         request: Request<proto::GetBatchRequest>,
@@ -612,10 +612,8 @@ mod tests {
     use super::*;
     use crate::forest::{Forest, MockForestTrait};
     use crate::metadata::{BelongsTo, RunMetadata, SeqNo, TableConfig, TableID, TableName};
-    use crate::proto::{
-        GetBatchRequest, GetFromRunItem, GetFromRunRequest, GetFromRunResponse, ScanFromRunRequest,
-        ScanFromRunResponse, ScanRequest, TableGetBatchRequest, get_from_run_item,
-    };
+    use crate::proto;
+    use crate::proto::reader_service_server::ReaderService;
     use crate::runs::{RunId, Stats, StatsV1};
 
     async fn create_test_forest(seq_no: SeqNo, runs: Vec<RunMetadata>) -> Forest {
@@ -631,23 +629,25 @@ mod tests {
     }
 
     fn create_run_response(
-        items: Vec<GetFromRunItem>,
-    ) -> Pin<Box<dyn Future<Output = Result<Response<GetFromRunResponse>, Status>> + Send>> {
-        Box::pin(async move { Ok(Response::new(GetFromRunResponse { items })) })
+        items: Vec<proto::GetFromRunItem>,
+    ) -> Pin<Box<dyn Future<Output = Result<Response<proto::GetFromRunResponse>, Status>> + Send>>
+    {
+        Box::pin(async move { Ok(Response::new(proto::GetFromRunResponse { items })) })
     }
 
     fn create_scan_response(
-        items: Vec<GetFromRunItem>,
-    ) -> Pin<Box<dyn Future<Output = Result<Response<ScanFromRunResponse>, Status>> + Send>> {
-        Box::pin(async move { Ok(Response::new(ScanFromRunResponse { items })) })
+        items: Vec<proto::GetFromRunItem>,
+    ) -> Pin<Box<dyn Future<Output = Result<Response<proto::ScanFromRunResponse>, Status>> + Send>>
+    {
+        Box::pin(async move { Ok(Response::new(proto::ScanFromRunResponse { items })) })
     }
 
-    fn create_run_item(key: &str, value: Option<&str>) -> GetFromRunItem {
-        GetFromRunItem {
+    fn create_run_item(key: &str, value: Option<&str>) -> proto::GetFromRunItem {
+        proto::GetFromRunItem {
             key: key.to_string(),
             result: value
-                .map(|v| get_from_run_item::Result::Value(v.as_bytes().to_vec()))
-                .or(Some(get_from_run_item::Result::Deleted(()))),
+                .map(|v| proto::get_from_run_item::Result::Value(v.as_bytes().to_vec()))
+                .or(Some(proto::get_from_run_item::Result::Deleted(()))),
         }
     }
 
@@ -664,30 +664,33 @@ mod tests {
             (table_id, TableConfig::default()),
         )]));
 
-        let forest = create_test_forest(SeqNo::from(1), vec![
-            RunMetadata {
-                id: wal_run_id.clone(),
-                belongs_to: BelongsTo::WalSeqNo(SeqNo::from(1)),
-                stats: Stats::StatsV1(StatsV1 {
-                    min_key: "".to_string(),
-                    max_key: "".to_string(),
-                    put_count: 0,
-                    delete_count: 0,
-                    size_bytes: 0,
-                }),
-            },
-            RunMetadata {
-                id: buf_run_id.clone(),
-                belongs_to: BelongsTo::TableBuffer(table_id, SeqNo::from(1)),
-                stats: Stats::StatsV1(StatsV1 {
-                    min_key: "".to_string(),
-                    max_key: "".to_string(),
-                    put_count: 0,
-                    delete_count: 0,
-                    size_bytes: 0,
-                }),
-            },
-        ])
+        let forest = create_test_forest(
+            SeqNo::from(1),
+            vec![
+                RunMetadata {
+                    id: wal_run_id.clone(),
+                    belongs_to: BelongsTo::WalSeqNo(SeqNo::from(1)),
+                    stats: Stats::StatsV1(StatsV1 {
+                        min_key: "".to_string(),
+                        max_key: "".to_string(),
+                        put_count: 0,
+                        delete_count: 0,
+                        size_bytes: 0,
+                    }),
+                },
+                RunMetadata {
+                    id: buf_run_id.clone(),
+                    belongs_to: BelongsTo::TableBuffer(table_id, SeqNo::from(1)),
+                    stats: Stats::StatsV1(StatsV1 {
+                        min_key: "".to_string(),
+                        max_key: "".to_string(),
+                        put_count: 0,
+                        delete_count: 0,
+                        size_bytes: 0,
+                    }),
+                },
+            ],
+        )
         .await;
 
         let mut mock_conn = MockConnectionManager::new();
@@ -696,7 +699,7 @@ mod tests {
             .with(
                 eq("wal".to_string()),
                 // Check that the request contains the correct run_id and key
-                function(move |req: &Request<GetFromRunRequest>| {
+                function(move |req: &Request<proto::GetFromRunRequest>| {
                     let inner = req.get_ref();
                     inner.run_ids == vec![wal_run_id.to_string()]
                         && inner.keys == vec![format!("{}.{}", table_id, key)]
@@ -713,7 +716,7 @@ mod tests {
             .expect_table_get_batch_run()
             .with(
                 eq(buf_run_id.to_string()),
-                function(move |req: &Request<GetFromRunRequest>| {
+                function(move |req: &Request<proto::GetFromRunRequest>| {
                     let inner = req.get_ref();
                     inner.run_ids == vec![buf_run_id.to_string()]
                         && inner.keys == vec![key.to_string()]
@@ -726,9 +729,9 @@ mod tests {
 
         let reader = MyReader::new_for_test(forest, table_cache, Arc::new(mock_conn));
 
-        let request = GetBatchRequest {
+        let request = proto::GetBatchRequest {
             seq_no: 0,
-            tables: vec![TableGetBatchRequest {
+            tables: vec![proto::TableGetBatchRequest {
                 table_name: table_name.to_string(),
                 keys: vec![key.to_string()],
             }],
@@ -758,30 +761,33 @@ mod tests {
             (table_id, TableConfig::default()),
         )]));
 
-        let forest = create_test_forest(SeqNo::from(1), vec![
-            RunMetadata {
-                id: wal_run_id.clone(),
-                belongs_to: BelongsTo::WalSeqNo(SeqNo::from(1)),
-                stats: Stats::StatsV1(StatsV1 {
-                    min_key: "".to_string(),
-                    max_key: "".to_string(),
-                    put_count: 0,
-                    delete_count: 0,
-                    size_bytes: 0,
-                }),
-            },
-            RunMetadata {
-                id: buf_run_id.clone(),
-                belongs_to: BelongsTo::TableBuffer(table_id, SeqNo::from(1)),
-                stats: Stats::StatsV1(StatsV1 {
-                    min_key: "".to_string(),
-                    max_key: "".to_string(),
-                    put_count: 0,
-                    delete_count: 0,
-                    size_bytes: 0,
-                }),
-            },
-        ])
+        let forest = create_test_forest(
+            SeqNo::from(1),
+            vec![
+                RunMetadata {
+                    id: wal_run_id.clone(),
+                    belongs_to: BelongsTo::WalSeqNo(SeqNo::from(1)),
+                    stats: Stats::StatsV1(StatsV1 {
+                        min_key: "".to_string(),
+                        max_key: "".to_string(),
+                        put_count: 0,
+                        delete_count: 0,
+                        size_bytes: 0,
+                    }),
+                },
+                RunMetadata {
+                    id: buf_run_id.clone(),
+                    belongs_to: BelongsTo::TableBuffer(table_id, SeqNo::from(1)),
+                    stats: Stats::StatsV1(StatsV1 {
+                        min_key: "".to_string(),
+                        max_key: "".to_string(),
+                        put_count: 0,
+                        delete_count: 0,
+                        size_bytes: 0,
+                    }),
+                },
+            ],
+        )
         .await;
 
         let mut mock_conn = MockConnectionManager::new();
@@ -790,7 +796,7 @@ mod tests {
             .with(
                 eq("wal".to_string()),
                 // Check that the request contains the correct run_id and key
-                function(move |req: &Request<ScanFromRunRequest>| {
+                function(move |req: &Request<proto::ScanFromRunRequest>| {
                     let inner = req.get_ref();
                     inner.run_ids == vec![wal_run_id.to_string()]
                         && inner.exclusive_start_key
@@ -808,7 +814,7 @@ mod tests {
             .expect_table_scan_run()
             .with(
                 eq(buf_run_id.to_string()),
-                function(move |req: &Request<ScanFromRunRequest>| {
+                function(move |req: &Request<proto::ScanFromRunRequest>| {
                     let inner = req.get_ref();
                     inner.run_ids == vec![buf_run_id.to_string()]
                         && inner.exclusive_start_key == exclusive_start_key.to_string()
@@ -821,7 +827,7 @@ mod tests {
 
         let reader = MyReader::new_for_test(forest, table_cache, Arc::new(mock_conn));
 
-        let request = ScanRequest {
+        let request = proto::ScanRequest {
             table_name: table_name.to_string(),
             exclusive_start_key: exclusive_start_key.to_string(),
             max_results: 2,

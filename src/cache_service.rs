@@ -4,8 +4,7 @@ use futures::{Stream, StreamExt, TryStreamExt, pin_mut};
 use thiserror::Error;
 use tonic::{Request, Response, Status};
 
-use crate::proto::cache_service_server::CacheService;
-use crate::runs::{RunError, RunId, WriteOperation};
+use crate::runs::{RunError, RunId, SearchResult, WriteOperation, read_run_stream, search_run};
 use crate::storage::{self, StorageCache};
 use crate::{k_way, metadata, proto};
 
@@ -27,7 +26,7 @@ impl MyCache {
 }
 
 #[tonic::async_trait]
-impl CacheService for MyCache {
+impl proto::cache_service_server::CacheService for MyCache {
     async fn get_from_run(
         &self,
         request: Request<proto::GetFromRunRequest>,
@@ -51,26 +50,24 @@ impl CacheService for MyCache {
                 },
             };
 
-            remaining_keys.retain(|key| {
-                match crate::runs::search_run(run.as_ref(), key.as_str()) {
-                    crate::runs::SearchResult::Found(value) => {
-                        response.items.push(proto::GetFromRunItem {
-                            key: key.clone(),
-                            result: Some(proto::get_from_run_item::Result::Value(value)),
-                        });
+            remaining_keys.retain(|key| match search_run(run.as_ref(), key.as_str()) {
+                SearchResult::Found(value) => {
+                    response.items.push(proto::GetFromRunItem {
+                        key: key.clone(),
+                        result: Some(proto::get_from_run_item::Result::Value(value)),
+                    });
 
-                        false
-                    },
-                    crate::runs::SearchResult::Tombstone => {
-                        response.items.push(proto::GetFromRunItem {
-                            key: key.clone(),
-                            result: Some(proto::get_from_run_item::Result::Deleted(())),
-                        });
+                    false
+                },
+                SearchResult::Tombstone => {
+                    response.items.push(proto::GetFromRunItem {
+                        key: key.clone(),
+                        result: Some(proto::get_from_run_item::Result::Deleted(())),
+                    });
 
-                        false
-                    },
-                    crate::runs::SearchResult::NotFound => true,
-                }
+                    false
+                },
+                SearchResult::NotFound => true,
             });
         }
 
@@ -106,8 +103,7 @@ impl CacheService for MyCache {
                     )));
                 },
             };
-            let stream =
-                crate::runs::read_run_stream(futures::stream::once(futures::future::ok(run_data)));
+            let stream = read_run_stream(futures::stream::once(futures::future::ok(run_data)));
 
             let filtered_stream = {
                 let exclusive_start_key = exclusive_start_key.clone();
@@ -163,8 +159,9 @@ mod tests {
     use futures::{TryStreamExt, stream};
 
     use super::*;
-    use crate::proto::{self, GetFromRunRequest, ScanFromRunRequest};
-    use crate::runs::{RunError, RunId, Stats, WriteOperation};
+    use crate::proto;
+    use crate::proto::cache_service_server::CacheService;
+    use crate::runs::{RunError, RunId, Stats, WriteOperation, build_runs};
     use crate::storage::ObjectStore;
     use crate::test_utils::{docker_is_available, setup_test_object_store};
 
@@ -175,8 +172,7 @@ mod tests {
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let ops_stream = stream::iter(operations.into_iter().map(Ok::<_, RunError>));
 
-        let mut run_items: Vec<(Bytes, Stats)> =
-            crate::runs::build_runs(ops_stream).try_collect().await?;
+        let mut run_items: Vec<(Bytes, Stats)> = build_runs(ops_stream).try_collect().await?;
 
         if run_items.len() != 1 {
             return Err(format!(
@@ -225,7 +221,7 @@ mod tests {
             .await
             .unwrap();
 
-        let request = Request::new(GetFromRunRequest {
+        let request = Request::new(proto::GetFromRunRequest {
             run_ids: vec![run_id_str],
             keys: vec!["key1".to_string(), "key3".to_string(), "key4".to_string()],
         });
@@ -242,7 +238,7 @@ mod tests {
 
         match results_map.get("key1") {
             Some(Some(proto::get_from_run_item::Result::Value(val))) => {
-                assert_eq!(val, &Bytes::from("value1"));
+                assert_eq!(val, b"value1");
             },
             _ => panic!(
                 "key1 not found or incorrect result type. Actual: {:?}",
@@ -283,7 +279,7 @@ mod tests {
             .await
             .unwrap();
 
-        let request_all = Request::new(ScanFromRunRequest {
+        let request_all = Request::new(proto::ScanFromRunRequest {
             run_ids: vec![run_id_str.clone()],
             exclusive_start_key: "".to_string(),
             max_results: 10,
@@ -300,7 +296,7 @@ mod tests {
         assert_eq!(inner_all.items[2], expected_items[2]);
         assert_eq!(inner_all.items[3], expected_items[3]);
 
-        let request_max_puts = Request::new(ScanFromRunRequest {
+        let request_max_puts = Request::new(proto::ScanFromRunRequest {
             run_ids: vec![run_id_str.clone()],
             exclusive_start_key: "".to_string(),
             max_results: 2,
@@ -313,7 +309,7 @@ mod tests {
         assert_eq!(inner_max_puts.items[1], expected_items[1]);
         assert_eq!(inner_max_puts.items[2], expected_items[2]);
 
-        let request_start_key = Request::new(ScanFromRunRequest {
+        let request_start_key = Request::new(proto::ScanFromRunRequest {
             run_ids: vec![run_id_str.clone()],
             exclusive_start_key: "b_key2".to_string(),
             max_results: 10,
@@ -328,7 +324,7 @@ mod tests {
         assert_eq!(inner_start_key.items[0], expected_items[2]);
         assert_eq!(inner_start_key.items[1], expected_items[3]);
 
-        let request_invalid_max_zero = Request::new(ScanFromRunRequest {
+        let request_invalid_max_zero = Request::new(proto::ScanFromRunRequest {
             run_ids: vec![run_id_str.clone()],
             exclusive_start_key: "".to_string(),
             max_results: 0,
@@ -340,7 +336,7 @@ mod tests {
                 .is_err()
         );
 
-        let request_invalid_max_large = Request::new(ScanFromRunRequest {
+        let request_invalid_max_large = Request::new(proto::ScanFromRunRequest {
             run_ids: vec![run_id_str.clone()],
             exclusive_start_key: "".to_string(),
             max_results: 10001,
@@ -392,7 +388,7 @@ mod tests {
         let proto_items2: Vec<proto::GetFromRunItem> =
             ops2.iter().cloned().map(Into::into).collect();
 
-        let request = Request::new(ScanFromRunRequest {
+        let request = Request::new(proto::ScanFromRunRequest {
             run_ids: vec![run_id_2_str.clone(), run_id_1_str.clone()],
             exclusive_start_key: "".to_string(),
             max_results: 10,

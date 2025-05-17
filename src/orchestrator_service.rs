@@ -10,7 +10,7 @@ use crate::metadata::{
     JobParams, Level, MetadataError, MetadataStore, SeqNo, SnapshotID, TableConfig, TableID,
     TableName,
 };
-use crate::proto::orchestrator_service_server::OrchestratorService;
+use crate::runs::Stats;
 use crate::storage::{self, ObjectStore};
 use crate::{Config, metadata, proto};
 
@@ -104,7 +104,7 @@ impl MyOrchestrator {
                 .wal
                 .values()
                 .map(|r| match &r.stats {
-                    crate::runs::Stats::StatsV1(stats) => stats.size_bytes,
+                    Stats::StatsV1(stats) => stats.size_bytes,
                 })
                 .sum::<u64>();
 
@@ -123,7 +123,7 @@ impl MyOrchestrator {
                     .buffer
                     .values()
                     .map(|r| match &r.stats {
-                        crate::runs::Stats::StatsV1(stats) => stats.size_bytes,
+                        Stats::StatsV1(stats) => stats.size_bytes,
                     })
                     .sum::<u64>();
 
@@ -147,7 +147,7 @@ impl MyOrchestrator {
                     let total_level_size = runs
                         .values()
                         .map(|r| match &r.stats {
-                            crate::runs::Stats::StatsV1(stats) => stats.size_bytes,
+                            Stats::StatsV1(stats) => stats.size_bytes,
                         })
                         .sum::<u64>();
 
@@ -352,7 +352,7 @@ impl MyOrchestrator {
 }
 
 #[tonic::async_trait]
-impl OrchestratorService for MyOrchestrator {
+impl proto::orchestrator_service_server::OrchestratorService for MyOrchestrator {
     async fn dump_snapshot(
         &self,
         _request: Request<proto::DumpSnapshotRequest>,
