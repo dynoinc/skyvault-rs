@@ -35,6 +35,8 @@ Skyvault is a high-performance, scalable object-store backed key-value store.
 1. Run `just build` to build skyvault and push container image to minikube.
 2. Run `just deploy` to start everything in k8s.
 3. Run `just smoke` to run some simple smoke tests against this.
+4. Set the `SENTRY_DSN` environment variable if you want errors reported to
+   Sentry.
 
 ## Security
 

@@ -21,6 +21,7 @@ pub mod metrics;
 pub mod orchestrator_service;
 pub mod reader_service;
 pub mod storage;
+pub mod telemetry;
 pub mod writer_service;
 
 mod consistent_hashring;

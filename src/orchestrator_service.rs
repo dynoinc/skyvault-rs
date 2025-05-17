@@ -78,7 +78,7 @@ impl MyOrchestrator {
                 Ok(Some((_, seq_no))) => i64::from(state.seq_no) - i64::from(seq_no) > 5000,
                 Ok(None) => i64::from(state.seq_no) > 5000,
                 Err(e) => {
-                    tracing::error!("Failed to get latest snapshot ID: {}", e);
+                    tracing::error!(error = %e, "Failed to get latest snapshot ID");
                     false
                 },
             } {
@@ -91,7 +91,7 @@ impl MyOrchestrator {
                         );
                     },
                     Err(e) => {
-                        tracing::error!("Failed to persist snapshot: {}", e);
+                        tracing::error!(error = %e, "Failed to persist snapshot");
                     },
                 }
             }
@@ -111,7 +111,7 @@ impl MyOrchestrator {
                 );
 
                 if let Err(e) = self.metadata.schedule_job(JobParams::WALCompaction).await {
-                    tracing::error!("Failed to schedule WAL compaction: {}", e);
+                    tracing::error!(error = %e, "Failed to schedule WAL compaction");
                 }
             }
 
@@ -135,7 +135,7 @@ impl MyOrchestrator {
                         .schedule_job(JobParams::TableBufferCompaction(*table_id))
                         .await
                     {
-                        tracing::error!("Failed to schedule table buffer compaction: {}", e);
+                        tracing::error!(error = %e, "Failed to schedule table buffer compaction");
                     }
                 }
 
@@ -159,7 +159,7 @@ impl MyOrchestrator {
                             .schedule_job(JobParams::TableTreeCompaction(*table_id, *level))
                             .await
                         {
-                            tracing::error!("Failed to schedule table tree compaction: {}", e);
+                            tracing::error!(error = %e, "Failed to schedule table tree compaction");
                         }
                     }
 
@@ -171,7 +171,7 @@ impl MyOrchestrator {
             let pending_jobs = match self.metadata.get_pending_jobs().await {
                 Ok(jobs) => jobs,
                 Err(e) => {
-                    tracing::error!("Failed to get pending jobs: {}", e);
+                    tracing::error!(error = %e, "Failed to get pending jobs");
                     continue;
                 },
             };
@@ -182,7 +182,7 @@ impl MyOrchestrator {
                         tracing::info!("Kicking off WAL compaction job with ID: {}", id);
                         if let Err(e) = self.create_k8s_job(id.to_string(), "wal-compaction").await
                         {
-                            tracing::error!("Failed to create k8s job for WAL compaction: {}", e);
+                            tracing::error!(error = %e, "Failed to create k8s job for WAL compaction");
                         }
                     },
                     (id, JobParams::TableBufferCompaction(_)) => {
@@ -191,10 +191,7 @@ impl MyOrchestrator {
                             .create_k8s_job(id.to_string(), "table-buffer-compaction")
                             .await
                         {
-                            tracing::error!(
-                                "Failed to create k8s job for table buffer compaction: {}",
-                                e
-                            );
+                            tracing::error!(error = %e, "Failed to create k8s job for table buffer compaction");
                         }
                     },
                     (id, JobParams::TableTreeCompaction(_, _)) => {
@@ -203,10 +200,7 @@ impl MyOrchestrator {
                             .create_k8s_job(id.to_string(), "table-tree-compaction")
                             .await
                         {
-                            tracing::error!(
-                                "Failed to create k8s job for table tree compaction: {}",
-                                e
-                            );
+                            tracing::error!(error = %e, "Failed to create k8s job for table tree compaction");
                         }
                     },
                 }

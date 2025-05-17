@@ -61,7 +61,7 @@ impl ConsistentHashCM {
                         hashring_clone.lock().unwrap().remove_node(&pod);
                     },
                     Err(e) => {
-                        error!("Error watching pods: {e}");
+                        error!(error = %e, "Error watching pods");
                     },
                 }
             }
@@ -101,7 +101,7 @@ impl ConsistentHashCM {
 
 #[tonic::async_trait]
 impl ConnectionManager for ConsistentHashCM {
-    #[tracing::instrument(skip(self), level = "debug")]
+    #[tracing::instrument(skip(self, request), level = "debug", fields(client_addr = ?request.remote_addr()))]
     async fn table_get_batch_run(
         &self,
         routing_key: String,
@@ -129,7 +129,7 @@ impl ConnectionManager for ConsistentHashCM {
         run_conn.get_from_run(request).await
     }
 
-    #[tracing::instrument(skip(self), level = "debug")]
+    #[tracing::instrument(skip(self, request), level = "debug", fields(client_addr = ?request.remote_addr()))]
     async fn table_scan_run(
         &self,
         routing_key: String,
@@ -519,7 +519,7 @@ impl MyReader {
             })
             .take(request.max_results as usize)
             .map_err(|run_error: RunError| {
-                error!("Error during k-way merge or run scan: {}", run_error);
+                error!(error = %run_error, "Error during k-way merge or run scan");
                 Status::internal(format!("Scan failed: {run_error}"))
             })
             .try_collect::<Vec<_>>()

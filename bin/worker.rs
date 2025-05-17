@@ -5,9 +5,8 @@ use clap::Parser;
 use rustls::crypto::aws_lc_rs;
 use skyvault::config::{PostgresConfig, S3Config};
 use skyvault::metadata::JobID;
-use skyvault::{jobs, k8s, metadata, storage};
+use skyvault::{jobs, k8s, metadata, storage, telemetry};
 use tracing::info;
-use tracing_subscriber::EnvFilter;
 
 #[derive(Debug, Parser)]
 #[command(name = "worker", about = "A worker for skyvault.")]
@@ -24,13 +23,7 @@ pub struct Config {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .compact()
-        .with_file(true)
-        .with_line_number(true)
-        .with_thread_ids(true)
-        .with_env_filter(EnvFilter::from_default_env())
-        .init();
+    let _sentry = telemetry::init();
 
     aws_lc_rs::default_provider()
         .install_default()
