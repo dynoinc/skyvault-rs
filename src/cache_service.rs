@@ -166,7 +166,7 @@ mod tests {
     use crate::proto::{self, GetFromRunRequest, ScanFromRunRequest};
     use crate::runs::{RunError, RunId, Stats, WriteOperation};
     use crate::storage::ObjectStore;
-    use crate::test_utils::setup_test_object_store;
+    use crate::test_utils::{docker_is_available, setup_test_object_store};
 
     async fn create_and_store_run(
         object_store: &ObjectStore,
@@ -194,6 +194,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_my_cache_new() {
+        if !docker_is_available() {
+            eprintln!("Docker not running - skipping test");
+            return;
+        }
         let (object_store, _container) = setup_test_object_store().await.unwrap();
         let cache = MyCache::new(object_store).await;
         assert!(cache.is_ok());
@@ -201,6 +205,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_from_run_simple() {
+        if !docker_is_available() {
+            eprintln!("Docker not running - skipping test");
+            return;
+        }
         let (object_store, _container) = setup_test_object_store().await.unwrap();
         let cache_service = MyCache::new(object_store.clone()).await.unwrap();
 
@@ -255,6 +263,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_scan_from_run_simple() {
+        if !docker_is_available() {
+            eprintln!("Docker not running - skipping test");
+            return;
+        }
         let (object_store, _container) = setup_test_object_store().await.unwrap();
         let cache_service = MyCache::new(object_store.clone()).await.unwrap();
 
@@ -343,6 +355,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_scan_from_run_multiple_runs() {
+        if !docker_is_available() {
+            eprintln!("Docker not running - skipping test");
+            return;
+        }
         let (object_store, _container) = setup_test_object_store().await.unwrap();
         let cache_service = MyCache::new(object_store.clone()).await.unwrap();
 
