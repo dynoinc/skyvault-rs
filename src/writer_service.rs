@@ -5,8 +5,8 @@ use thiserror::Error;
 use tonic::{Request, Response, Status};
 
 use crate::metadata::TableName;
-use crate::proto::writer_service_server::WriterService;
 use crate::proto::{self};
+use crate::runs::{RunError as RunsError, RunId, WriteOperation, build_runs};
 use crate::{metadata, storage};
 
 #[derive(Error, Debug)]
@@ -18,14 +18,14 @@ pub enum WriterServiceError {
     StorageError(#[from] storage::StorageError),
 
     #[error("Run error: {0}")]
-    RunError(#[from] crate::runs::RunError),
+    RunError(#[from] RunsError),
 
     #[error("Internal error: {0}")]
     Internal(String),
 }
 
 struct WriteReq {
-    ops: Vec<crate::runs::WriteOperation>,
+    ops: Vec<WriteOperation>,
     tx: tokio::sync::oneshot::Sender<Result<metadata::SeqNo, Status>>,
 }
 
@@ -109,7 +109,7 @@ impl MyWriter {
     async fn process_batch(
         metadata: &metadata::MetadataStore,
         storage: &storage::ObjectStore,
-        batch: Vec<Vec<crate::runs::WriteOperation>>,
+        batch: Vec<Vec<WriteOperation>>,
     ) -> Result<metadata::SeqNo, WriterServiceError> {
         let sorted_ops = batch
             .into_iter()
@@ -118,11 +118,11 @@ impl MyWriter {
             .collect::<BTreeMap<_, _>>();
 
         let ops_stream = futures::stream::iter(sorted_ops.into_values().map(Ok));
-        let wal_runs: Vec<_> = crate::runs::build_runs(ops_stream).try_collect().await?;
+        let wal_runs: Vec<_> = build_runs(ops_stream).try_collect().await?;
 
         let mut wal_run_ids = Vec::new();
         for (run_data, stats) in wal_runs {
-            let run_id = crate::runs::RunId(ulid::Ulid::new().to_string());
+            let run_id = RunId(ulid::Ulid::new().to_string());
             storage.put_run(run_id.clone(), run_data).await?;
             wal_run_ids.push((run_id, stats));
         }
@@ -133,7 +133,7 @@ impl MyWriter {
 }
 
 #[tonic::async_trait]
-impl WriterService for MyWriter {
+impl proto::writer_service_server::WriterService for MyWriter {
     async fn write_batch(
         &self,
         req: Request<proto::WriteBatchRequest>,
@@ -142,7 +142,7 @@ impl WriterService for MyWriter {
             return Err(Status::invalid_argument("No writes provided"));
         }
 
-        let mut ops: Vec<crate::runs::WriteOperation> = Vec::new();
+        let mut ops: Vec<WriteOperation> = Vec::new();
         for mut table in req.into_inner().tables.drain(..) {
             if table.table_name.is_empty() || table.table_name.contains(".") {
                 return Err(Status::invalid_argument(
@@ -159,10 +159,10 @@ impl WriterService for MyWriter {
                 let key = format!("{}.{}", table_id, item.key);
                 match item.operation {
                     Some(proto::write_batch_item::Operation::Value(value)) => {
-                        ops.push(crate::runs::WriteOperation::Put(key, value));
+                        ops.push(WriteOperation::Put(key, value));
                     },
                     None => {
-                        ops.push(crate::runs::WriteOperation::Delete(key));
+                        ops.push(WriteOperation::Delete(key));
                     },
                 }
             }
@@ -188,6 +188,7 @@ impl WriterService for MyWriter {
 mod tests {
     use super::*;
     use crate::metadata::TableConfig;
+    use crate::proto::writer_service_server::WriterService;
     use crate::test_utils::{setup_test_db, setup_test_object_store};
 
     #[tokio::test]

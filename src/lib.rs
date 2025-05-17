@@ -7,10 +7,6 @@ use clap::Parser;
 use k8s_openapi::api::core::v1::Secret;
 use kube::Client;
 use kube::api::Api;
-use proto::cache_service_server::CacheServiceServer;
-use proto::orchestrator_service_server::OrchestratorServiceServer;
-use proto::reader_service_server::ReaderServiceServer;
-use proto::writer_service_server::WriterServiceServer;
 use tonic::transport::Server;
 use tonic_health::ServingStatus;
 
@@ -190,7 +186,9 @@ pub async fn server(
             )
             .await;
 
-        builder = builder.add_service(WriterServiceServer::new(writer));
+        builder = builder.add_service(proto::writer_service_server::WriterServiceServer::new(
+            writer,
+        ));
     }
 
     if config.enable_reader {
@@ -215,8 +213,10 @@ pub async fn server(
             )
             .await;
 
-        builder = builder.add_service(ReaderServiceServer::new(reader));
-        builder = builder.add_service(CacheServiceServer::new(cache));
+        builder = builder.add_service(proto::reader_service_server::ReaderServiceServer::new(
+            reader,
+        ));
+        builder = builder.add_service(proto::cache_service_server::CacheServiceServer::new(cache));
     }
 
     if config.enable_orchestrator {
@@ -233,7 +233,9 @@ pub async fn server(
             )
             .await;
 
-        builder = builder.add_service(OrchestratorServiceServer::new(orchestrator));
+        builder = builder.add_service(
+            proto::orchestrator_service_server::OrchestratorServiceServer::new(orchestrator),
+        );
     }
 
     builder
