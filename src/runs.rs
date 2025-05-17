@@ -603,92 +603,60 @@ mod tests {
                 // Verify searches
                 for original_op in &original_ops {
                     let search_key = original_op.key();
-                    let mut _found_in_a_run = false;
                     let expected_search_result = match original_op {
                         WriteOperation::Put(_, value) => SearchResult::Found(value.clone()),
                         WriteOperation::Delete(_) => SearchResult::Tombstone,
                     };
 
+                    let mut found_in_run = false;
                     for (run_data, stats) in &built_runs {
-                        // Optimization: Only search in runs that could contain the key
                         let s = match stats {
                             Stats::StatsV1(s) => s,
                         };
                         if search_key >= s.min_key.as_str() && search_key <= s.max_key.as_str() {
                             let result = search_run(run_data, search_key);
-                            // If found, it must match. If not found, it might be in another run (if multiple runs)
-                            // or it's a NotFound/Tombstone. The last run containing the key range determines the result.
-                            match result {
-                                SearchResult::Found(_) => {
-                                    if let WriteOperation::Put(_, ov) = original_op {
-                                        prop_assert_eq!(&result, &SearchResult::Found(ov.clone()),
-                                            "Search for PUT key {} produced {:?}, expected {:?}, in run with stats {:?}",
-                                            search_key, result, SearchResult::Found(ov.clone()), s
-                                        );
-                                        _found_in_a_run = true;
-                                    }
-                                    // If the original op was a delete but we found a value, it's an error if this is the "definitive" run.
-                                },
-                                SearchResult::Tombstone => {
-                                    if let WriteOperation::Delete(_) = original_op {
-                                         prop_assert_eq!(&result, &SearchResult::Tombstone,
-                                            "Search for DELETE key {} produced {:?}, expected {:?}, in run with stats {:?}",
-                                            search_key, result, SearchResult::Tombstone, s
-                                         );
-                                        _found_in_a_run = true;
-                                    }
-                                },
-                                SearchResult::NotFound => {
-                                    // This is okay, key might be in a different run or genuinely not found if it was deleted
-                                    // and this run doesn't cover it, or if it was never inserted.
-                                }
+                            if !found_in_run {
+                                prop_assert_eq!(result.clone(), expected_search_result.clone(),
+                                    "Search for key {} produced {:?}, expected {:?}, in run with stats {:?}",
+                                    search_key, result, expected_search_result, s
+                                );
+                                found_in_run = true;
+                            } else {
+                                prop_assert_eq!(result.clone(), SearchResult::NotFound,
+                                    "Search for key {} in subsequent run produced {:?}, expected NotFound, in run with stats {:?}",
+                                    search_key, result, s
+                                );
                             }
                         }
                     }
 
-                    // After checking all runs, if we expected to find it (Put/Delete), it should have been found.
-                    // This logic gets tricky with multiple runs and sparse keys.
-                    // A simpler check: iterate through built_runs. The *last* run that *could* contain the key
-                    // (based on min_key/max_key) determines the result.
-                    let mut final_search_outcome = SearchResult::NotFound;
-                    for (run_data, stats) in built_runs.iter().rev() { // Iterate runs in reverse
-                        let s = match stats {
-                            Stats::StatsV1(s) => s,
-                        };
-                        if search_key >= s.min_key.as_str() && search_key <= s.max_key.as_str() {
-                            final_search_outcome = search_run(run_data, search_key);
-                            break; // Found the definitive run for this key
-                        }
+                    if !found_in_run {
+                        prop_assert_eq!(SearchResult::NotFound, expected_search_result.clone(),
+                            "Search for key {} not found in any run, expected {:?}",
+                            search_key, expected_search_result
+                        );
                     }
-                    let final_outcome_clone = final_search_outcome.clone();
-                    let expected_result_clone = expected_search_result.clone();
-                    prop_assert_eq!(final_outcome_clone, expected_result_clone,
-                        "Search for key {} (original op: {:?}) yielded {:?}, expected {:?}. Original ops count: {}",
-                        search_key, original_op, final_search_outcome, expected_search_result, original_ops.len());
                 }
 
                 // Test a few keys not in the original map
                 for i in 0..5 {
                     let non_existent_key = format!("__PROPTTest_NON_EXISTENT_KEY_{}__", i);
-                    if ops_map.contains_key(&non_existent_key) { // Highly unlikely but good to check
+                    if ops_map.contains_key(&non_existent_key) {
                         continue;
                     }
 
-                    let mut final_search_outcome_for_non_existent = SearchResult::NotFound;
-                    for (run_data, stats) in built_runs.iter().rev() {
+                    for (run_data, stats) in &built_runs {
                         let s = match stats {
                             Stats::StatsV1(s) => s,
                         };
                         if non_existent_key.as_str() >= s.min_key.as_str() && non_existent_key.as_str() <= s.max_key.as_str() {
-                            final_search_outcome_for_non_existent = search_run(run_data, &non_existent_key);
-                            break;
+                            let result = search_run(run_data, &non_existent_key);
+                            prop_assert_eq!(result.clone(), SearchResult::NotFound,
+                                "Search for non-existent key {} yielded {:?}, expected NotFound",
+                                non_existent_key, result
+                            );
                         }
                     }
-                    let non_existent_outcome_clone = final_search_outcome_for_non_existent.clone();
-                    prop_assert_eq!(non_existent_outcome_clone, SearchResult::NotFound,
-                        "Search for non-existent key {} yielded {:?}, expected NotFound",
-                        non_existent_key, final_search_outcome_for_non_existent
-                    );
                 }
 
                 Ok(())
