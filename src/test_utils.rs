@@ -1,9 +1,9 @@
+use std::process::{Command, Stdio};
 use std::sync::Arc;
 
 use aws_config::{BehaviorVersion, Region, SdkConfig};
 use aws_sdk_s3::Client as S3Client;
 use aws_sdk_s3::config::{Credentials, SharedCredentialsProvider};
-use std::process::{Command, Stdio};
 use testcontainers_modules::minio;
 use testcontainers_modules::postgres::Postgres;
 use testcontainers_modules::testcontainers::ContainerAsync;

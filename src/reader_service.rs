@@ -664,33 +664,30 @@ mod tests {
             (table_id, TableConfig::default()),
         )]));
 
-        let forest = create_test_forest(
-            SeqNo::from(1),
-            vec![
-                RunMetadata {
-                    id: wal_run_id.clone(),
-                    belongs_to: BelongsTo::WalSeqNo(SeqNo::from(1)),
-                    stats: Stats::StatsV1(StatsV1 {
-                        min_key: "".to_string(),
-                        max_key: "".to_string(),
-                        put_count: 0,
-                        delete_count: 0,
-                        size_bytes: 0,
-                    }),
-                },
-                RunMetadata {
-                    id: buf_run_id.clone(),
-                    belongs_to: BelongsTo::TableBuffer(table_id, SeqNo::from(1)),
-                    stats: Stats::StatsV1(StatsV1 {
-                        min_key: "".to_string(),
-                        max_key: "".to_string(),
-                        put_count: 0,
-                        delete_count: 0,
-                        size_bytes: 0,
-                    }),
-                },
-            ],
-        )
+        let forest = create_test_forest(SeqNo::from(1), vec![
+            RunMetadata {
+                id: wal_run_id.clone(),
+                belongs_to: BelongsTo::WalSeqNo(SeqNo::from(1)),
+                stats: Stats::StatsV1(StatsV1 {
+                    min_key: "".to_string(),
+                    max_key: "".to_string(),
+                    put_count: 0,
+                    delete_count: 0,
+                    size_bytes: 0,
+                }),
+            },
+            RunMetadata {
+                id: buf_run_id.clone(),
+                belongs_to: BelongsTo::TableBuffer(table_id, SeqNo::from(1)),
+                stats: Stats::StatsV1(StatsV1 {
+                    min_key: "".to_string(),
+                    max_key: "".to_string(),
+                    put_count: 0,
+                    delete_count: 0,
+                    size_bytes: 0,
+                }),
+            },
+        ])
         .await;
 
         let mut mock_conn = MockConnectionManager::new();
@@ -761,33 +758,30 @@ mod tests {
             (table_id, TableConfig::default()),
         )]));
 
-        let forest = create_test_forest(
-            SeqNo::from(1),
-            vec![
-                RunMetadata {
-                    id: wal_run_id.clone(),
-                    belongs_to: BelongsTo::WalSeqNo(SeqNo::from(1)),
-                    stats: Stats::StatsV1(StatsV1 {
-                        min_key: "".to_string(),
-                        max_key: "".to_string(),
-                        put_count: 0,
-                        delete_count: 0,
-                        size_bytes: 0,
-                    }),
-                },
-                RunMetadata {
-                    id: buf_run_id.clone(),
-                    belongs_to: BelongsTo::TableBuffer(table_id, SeqNo::from(1)),
-                    stats: Stats::StatsV1(StatsV1 {
-                        min_key: "".to_string(),
-                        max_key: "".to_string(),
-                        put_count: 0,
-                        delete_count: 0,
-                        size_bytes: 0,
-                    }),
-                },
-            ],
-        )
+        let forest = create_test_forest(SeqNo::from(1), vec![
+            RunMetadata {
+                id: wal_run_id.clone(),
+                belongs_to: BelongsTo::WalSeqNo(SeqNo::from(1)),
+                stats: Stats::StatsV1(StatsV1 {
+                    min_key: "".to_string(),
+                    max_key: "".to_string(),
+                    put_count: 0,
+                    delete_count: 0,
+                    size_bytes: 0,
+                }),
+            },
+            RunMetadata {
+                id: buf_run_id.clone(),
+                belongs_to: BelongsTo::TableBuffer(table_id, SeqNo::from(1)),
+                stats: Stats::StatsV1(StatsV1 {
+                    min_key: "".to_string(),
+                    max_key: "".to_string(),
+                    put_count: 0,
+                    delete_count: 0,
+                    size_bytes: 0,
+                }),
+            },
+        ])
         .await;
 
         let mut mock_conn = MockConnectionManager::new();

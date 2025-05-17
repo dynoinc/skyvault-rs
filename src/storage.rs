@@ -1,8 +1,6 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
-use crate::metadata::SnapshotID;
-use crate::runs::RunId;
 use async_trait::async_trait;
 use aws_sdk_s3::Client as S3Client;
 use aws_sdk_s3::operation::create_bucket::CreateBucketError;
@@ -13,6 +11,9 @@ use aws_smithy_runtime_api::client::orchestrator::HttpResponse;
 use aws_smithy_runtime_api::client::result::SdkError;
 use bytes::Bytes;
 use thiserror::Error;
+
+use crate::metadata::SnapshotID;
+use crate::runs::RunId;
 
 #[derive(Error, Debug)]
 pub enum StorageError {

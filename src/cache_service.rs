@@ -159,12 +159,11 @@ mod tests {
     use futures::{TryStreamExt, stream};
 
     use super::*;
-    use crate::requires_docker;
-    use crate::proto;
     use crate::proto::cache_service_server::CacheService;
     use crate::runs::{RunError, RunId, Stats, WriteOperation, build_runs};
     use crate::storage::ObjectStore;
     use crate::test_utils::setup_test_object_store;
+    use crate::{proto, requires_docker};
 
     async fn create_and_store_run(
         object_store: &ObjectStore,

@@ -188,9 +188,9 @@ impl proto::writer_service_server::WriterService for MyWriter {
 mod tests {
     use super::*;
     use crate::metadata::TableConfig;
+    use crate::proto::writer_service_server::WriterService;
     use crate::requires_docker;
     use crate::test_utils::{setup_test_db, setup_test_object_store};
-    use crate::proto::writer_service_server::WriterService;
 
     #[tokio::test]
     async fn test_writer_service() {
