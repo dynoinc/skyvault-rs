@@ -5,7 +5,7 @@ use thiserror::Error;
 use tonic::{Request, Response, Status};
 
 use crate::proto::cache_service_server::CacheService;
-use crate::runs::{RunError, RunId, WriteOperation};
+use crate::prelude::*;
 use crate::storage::{self, StorageCache};
 use crate::{k_way, metadata, proto};
 
@@ -92,11 +92,11 @@ impl CacheService for MyCache {
         let exclusive_start_key = request.exclusive_start_key;
 
         type BoxedRunStream = Pin<Box<dyn Stream<Item = Result<WriteOperation, RunError>> + Send>>;
-        let mut streams_to_merge: Vec<(metadata::SeqNo, BoxedRunStream)> = Vec::new();
+        let mut streams_to_merge: Vec<(SeqNo, BoxedRunStream)> = Vec::new();
 
         for (index, run_id_str) in request.run_ids.into_iter().enumerate() {
             let run_id = RunId(run_id_str.clone());
-            let seq_no = metadata::SeqNo::from(i64::MAX - index as i64);
+            let seq_no = SeqNo::from(i64::MAX - index as i64);
             let run_data = match self.storage_cache.get_run(run_id).await {
                 Ok(run_data) => run_data,
                 Err(e) => {
@@ -164,7 +164,7 @@ mod tests {
 
     use super::*;
     use crate::proto::{self, GetFromRunRequest, ScanFromRunRequest};
-    use crate::runs::{RunError, RunId, Stats, WriteOperation};
+    use crate::prelude::*;
     use crate::storage::ObjectStore;
     use crate::test_utils::setup_test_object_store;
 

@@ -10,6 +10,7 @@ use aws_sdk_s3::primitives::{ByteStream, ByteStreamError};
 use aws_smithy_runtime_api::client::orchestrator::HttpResponse;
 use aws_smithy_runtime_api::client::result::SdkError;
 use bytes::Bytes;
+use crate::prelude::*;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -53,8 +54,8 @@ impl From<SdkError<GetObjectError, HttpResponse>> for StorageError {
 
 #[async_trait]
 pub trait ObjectStoreTrait: Send + Sync + 'static {
-    async fn put_run(&self, run_id: crate::runs::RunId, data: Bytes) -> Result<(), StorageError>;
-    async fn get_run(&self, run_id: crate::runs::RunId) -> Result<ByteStream, StorageError>;
+    async fn put_run(&self, run_id: RunId, data: Bytes) -> Result<(), StorageError>;
+    async fn get_run(&self, run_id: RunId) -> Result<ByteStream, StorageError>;
 
     async fn put_snapshot(
         &self,
@@ -117,7 +118,7 @@ impl ObjectStoreTrait for S3ObjectStore {
         }
     }
 
-    async fn put_run(&self, run_id: crate::runs::RunId, data: Bytes) -> Result<(), StorageError> {
+    async fn put_run(&self, run_id: RunId, data: Bytes) -> Result<(), StorageError> {
         let byte_stream = ByteStream::from(data);
 
         match self
@@ -163,7 +164,7 @@ impl ObjectStoreTrait for S3ObjectStore {
         Ok(bytes)
     }
 
-    async fn get_run(&self, run_id: crate::runs::RunId) -> Result<ByteStream, StorageError> {
+    async fn get_run(&self, run_id: RunId) -> Result<ByteStream, StorageError> {
         let key = format!("runs/{}", run_id);
         let response = match self
             .client
@@ -194,7 +195,7 @@ pub struct StorageCache {
     storage: ObjectStore,
 
     /// In-memory cache of run data
-    cache: Arc<RwLock<HashMap<crate::runs::RunId, Bytes>>>,
+    cache: Arc<RwLock<HashMap<RunId, Bytes>>>,
 }
 
 impl StorageCache {
@@ -207,7 +208,7 @@ impl StorageCache {
     }
 
     /// Get run data from cache or storage if not cached
-    pub async fn get_run(&self, run_id: crate::runs::RunId) -> Result<Bytes, StorageError> {
+    pub async fn get_run(&self, run_id: RunId) -> Result<Bytes, StorageError> {
         // First check if the run is in the cache
         {
             let cache = self.cache.read().unwrap();

@@ -4,7 +4,7 @@ use futures::TryStreamExt;
 use thiserror::Error;
 use tonic::{Request, Response, Status};
 
-use crate::metadata::TableName;
+use crate::prelude::*;
 use crate::proto::writer_service_server::WriterService;
 use crate::proto::{self};
 use crate::{metadata, storage};
@@ -18,26 +18,26 @@ pub enum WriterServiceError {
     StorageError(#[from] storage::StorageError),
 
     #[error("Run error: {0}")]
-    RunError(#[from] crate::runs::RunError),
+    RunError(#[from] RunError),
 
     #[error("Internal error: {0}")]
     Internal(String),
 }
 
 struct WriteReq {
-    ops: Vec<crate::runs::WriteOperation>,
-    tx: tokio::sync::oneshot::Sender<Result<metadata::SeqNo, Status>>,
+    ops: Vec<WriteOperation>,
+    tx: tokio::sync::oneshot::Sender<Result<SeqNo, Status>>,
 }
 
 pub struct MyWriter {
     tx: tokio::sync::mpsc::Sender<WriteReq>,
-    table_cache: metadata::TableCache,
+    table_cache: TableCache,
 }
 
 impl MyWriter {
     #[must_use]
     pub fn new(metadata: metadata::MetadataStore, storage: storage::ObjectStore) -> Self {
-        let table_cache = metadata::TableCache::new(metadata.clone());
+        let table_cache = TableCache::new(metadata.clone());
         let (tx, rx) = tokio::sync::mpsc::channel(100);
 
         tokio::spawn(async move {
@@ -109,8 +109,8 @@ impl MyWriter {
     async fn process_batch(
         metadata: &metadata::MetadataStore,
         storage: &storage::ObjectStore,
-        batch: Vec<Vec<crate::runs::WriteOperation>>,
-    ) -> Result<metadata::SeqNo, WriterServiceError> {
+        batch: Vec<Vec<WriteOperation>>,
+    ) -> Result<SeqNo, WriterServiceError> {
         let sorted_ops = batch
             .into_iter()
             .flat_map(|req| req.into_iter())
@@ -142,7 +142,7 @@ impl WriterService for MyWriter {
             return Err(Status::invalid_argument("No writes provided"));
         }
 
-        let mut ops: Vec<crate::runs::WriteOperation> = Vec::new();
+        let mut ops: Vec<WriteOperation> = Vec::new();
         for mut table in req.into_inner().tables.drain(..) {
             if table.table_name.is_empty() || table.table_name.contains(".") {
                 return Err(Status::invalid_argument(
@@ -159,10 +159,10 @@ impl WriterService for MyWriter {
                 let key = format!("{}.{}", table_id, item.key);
                 match item.operation {
                     Some(proto::write_batch_item::Operation::Value(value)) => {
-                        ops.push(crate::runs::WriteOperation::Put(key, value));
+                        ops.push(WriteOperation::Put(key, value));
                     },
                     None => {
-                        ops.push(crate::runs::WriteOperation::Delete(key));
+                        ops.push(WriteOperation::Delete(key));
                     },
                 }
             }
@@ -187,7 +187,7 @@ impl WriterService for MyWriter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::TableConfig;
+    use crate::TableConfig;
     use crate::test_utils::{setup_test_db, setup_test_object_store};
 
     #[tokio::test]

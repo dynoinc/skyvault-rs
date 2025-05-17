@@ -7,11 +7,9 @@ use prost::Message;
 use thiserror::Error;
 use tracing::{debug, error};
 
-use crate::metadata::{
-    self, ChangelogEntry, ChangelogEntryWithID, Level, MetadataError, MetadataStore, SeqNo, TableID,
-};
+use crate::prelude::*;
 use crate::storage::{ObjectStore, StorageError};
-use crate::{proto, runs};
+use crate::{metadata, proto, runs};
 
 #[derive(Error, Debug)]
 pub enum ForestError {
@@ -30,15 +28,15 @@ pub enum ForestError {
 
 #[derive(Default, Clone)]
 pub struct Table {
-    pub buffer: BTreeMap<metadata::SeqNo, metadata::RunMetadata>,
-    pub tree: BTreeMap<metadata::Level, BTreeMap<runs::Key, metadata::RunMetadata>>,
+    pub buffer: BTreeMap<SeqNo, RunMetadata>,
+    pub tree: BTreeMap<Level, BTreeMap<Key, RunMetadata>>,
 }
 
 #[derive(Default, Clone)]
 pub struct Snapshot {
-    pub seq_no: metadata::SeqNo,
-    pub wal: BTreeMap<metadata::SeqNo, metadata::RunMetadata>,
-    pub tables: HashMap<metadata::TableID, Table>,
+    pub seq_no: SeqNo,
+    pub wal: BTreeMap<SeqNo, RunMetadata>,
+    pub tables: HashMap<TableID, Table>,
 }
 
 impl From<Snapshot> for proto::Snapshot {
@@ -119,30 +117,30 @@ impl From<proto::Snapshot> for Snapshot {
 }
 
 impl Snapshot {
-    pub async fn from_raw<I>(seq_no: metadata::SeqNo, runs: I) -> Self
+    pub async fn from_raw<I>(seq_no: SeqNo, runs: I) -> Self
     where
-        I: IntoIterator<Item = metadata::RunMetadata>,
+        I: IntoIterator<Item = RunMetadata>,
     {
         let mut wal = BTreeMap::new();
         let mut tables: HashMap<_, Table> = HashMap::new();
 
         for run_metadata in runs {
             let min_key = match run_metadata.stats {
-                runs::Stats::StatsV1(ref stats) => stats.min_key.clone(),
+                Stats::StatsV1(ref stats) => stats.min_key.clone(),
             };
 
             match run_metadata.belongs_to {
-                metadata::BelongsTo::WalSeqNo(seq_no) => {
+                BelongsTo::WalSeqNo(seq_no) => {
                     wal.insert(seq_no, run_metadata);
                 },
-                metadata::BelongsTo::TableBuffer(ref table_id, seq_no) => {
+                BelongsTo::TableBuffer(ref table_id, seq_no) => {
                     tables
                         .entry(*table_id)
                         .or_default()
                         .buffer
                         .insert(seq_no, run_metadata);
                 },
-                metadata::BelongsTo::TableTree(ref table_id, level) => {
+                BelongsTo::TableTree(ref table_id, level) => {
                     tables
                         .entry(*table_id)
                         .or_default()
@@ -302,10 +300,10 @@ impl ForestImpl {
         // Add new runs
         for new_run in new_runs.into_values() {
             match new_run.belongs_to {
-                metadata::BelongsTo::WalSeqNo(seq_no) => {
+                BelongsTo::WalSeqNo(seq_no) => {
                     new_state.wal.insert(seq_no, new_run);
                 },
-                metadata::BelongsTo::TableBuffer(table_id, seq_no) => {
+                BelongsTo::TableBuffer(table_id, seq_no) => {
                     new_state
                         .tables
                         .entry(table_id)
@@ -313,9 +311,9 @@ impl ForestImpl {
                         .buffer
                         .insert(seq_no, new_run);
                 },
-                metadata::BelongsTo::TableTree(table_id, level) => {
+                BelongsTo::TableTree(table_id, level) => {
                     let min_key = match new_run.stats {
-                        runs::Stats::StatsV1(ref stats) => stats.min_key.clone(),
+                        Stats::StatsV1(ref stats) => stats.min_key.clone(),
                     };
 
                     new_state

@@ -33,6 +33,7 @@ mod k_way;
 pub mod metadata;
 mod pod_watcher;
 mod runs;
+pub mod prelude;
 pub mod storage;
 #[cfg(test)]
 pub mod test_utils;
