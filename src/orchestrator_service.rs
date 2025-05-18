@@ -2,13 +2,11 @@ use std::sync::Arc;
 
 use futures::{StreamExt, pin_mut};
 use kube::Error as KubeError;
-use k8s_openapi::api::batch::v1::Job;
-use kube::api::Api;
 use prost::Message;
 use thiserror::Error;
-use tonic::{Request, Response, Status};
 use tokio_retry::Retry;
 use tokio_retry::strategy::ExponentialBackoff;
+use tonic::{Request, Response, Status};
 
 use crate::forest::{Forest, ForestError, ForestImpl, Snapshot};
 use crate::job_watcher::{self, JobChange, JobWatcherError};
@@ -61,67 +59,8 @@ impl MyOrchestrator {
         dynamic_config: dynamic_config::SharedAppConfig,
     ) -> Result<Self, OrchestratorError> {
         let forest = ForestImpl::watch(metadata.clone(), storage.clone()).await?;
-
-        // Create a jobs map for tracking
         let known_jobs = Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
-        
-        // Initialize Kubernetes Jobs API
-        let jobs_api: Api<Job> = Api::namespaced(k8s_client.clone(), &namespace);
 
-        // Synchronize DB pending jobs with Kubernetes state on startup
-        tracing::info!("Starting initial synchronization of pending DB jobs with Kubernetes...");
-        match metadata.get_pending_jobs().await {
-            Ok(db_pending_jobs) => {
-                if db_pending_jobs.is_empty() {
-                    tracing::info!("No pending jobs found in the database to synchronize.");
-                } else {
-                    tracing::info!("Found {} pending job(s) in DB to synchronize with Kubernetes.", db_pending_jobs.len());
-                    let mut jobs_guard = known_jobs.write().await; // Acquire lock once for all updates
-
-                    for (db_job_id, db_job_params) in db_pending_jobs {
-                        let job_type_str = job_params_to_job_type_str(&db_job_params);
-                        let k8s_job_name = format!("{}-{}", job_type_str, db_job_id);
-
-                        tracing::debug!("Startup Sync: Checking K8s job '{}' (ID: {}) from DB.", k8s_job_name, db_job_id);
-
-                        match jobs_api.get_opt(&k8s_job_name).await {
-                            Ok(Some(k8s_job)) => {
-                                let succeeded = k8s_job.status.as_ref().and_then(|s| s.succeeded).map_or(false, |c| c > 0);
-                                let failed = k8s_job.status.as_ref().and_then(|s| s.failed).map_or(false, |c| c > 0);
-
-                                if succeeded {
-                                    tracing::info!("Startup Sync: K8s job '{}' (ID: {}) for DB pending job found as SUCCEEDED. Worker should handle DB update.", k8s_job_name, db_job_id);
-                                    // Optionally, if the job was in jobs_guard (e.g. from a quick previous watcher event before sync), remove it.
-                                    // jobs_guard.remove(&db_job_id); // Unlikely needed here as guard is for this sync pass
-                                } else if failed {
-                                    tracing::warn!("Startup Sync: K8s job '{}' (ID: {}) for DB pending job found as FAILED. Marking failed in DB.", k8s_job_name, db_job_id);
-                                    if let Err(e) = metadata.mark_job_failed(db_job_id).await {
-                                        tracing::error!("Startup Sync: Failed to mark job {} as failed in DB: {}", db_job_id, e);
-                                    }
-                                } else {
-                                    tracing::info!("Startup Sync: K8s job '{}' (ID: {}) for DB pending job found as ACTIVE in K8s. Adding to known_jobs.", k8s_job_name, db_job_id);
-                                    jobs_guard.insert(db_job_id, k8s_job_name.clone());
-                                }
-                            }
-                            Ok(None) => { // Job not found in Kubernetes
-                                tracing::warn!("Startup Sync: K8s job '{}' (ID: {}) for DB pending job NOT FOUND in K8s. Marking failed in DB.", k8s_job_name, db_job_id);
-                                if let Err(e) = metadata.mark_job_failed(db_job_id).await {
-                                    tracing::error!("Startup Sync: Failed to mark job {} (not found in K8s) as failed in DB: {}", db_job_id, e);
-                                }
-                            }
-                            Err(e) => {
-                                tracing::error!("Startup Sync: Error fetching K8s job '{}' (ID: {}): {}. Skipping sync for this job.", k8s_job_name, db_job_id, e);
-                            }
-                        }
-                    }
-                    tracing::info!("Initial synchronization of pending DB jobs complete. {} jobs now tracked.", jobs_guard.len());
-                }
-            }
-            Err(e) => {
-                tracing::error!("Startup Sync: Failed to get pending jobs from database: {}. Skipping synchronization.", e);
-            }
-        }
-        
         let orchestrator = Self {
             metadata,
             storage,
@@ -254,7 +193,7 @@ impl MyOrchestrator {
             }
 
             // Check if there are pending jobs to kickoff
-            let pending_jobs = match self.metadata.get_pending_jobs().await {
+            let pending_jobs_vec = match self.metadata.get_pending_jobs().await {
                 Ok(jobs) => jobs,
                 Err(e) => {
                     tracing::error!(error = %e, "Failed to get pending jobs");
@@ -262,42 +201,51 @@ impl MyOrchestrator {
                 },
             };
 
-            // Get a read lock on the job map to check which ones are already running
-            let known_jobs = self.known_jobs.read().await;
+            // Prune known_jobs: Remove entries that are no longer in pending_jobs_vec
+            // This handles cases where a job was completed/failed and removed from pending state by
+            // another process (e.g. worker)
+            let pending_job_ids_set: std::collections::HashSet<JobID> =
+                pending_jobs_vec.iter().map(|(id, _)| *id).collect();
+            self.known_jobs
+                .write()
+                .await
+                .retain(|job_id, _| pending_job_ids_set.contains(job_id));
 
-            for job in pending_jobs {
-                let current_job_id = job.0; // This is JobID
-
-                // Skip if this job is already known to be running in Kubernetes
-                if known_jobs.contains_key(&current_job_id) {
-                    tracing::debug!(
-                        "Skipping job ID: {} - already tracked in Kubernetes",
-                        current_job_id
-                    );
+            for (current_job_id, job_params) in pending_jobs_vec {
+                if self.known_jobs.read().await.contains_key(&current_job_id) {
                     continue;
                 }
 
-                match job {
-                    (id, JobParams::WALCompaction) => {
-                        tracing::info!("Kicking off WAL compaction job with ID: {}", id);
-                        if let Err(e) = self.create_k8s_job(id.to_string(), "wal-compaction").await
+                match job_params {
+                    JobParams::WALCompaction => {
+                        tracing::info!(
+                            "Kicking off WAL compaction job with ID: {}",
+                            current_job_id
+                        );
+                        if let Err(e) = self.create_k8s_job(current_job_id, "wal-compaction").await
                         {
                             tracing::error!(error = %e, "Failed to create k8s job for WAL compaction");
                         }
                     },
-                    (id, JobParams::TableBufferCompaction(_)) => {
-                        tracing::info!("Kicking off table buffer compaction job with ID: {}", id);
+                    JobParams::TableBufferCompaction(_) => {
+                        tracing::info!(
+                            "Kicking off table buffer compaction job with ID: {}",
+                            current_job_id
+                        );
                         if let Err(e) = self
-                            .create_k8s_job(id.to_string(), "table-buffer-compaction")
+                            .create_k8s_job(current_job_id, "table-buffer-compaction")
                             .await
                         {
                             tracing::error!(error = %e, "Failed to create k8s job for table buffer compaction");
                         }
                     },
-                    (id, JobParams::TableTreeCompaction(_, _)) => {
-                        tracing::info!("Kicking off table tree compaction job with ID: {}", id);
+                    JobParams::TableTreeCompaction(_, _) => {
+                        tracing::info!(
+                            "Kicking off table tree compaction job with ID: {}",
+                            current_job_id
+                        );
                         if let Err(e) = self
-                            .create_k8s_job(id.to_string(), "table-tree-compaction")
+                            .create_k8s_job(current_job_id, "table-tree-compaction")
                             .await
                         {
                             tracing::error!(error = %e, "Failed to create k8s job for table tree compaction");
@@ -321,53 +269,59 @@ impl MyOrchestrator {
                     pin_mut!(job_stream);
                     while let Some(job_event) = job_stream.next().await {
                         match job_event {
-                            Ok(job_change) => {
-                                match job_change {
-                                    JobChange::Added(job_id, job_name) => {
-                                        tracing::debug!(
-                                            "Job watcher: K8s job {} (ID: {}) ADDED. No action taken by watcher.",
-                                            job_name,
-                                            job_id
-                                        );
-                                    },
-                                    JobChange::Completed(job_id, job_name) => {
-                                        tracing::info!(
-                                            "Job watcher: K8s job {} (ID: {}) COMPLETED. No action taken by watcher.",
-                                            job_name,
-                                            job_id
-                                        );
-                                    },
-                                    JobChange::Failed(job_id, job_name) => {
-                                        tracing::warn!(
-                                            "Job watcher: K8s job '{}' (ID: {}) reported as FAILED/DELETED. Attempting to mark as failed in DB.",
-                                            job_name,
-                                            job_id
-                                        );
+                            Ok(job_change) => match job_change {
+                                JobChange::Added(job_id, job_name) => {
+                                    tracing::debug!(
+                                        "Job watcher: K8s job {} (ID: {}) ADDED. No action taken \
+                                         by watcher.",
+                                        job_name,
+                                        job_id
+                                    );
+                                },
+                                JobChange::Completed(job_id, job_name) => {
+                                    tracing::info!(
+                                        "Job watcher: K8s job {} (ID: {}) COMPLETED. No action \
+                                         taken by watcher.",
+                                        job_name,
+                                        job_id
+                                    );
+                                },
+                                JobChange::Failed(job_id, job_name) => {
+                                    tracing::warn!(
+                                        "Job watcher: K8s job '{}' (ID: {}) reported as \
+                                         FAILED/DELETED. Attempting to mark as failed in DB.",
+                                        job_name,
+                                        job_id
+                                    );
 
-                                        let retry_strategy = ExponentialBackoff::from_millis(100)
-                                            .max_delay(std::time::Duration::from_secs(2))
-                                            .take(3);
+                                    let retry_strategy = ExponentialBackoff::from_millis(100)
+                                        .max_delay(std::time::Duration::from_secs(2))
+                                        .take(3);
 
-                                        match Retry::spawn(retry_strategy, || async {
-                                            self.metadata.mark_job_failed(job_id).await
-                                        })
-                                        .await
-                                        {
-                                            Ok(_) => {
-                                                tracing::info!(
-                                                    "Job watcher: Successfully marked job {} (K8s name: '{}') as failed in DB.",
-                                                    job_id, job_name
-                                                );
-                                            }
-                                            Err(e) => {
-                                                tracing::warn!(
-                                                    "Job watcher failed to mark job {} (K8s name: '{}') as failed in DB after retries: {}",
-                                                    job_id, job_name, e
-                                                );
-                                            }
-                                        }
-                                    },
-                                }
+                                    match Retry::spawn(retry_strategy, || async {
+                                        self.metadata.mark_job_failed(job_id).await
+                                    })
+                                    .await
+                                    {
+                                        Ok(_) => {
+                                            tracing::info!(
+                                                "Job watcher: Successfully marked job {} (K8s \
+                                                 name: '{}') as failed in DB.",
+                                                job_id,
+                                                job_name
+                                            );
+                                        },
+                                        Err(e) => {
+                                            tracing::warn!(
+                                                "Job watcher failed to mark job {} (K8s name: \
+                                                 '{}') as failed in DB after retries: {}",
+                                                job_id,
+                                                job_name,
+                                                e
+                                            );
+                                        },
+                                    }
+                                },
                             },
                             Err(e) => {
                                 tracing::error!(error = %e, "Error in job watcher stream");
@@ -404,7 +358,7 @@ impl MyOrchestrator {
         Ok((snapshot_id, state.seq_no))
     }
 
-    async fn create_k8s_job(&self, job_id: String, job_type: &str) -> Result<(), kube::Error> {
+    async fn create_k8s_job(&self, job_id: JobID, job_type: &str) -> Result<(), kube::Error> {
         use k8s_openapi::api::batch::v1::Job;
         use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
         use kube::api::{Api, PostParams};
@@ -446,7 +400,7 @@ impl MyOrchestrator {
                             command: Some(vec![
                                 "/app/worker".to_string(),
                                 "--job-id".to_string(),
-                                job_id.clone(),
+                                job_id.to_string(),
                             ]),
                             image: std::env::var("SKYVAULT_IMAGE_ID").ok(),
                             env: Some(vec![
@@ -513,22 +467,20 @@ impl MyOrchestrator {
         match jobs.create(&PostParams::default(), &job).await {
             Ok(_) => {
                 tracing::info!("Created k8s job for job ID: {}", job_id);
+                // Add to known_jobs upon successful creation
+                let mut known_jobs_guard = self.known_jobs.write().await;
+                known_jobs_guard.insert(job_id, job_name);
                 Ok(())
             },
             Err(KubeError::Api(ae)) if ae.code == 409 && ae.reason == "AlreadyExists" => {
                 tracing::info!("Job '{}' already exists", job.metadata.name.unwrap());
+                // Add to known_jobs if K8s reports it already exists
+                let mut known_jobs_guard = self.known_jobs.write().await;
+                known_jobs_guard.insert(job_id, job_name);
                 Ok(())
             },
             Err(e) => Err(e),
         }
-    }
-}
-
-fn job_params_to_job_type_str(params: &JobParams) -> &'static str {
-    match params {
-        JobParams::WALCompaction => "wal-compaction",
-        JobParams::TableBufferCompaction(_) => "table-buffer-compaction",
-        JobParams::TableTreeCompaction(_, _) => "table-tree-compaction",
     }
 }
 

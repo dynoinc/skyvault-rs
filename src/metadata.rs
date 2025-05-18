@@ -1138,9 +1138,12 @@ impl MetadataStoreTrait for PostgresMetadataStore {
     }
 
     async fn mark_job_failed(&self, job_id: JobID) -> Result<(), MetadataError> {
-        sqlx::query!("UPDATE jobs SET status = 'failed' WHERE id = $1", job_id.0,)
-            .execute(&self.pg_pool)
-            .await?;
+        sqlx::query!(
+            "UPDATE jobs SET status = 'failed' WHERE id = $1 AND status = 'pending'",
+            job_id.0,
+        )
+        .execute(&self.pg_pool)
+        .await?;
 
         Ok(())
     }
