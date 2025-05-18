@@ -4,6 +4,7 @@ use futures::TryStreamExt;
 use thiserror::Error;
 use tonic::{Request, Response, Status};
 
+use crate::dynamic_config::SharedAppConfig;
 use crate::metadata::TableName;
 use crate::proto::{self};
 use crate::runs::{RunError as RunsError, RunId, WriteOperation};
@@ -36,12 +37,19 @@ pub struct MyWriter {
 
 impl MyWriter {
     #[must_use]
-    pub fn new(metadata: metadata::MetadataStore, storage: storage::ObjectStore) -> Self {
+    pub fn new(
+        metadata: metadata::MetadataStore,
+        storage: storage::ObjectStore,
+        dynamic_config: SharedAppConfig,
+    ) -> Self {
         let table_cache = metadata::TableCache::new(metadata.clone());
         let (tx, rx) = tokio::sync::mpsc::channel(100);
 
+        // Clone dynamic_config for the background task
+        let task_config = dynamic_config.clone();
+
         tokio::spawn(async move {
-            Self::process_batch_queue(metadata, storage, rx).await;
+            Self::process_batch_queue(metadata, storage, rx, task_config).await;
         });
 
         Self { tx, table_cache }
@@ -54,9 +62,15 @@ impl MyWriter {
         table_cache: metadata::TableCache,
     ) -> Self {
         let (tx, rx) = tokio::sync::mpsc::channel(100);
+        let dynamic_config = std::sync::Arc::new(tokio::sync::RwLock::new(
+            crate::dynamic_config::AppConfig::default(),
+        ));
+
+        // Clone for the background task
+        let task_config = dynamic_config.clone();
 
         tokio::spawn(async move {
-            Self::process_batch_queue(metadata, storage, rx).await;
+            Self::process_batch_queue(metadata, storage, rx, task_config).await;
         });
 
         Self { tx, table_cache }
@@ -66,8 +80,9 @@ impl MyWriter {
         metadata: metadata::MetadataStore,
         storage: storage::ObjectStore,
         mut rx: tokio::sync::mpsc::Receiver<WriteReq>,
+        dynamic_config: SharedAppConfig,
     ) {
-        let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(4));
+        tracing::info!("Writer service started with dynamic concurrent uploads limit");
 
         while let Some(item) = rx.recv().await {
             let mut ops_count = item.ops.len();
@@ -105,9 +120,20 @@ impl MyWriter {
                 }
             }
 
-            let permit = semaphore.clone().acquire_owned().await.unwrap();
+            // Get a permit from the dynamic config's semaphore
+            // Clone semaphore while holding read lock briefly, then release lock before acquiring
+            // permit
+            let semaphore = {
+                let config = dynamic_config.read().await;
+                config.uploads_semaphore.clone()
+            }; // read lock is released here
+
+            // Now acquire the permit without holding any locks on the config
+            let permit = semaphore.acquire_owned().await.unwrap();
+
             let metadata_clone = metadata.clone();
             let storage_clone = storage.clone();
+
             tokio::spawn(async move {
                 let result = Self::process_batch(&metadata_clone, &storage_clone, ops).await;
                 match result {
@@ -123,6 +149,7 @@ impl MyWriter {
                         }
                     },
                 }
+                // Drop the permit when done to release the semaphore slot
                 drop(permit);
             });
         }
@@ -240,7 +267,12 @@ mod tests {
             .await
             .unwrap();
 
-        let writer = MyWriter::new(metadata, storage);
+        // Create a dummy dynamic config for testing
+        let dynamic_config = std::sync::Arc::new(tokio::sync::RwLock::new(
+            crate::dynamic_config::AppConfig::default(),
+        ));
+
+        let writer = MyWriter::new(metadata, storage, dynamic_config);
 
         let response = writer
             .write_batch(Request::new(proto::WriteBatchRequest {

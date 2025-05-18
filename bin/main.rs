@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use rustls::crypto::aws_lc_rs;
 use skyvault::config::{PostgresConfig, S3Config};
-use skyvault::{k8s, metadata, observability, storage};
+use skyvault::{dynamic_config, k8s, metadata, observability, storage};
 use tracing::info;
 
 #[derive(Debug, Parser, Clone)]
@@ -53,12 +53,18 @@ async fn main() -> Result<()> {
     // Initialize K8s client
     let current_namespace = k8s::get_namespace()
         .await
-        .context("Failed to get namespace")?;
+        .context("Failed to get current Kubernetes namespace")?;
     let k8s_client = k8s::create_k8s_client()
         .await
         .context("Failed to create Kubernetes client")?;
 
     info!(config = ?config, version = version, current_namespace = %current_namespace, "Starting skyvault");
+
+    // Initialize Dynamic Configuration
+    let dynamic_app_config =
+        dynamic_config::initialize_dynamic_config(k8s_client.clone(), &current_namespace)
+            .await
+            .context("Failed to initialize dynamic configuration")?;
 
     // Create metadata client
     let metadata_url = config
@@ -74,7 +80,8 @@ async fn main() -> Result<()> {
         .await?;
     let storage = Arc::new(storage::S3ObjectStore::new(s3_config, &config.s3.bucket_name).await?);
 
-    skyvault::Builder::new(config.grpc_addr, metadata, storage)
+    // Pass dynamic_app_config to the Builder
+    skyvault::Builder::new(config.grpc_addr, metadata, storage, dynamic_app_config)
         .with_writer(config.enable_writer)
         .with_reader(config.enable_reader)
         .with_orchestrator(config.enable_orchestrator)

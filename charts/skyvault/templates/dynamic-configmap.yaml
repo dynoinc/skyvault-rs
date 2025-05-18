@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: skyvault-dynamic-config
+  labels:
+    {{- include "skyvault.labels" . | nindent 4 }}
+data:
+  concurrent_uploads: {{ .Values.dynamicConfig.concurrentUploads | quote }} 

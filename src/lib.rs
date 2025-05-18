@@ -6,6 +6,9 @@ use anyhow::Result;
 use tonic::transport::Server;
 use tonic_health::ServingStatus;
 
+// Import SharedAppConfig
+use crate::dynamic_config::SharedAppConfig;
+
 pub mod proto {
     tonic::include_proto!("skyvault.v1");
 
@@ -20,6 +23,9 @@ pub mod orchestrator_service;
 pub mod reader_service;
 pub mod storage;
 pub mod writer_service;
+
+// Add dynamic_config module here
+pub mod dynamic_config;
 
 mod consistent_hashring;
 mod forest;
@@ -61,6 +67,7 @@ pub struct Builder {
     grpc_addr: SocketAddr,
     metadata: metadata::MetadataStore,
     storage: storage::ObjectStore,
+    dynamic_config: SharedAppConfig,
 
     enable_writer: bool,
     enable_reader: bool,
@@ -72,11 +79,13 @@ impl Builder {
         grpc_addr: SocketAddr,
         metadata: metadata::MetadataStore,
         storage: storage::ObjectStore,
+        dynamic_config: SharedAppConfig,
     ) -> Self {
         Self {
             grpc_addr,
             metadata,
             storage,
+            dynamic_config,
             enable_writer: false,
             enable_reader: false,
             enable_orchestrator: false,
@@ -111,7 +120,11 @@ impl Builder {
             .add_service(reflection_service);
 
         if self.enable_writer {
-            let writer = writer_service::MyWriter::new(self.metadata.clone(), self.storage.clone());
+            let writer = writer_service::MyWriter::new(
+                self.metadata.clone(),
+                self.storage.clone(),
+                self.dynamic_config.clone(),
+            );
             health_reporter
                 .set_service_status(
                     proto::writer_service_server::SERVICE_NAME,

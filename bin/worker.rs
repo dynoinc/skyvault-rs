@@ -5,7 +5,7 @@ use clap::Parser;
 use rustls::crypto::aws_lc_rs;
 use skyvault::config::{PostgresConfig, S3Config};
 use skyvault::metadata::JobID;
-use skyvault::{jobs, k8s, metadata, observability, storage};
+use skyvault::{dynamic_config, jobs, k8s, metadata, observability, storage};
 use tracing::info;
 
 #[derive(Debug, Parser)]
@@ -41,6 +41,12 @@ async fn main() -> Result<()> {
         .context("Failed to create Kubernetes client")?;
 
     info!(config = ?config, version = version, job_id = ?config.job_id, namespace = %current_namespace, "Starting worker");
+
+    // Initialize Dynamic Configuration
+    let _dynamic_app_config =
+        dynamic_config::initialize_dynamic_config(k8s_client.clone(), &current_namespace)
+            .await
+            .context("Failed to initialize dynamic configuration")?;
 
     // Create metadata client
     let metadata_url = config

@@ -25,6 +25,11 @@ common:
     # Rust
     RUST_BACKTRACE: 1
 
+# Dynamic Configuration
+dynamicConfig:
+  # Number of concurrent uploads allowed in writer service
+  concurrentUploads: "2"
+
 deployments:
   dev:
     enabled: false
