@@ -162,8 +162,8 @@ async fn watch_config_changes_task(
                                  Processing update."
                             );
                             if let Some(data_map) = &cm.data {
-                                let new_config = ParsedConfigMap::from_k8s_data(data_map)
-                                    .unwrap_or_default();
+                                let new_config =
+                                    ParsedConfigMap::from_k8s_data(data_map).unwrap_or_default();
                                 let mut config_guard = shared_config.write().await;
                                 config_guard.apply(new_config.clone());
                                 info!("Successfully reloaded configuration: {new_config:?}");
@@ -240,10 +240,7 @@ mod tests {
     fn test_app_config_from_k8s_data_empty() {
         let data = BTreeMap::new();
         let config = from_k8s_data(&data).unwrap();
-        assert_eq!(
-            config.uploads_semaphore.available_permits(),
-            4 as usize
-        );
+        assert_eq!(config.uploads_semaphore.available_permits(), 4 as usize);
     }
 
     #[test]
@@ -260,10 +257,7 @@ mod tests {
         data.insert("concurrent_uploads".to_string(), "not_a_number".to_string());
         let config = from_k8s_data(&data).unwrap();
         // Should fall back to default because "not_a_number" is not parsable to u32
-        assert_eq!(
-            config.uploads_semaphore.available_permits(),
-            4 as usize
-        );
+        assert_eq!(config.uploads_semaphore.available_permits(), 4 as usize);
     }
 
     #[test]
@@ -272,18 +266,12 @@ mod tests {
         data.insert("other_key".to_string(), "some_value".to_string());
         let config = from_k8s_data(&data).unwrap();
         // concurrent_uploads key is missing, so it should use the default
-        assert_eq!(
-            config.uploads_semaphore.available_permits(),
-            4 as usize
-        );
+        assert_eq!(config.uploads_semaphore.available_permits(), 4 as usize);
     }
 
     #[test]
     fn test_app_config_default_trait() {
         let config = AppConfig::from(ParsedConfigMap::default());
-        assert_eq!(
-            config.uploads_semaphore.available_permits(),
-            4 as usize
-        );
+        assert_eq!(config.uploads_semaphore.available_permits(), 4 as usize);
     }
 }

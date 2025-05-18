@@ -1,13 +1,8 @@
-//! Library entry for skyvault2. Re-exports generated proto and service stubs.
-
 use std::net::SocketAddr;
 
 use anyhow::Result;
 use tonic::transport::Server;
 use tonic_health::ServingStatus;
-
-// Import SharedAppConfig
-use crate::dynamic_config::SharedAppConfig;
 
 pub mod proto {
     tonic::include_proto!("skyvault.v1");
@@ -16,30 +11,26 @@ pub mod proto {
         tonic::include_file_descriptor_set!("skyvault_descriptor");
 }
 
-pub mod cache_service;
+mod cache_service;
 pub mod config;
-pub mod observability;
-pub mod orchestrator_service;
-pub mod reader_service;
-pub mod storage;
-pub mod writer_service;
-
-// Add dynamic_config module here
-pub mod dynamic_config;
-
 mod consistent_hashring;
+pub mod dynamic_config;
 mod forest;
 pub mod jobs;
 pub mod k8s;
-
 mod k_way;
 pub mod metadata;
+pub mod observability;
+pub mod orchestrator_service;
 mod pod_watcher;
+pub mod reader_service;
 mod runs;
+pub mod storage;
+pub mod writer_service;
+
 #[cfg(test)]
 pub mod test_utils;
 
-/// Error types for the skyvault2 library.
 #[derive(thiserror::Error, Debug)]
 pub enum ServerError {
     /// Errors from the transport layer.
@@ -67,7 +58,7 @@ pub struct Builder {
     grpc_addr: SocketAddr,
     metadata: metadata::MetadataStore,
     storage: storage::ObjectStore,
-    dynamic_config: SharedAppConfig,
+    dynamic_config: dynamic_config::SharedAppConfig,
 
     enable_writer: bool,
     enable_reader: bool,
@@ -79,7 +70,7 @@ impl Builder {
         grpc_addr: SocketAddr,
         metadata: metadata::MetadataStore,
         storage: storage::ObjectStore,
-        dynamic_config: SharedAppConfig,
+        dynamic_config: dynamic_config::SharedAppConfig,
     ) -> Self {
         Self {
             grpc_addr,

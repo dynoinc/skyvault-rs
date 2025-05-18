@@ -201,6 +201,7 @@ pub async fn execute(
         .values()
         .map(|metadata| metadata.id.clone())
         .collect::<Vec<_>>();
+    
     metadata_store
         .append_wal_compaction(job_id, compacted, table_runs)
         .await?;

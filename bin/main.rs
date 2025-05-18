@@ -80,7 +80,6 @@ async fn main() -> Result<()> {
         .await?;
     let storage = Arc::new(storage::S3ObjectStore::new(s3_config, &config.s3.bucket_name).await?);
 
-    // Pass dynamic_app_config to the Builder
     skyvault::Builder::new(config.grpc_addr, metadata, storage, dynamic_app_config)
         .with_writer(config.enable_writer)
         .with_reader(config.enable_reader)

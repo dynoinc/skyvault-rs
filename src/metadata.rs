@@ -902,7 +902,7 @@ impl MetadataStoreTrait for PostgresMetadataStore {
                 },
                 Err(e) => Err(e),
             };
-        } // End loop
+        }
     }
 
     async fn append_table_compaction(

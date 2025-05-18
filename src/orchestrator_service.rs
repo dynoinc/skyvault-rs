@@ -105,9 +105,10 @@ impl MyOrchestrator {
                 })
                 .sum::<u64>();
 
-            if total_wal_size > 100_000_000 {
+            if total_wal_size > 100_000_000 || state.wal.len() > 25 {
                 tracing::info!(
-                    "Total size of WALs {total_wal_size} exceeds 100MB, scheduling compaction",
+                    "Total size of WALs {total_wal_size} exceeds 100MB or number of WALs {} exceeds 25, scheduling compaction",
+                    state.wal.len()
                 );
 
                 if let Err(e) = self.metadata.schedule_job(JobParams::WALCompaction).await {
@@ -124,10 +125,10 @@ impl MyOrchestrator {
                     })
                     .sum::<u64>();
 
-                if total_buffer_size > 100_000_000 {
+                if total_buffer_size > 100_000_000 || table.buffer.len() > 25 {
                     tracing::info!(
-                        "{table_id} table total size of buffer {total_buffer_size} exceeds 100MB, \
-                         scheduling compaction"
+                        "{table_id} table total size of buffer {total_buffer_size} exceeds 100MB or number of buffer runs {} exceeds 25, scheduling compaction",
+                        table.buffer.len()
                     );
 
                     if let Err(e) = self
