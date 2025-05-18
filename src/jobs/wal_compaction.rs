@@ -3,7 +3,7 @@ use tokio::sync::mpsc;
 
 use super::JobError;
 use crate::forest::ForestImpl;
-use crate::metadata::{self, MetadataStore, TableID};
+use crate::metadata::{MetadataStore, TableID};
 use crate::runs::{RunError, RunId, Stats, WriteOperation};
 use crate::storage::ObjectStore;
 use crate::{k_way, runs};
@@ -11,12 +11,11 @@ use crate::{k_way, runs};
 pub async fn execute(
     metadata_store: MetadataStore,
     object_store: ObjectStore,
-    job_id: metadata::JobID,
-) -> Result<(), JobError> {
+) -> Result<(Vec<RunId>, Vec<(RunId, TableID, Stats)>), JobError> {
     let forest = ForestImpl::latest(metadata_store.clone(), object_store.clone()).await?;
     let state = forest.get_state();
     if state.wal.is_empty() {
-        return Ok(());
+        return Ok((vec![], vec![]));
     }
 
     let count = state.wal.len();
@@ -202,9 +201,5 @@ pub async fn execute(
         .map(|metadata| metadata.id.clone())
         .collect::<Vec<_>>();
 
-    metadata_store
-        .append_wal_compaction(job_id, compacted, table_runs)
-        .await?;
-
-    Ok(())
+    Ok((compacted, table_runs))
 }

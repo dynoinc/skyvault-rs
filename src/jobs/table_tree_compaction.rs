@@ -5,7 +5,7 @@ use futures::stream::{self, BoxStream, StreamExt, TryStreamExt};
 
 use super::JobError;
 use crate::forest::ForestImpl;
-use crate::metadata::{self, MetadataStore};
+use crate::metadata::{self, MetadataStore, RunMetadata};
 use crate::runs::{RunError, RunId, Stats, StatsV1, WriteOperation};
 use crate::storage::ObjectStore;
 use crate::{k_way, runs};
@@ -16,13 +16,12 @@ type RunStream = BoxStream<'static, Result<WriteOperation, RunError>>;
 pub async fn execute(
     metadata_store: MetadataStore,
     object_store: ObjectStore,
-    job_id: metadata::JobID,
     table_id: metadata::TableID,
     level: metadata::Level,
-) -> Result<(), JobError> {
+) -> Result<(Vec<RunId>, Vec<RunMetadata>), JobError> {
     if level == metadata::Level::max() {
         // Cannot compact the max level
-        return Ok(());
+        return Ok((vec![], vec![]));
     }
 
     let forest = ForestImpl::latest(metadata_store.clone(), object_store.clone()).await?;
@@ -34,7 +33,7 @@ pub async fn execute(
         Some(table) => table,
         None => {
             // Table might have been dropped
-            return Ok(());
+            return Ok((vec![], vec![]));
         },
     };
 
@@ -42,7 +41,7 @@ pub async fn execute(
         Some((_, run_metadata)) => run_metadata,
         None => {
             // No runs at this level to compact
-            return Ok(());
+            return Ok((vec![], vec![]));
         },
     };
 
@@ -185,9 +184,5 @@ pub async fn execute(
     let mut compacted_run_ids = vec![level_run_metadata.id]; // Start with the run from 'level'
     compacted_run_ids.extend(next_level_overlapping_runs.into_iter().map(|m| m.id)); // Add runs from 'level.next()'
 
-    metadata_store
-        .append_table_compaction(job_id, compacted_run_ids, new_runs)
-        .await?;
-
-    Ok(())
+    Ok((compacted_run_ids, new_runs))
 }

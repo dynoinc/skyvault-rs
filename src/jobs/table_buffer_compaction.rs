@@ -3,7 +3,7 @@ use futures::stream::{self, BoxStream, StreamExt, TryStreamExt};
 
 use super::JobError;
 use crate::forest::ForestImpl;
-use crate::metadata::{self, MetadataStore};
+use crate::metadata::{self, MetadataStore, RunMetadata};
 use crate::runs::{RunError, RunId, WriteOperation};
 use crate::storage::ObjectStore;
 use crate::{k_way, runs};
@@ -14,16 +14,15 @@ type RunStream = BoxStream<'static, Result<WriteOperation, RunError>>;
 pub async fn execute(
     metadata_store: MetadataStore,
     object_store: ObjectStore,
-    job_id: metadata::JobID,
     table_id: metadata::TableID,
-) -> Result<(), JobError> {
+) -> Result<(Vec<RunId>, Vec<RunMetadata>), JobError> {
     let forest = ForestImpl::latest(metadata_store.clone(), object_store.clone()).await?;
     let state = forest.get_state();
 
     let table = match state.tables.get(&table_id) {
-        Some(table) if table.buffer.is_empty() => return Ok(()),
+        Some(table) if table.buffer.is_empty() => return Ok((vec![], vec![])),
         Some(table) => table,
-        None => return Ok(()),
+        None => return Ok((vec![], vec![])),
     };
 
     let count = table.buffer.len();
@@ -138,8 +137,5 @@ pub async fn execute(
         )
         .collect();
 
-    metadata_store
-        .append_table_compaction(job_id, compacted, new_runs)
-        .await?;
-    Ok(())
+    Ok((compacted, new_runs))
 }
