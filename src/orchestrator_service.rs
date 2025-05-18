@@ -1,11 +1,10 @@
 use std::sync::Arc;
 
-use futures::StreamExt;
+use futures::{StreamExt, pin_mut};
 use kube::Error as KubeError;
 use prost::Message;
 use thiserror::Error;
 use tonic::{Request, Response, Status};
-use futures::pin_mut;
 
 use crate::forest::{Forest, ForestError, ForestImpl, Snapshot};
 use crate::job_watcher::{self, JobChange, JobWatcherError};
@@ -44,7 +43,7 @@ pub enum OrchestratorError {
 
     #[error("Storage error: {0}")]
     StorageError(#[from] storage::StorageError),
-    
+
     #[error("Job watcher error: {0}")]
     JobWatcherError(#[from] JobWatcherError),
 }
@@ -58,10 +57,10 @@ impl MyOrchestrator {
         dynamic_config: dynamic_config::SharedAppConfig,
     ) -> Result<Self, OrchestratorError> {
         let forest = ForestImpl::watch(metadata.clone(), storage.clone()).await?;
-        
+
         // Create a jobs map for tracking
         let known_jobs = Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
-        
+
         let orchestrator = Self {
             metadata,
             storage,
@@ -207,13 +206,16 @@ impl MyOrchestrator {
 
             for job in pending_jobs {
                 let current_job_id = job.0; // This is JobID
-                
+
                 // Skip if this job is already known to be running in Kubernetes
                 if known_jobs.contains_key(&current_job_id) {
-                    tracing::debug!("Skipping job ID: {} - already tracked in Kubernetes", current_job_id);
+                    tracing::debug!(
+                        "Skipping job ID: {} - already tracked in Kubernetes",
+                        current_job_id
+                    );
                     continue;
                 }
-                
+
                 match job {
                     (id, JobParams::WALCompaction) => {
                         tracing::info!("Kicking off WAL compaction job with ID: {}", id);
@@ -247,14 +249,12 @@ impl MyOrchestrator {
 
     async fn watch_jobs(&self, namespace: String) {
         let label_selector = "app=orchestrator";
-        
+
         // Create a job watcher that will reconnect on failures
         loop {
-            match job_watcher::watch(
-                self.k8s_client.clone(), 
-                namespace.clone(), 
-                label_selector, 
-            ).await {
+            match job_watcher::watch(self.k8s_client.clone(), namespace.clone(), label_selector)
+                .await
+            {
                 Ok(job_stream_unpinned) => {
                     // Process job events
                     let job_stream = job_stream_unpinned;
@@ -266,53 +266,79 @@ impl MyOrchestrator {
                                     JobChange::Added(job_id, job_name) => {
                                         // Add job to known jobs
                                         let mut jobs_guard = self.known_jobs.write().await;
-                                        tracing::info!("Job {} (ID: {}) added to tracking.", job_name, job_id);
+                                        tracing::info!(
+                                            "Job {} (ID: {}) added to tracking.",
+                                            job_name,
+                                            job_id
+                                        );
                                         jobs_guard.insert(job_id, job_name);
                                     },
                                     JobChange::Completed(job_id, job_name) => {
                                         // Remove from tracking
                                         let mut jobs_guard = self.known_jobs.write().await;
                                         if jobs_guard.remove(&job_id).is_some() {
-                                            tracing::info!("Job {} (ID: {}) completed successfully and removed from tracking.", job_name, job_id);
+                                            tracing::info!(
+                                                "Job {} (ID: {}) completed successfully and \
+                                                 removed from tracking.",
+                                                job_name,
+                                                job_id
+                                            );
                                         } else {
-                                            tracing::warn!("Job {} (ID: {}) completed but was not in tracking map.", job_name, job_id);
+                                            tracing::warn!(
+                                                "Job {} (ID: {}) completed but was not in \
+                                                 tracking map.",
+                                                job_name,
+                                                job_id
+                                            );
                                         }
-                                        // Worker process updates the DB after success, so no DB update here for success.
+                                        // Worker process updates the DB after success, so no DB
+                                        // update here for success.
                                     },
                                     JobChange::Failed(job_id, job_name) => {
                                         // Remove from tracking and mark as failed
                                         let mut jobs_guard = self.known_jobs.write().await;
                                         if jobs_guard.remove(&job_id).is_some() {
-                                            tracing::warn!("Job {} (ID: {}) failed (or was deleted) and removed from tracking.", job_name, job_id);
+                                            tracing::warn!(
+                                                "Job {} (ID: {}) failed (or was deleted) and \
+                                                 removed from tracking.",
+                                                job_name,
+                                                job_id
+                                            );
                                         } else {
-                                            tracing::warn!("Job {} (ID: {}) failed (or was deleted) but was not in tracking map.", job_name, job_id);
+                                            tracing::warn!(
+                                                "Job {} (ID: {}) failed (or was deleted) but was \
+                                                 not in tracking map.",
+                                                job_name,
+                                                job_id
+                                            );
                                         }
-                                            
+
                                         // Mark job as failed in database
-                                        if let Err(e) = self.metadata.mark_job_failed(job_id).await {
+                                        if let Err(e) = self.metadata.mark_job_failed(job_id).await
+                                        {
                                             tracing::error!(error = %e, job_id = %job_id, "Failed to update job status in DB to failed");
                                         }
-                                    }
+                                    },
                                 }
                             },
                             Err(e) => {
                                 tracing::error!(error = %e, "Error in job watcher stream");
                                 break; // Exit this stream and reconnect
-                            }
+                            },
                         }
                     }
                 },
                 Err(e) => {
                     tracing::error!(error = %e, "Failed to create job watcher");
-                }
+                },
             }
-            
+
             // If we get here, the stream has ended or failed - wait and reconnect
             tracing::info!("Job watcher terminated, restarting in 10 seconds");
             tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
         }
     }
-    
+
     async fn persist_snapshot(
         &self,
         state: Arc<Snapshot>,
@@ -342,7 +368,7 @@ impl MyOrchestrator {
             let config = self.dynamic_config.read().await;
             config.job_retry_limit
         };
-        
+
         tracing::info!("Creating K8s job with retry limit of {}", retry_limit);
 
         // Create a Kubernetes job specification

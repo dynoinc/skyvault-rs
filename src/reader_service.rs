@@ -36,7 +36,11 @@ struct ConsistentHashCM {
 }
 
 impl ConsistentHashCM {
-    async fn new(k8s_client: kube::Client, namespace: String, port: u16) -> Result<Self, ReaderServiceError> {
+    async fn new(
+        k8s_client: kube::Client,
+        namespace: String,
+        port: u16,
+    ) -> Result<Self, ReaderServiceError> {
         let pods_stream = pod_watcher::watch(k8s_client, namespace).await?;
 
         // Create ConnectionManager instance

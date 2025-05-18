@@ -41,7 +41,9 @@ pub enum MetadataError {
     TableNotFound(TableName),
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Debug, Eq, PartialEq, Clone, Copy, sqlx::Type, Hash)]
+#[derive(
+    serde::Serialize, serde::Deserialize, Debug, Eq, PartialEq, Clone, Copy, sqlx::Type, Hash,
+)]
 #[sqlx(transparent)]
 pub struct JobID(i64);
 

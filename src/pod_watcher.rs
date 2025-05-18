@@ -26,8 +26,10 @@ pub enum PodWatcherError {
 /// Returns a tuple containing:
 /// - A HashSet of current pod names
 /// - A stream that yields pod addition and removal events
-pub async fn watch(client: kube::Client, namespace: String)
--> Result<impl Stream<Item = Result<PodChange, PodWatcherError>>, PodWatcherError> {
+pub async fn watch(
+    client: kube::Client,
+    namespace: String,
+) -> Result<impl Stream<Item = Result<PodChange, PodWatcherError>>, PodWatcherError> {
     // Get pod name from hostname
     let pod_name = hostname::get()?.to_string_lossy().into_owned();
 

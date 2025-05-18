@@ -1,10 +1,10 @@
 use async_stream::stream;
 use futures::{Stream, StreamExt, pin_mut};
 use k8s_openapi::api::batch::v1::Job;
-use kube::api::{Api};
+use kube::api::Api;
 use kube::runtime::watcher::{self};
 use thiserror::Error;
-use tracing::{info, warn, error, debug};
+use tracing::{debug, error, info, warn};
 
 use crate::metadata::JobID;
 
@@ -15,7 +15,7 @@ pub enum JobWatcherError {
 
     #[error("Watcher stream error: {0}")]
     WatcherStreamError(#[from] kube::runtime::watcher::Error),
-    
+
     #[error("Failed to parse JobID: {0}")]
     ParseError(#[from] std::num::ParseIntError),
 
@@ -29,13 +29,13 @@ pub enum JobWatcherError {
 /// Represents a change in the job status
 #[derive(Debug, Clone)]
 pub enum JobChange {
-    Added(JobID, String),        // JobID, Job Name
-    Completed(JobID, String),    // JobID, Job Name
-    Failed(JobID, String),       // JobID, Job Name
+    Added(JobID, String),     // JobID, Job Name
+    Completed(JobID, String), // JobID, Job Name
+    Failed(JobID, String),    // JobID, Job Name
 }
 
 /// Watches Kubernetes jobs with a specific label selector and provides a stream of job changes.
-/// 
+///
 /// Returns a stream that yields job status change events.
 pub async fn watch(
     client: kube::Client,
@@ -43,8 +43,11 @@ pub async fn watch(
     label_selector: &str,
 ) -> Result<impl Stream<Item = Result<JobChange, JobWatcherError>>, JobWatcherError> {
     let jobs_api: Api<Job> = Api::namespaced(client.clone(), &namespace);
-    info!("Starting K8s job watcher for namespace '{}' with selector: {}", namespace, label_selector);
-    
+    info!(
+        "Starting K8s job watcher for namespace '{}' with selector: {}",
+        namespace, label_selector
+    );
+
     let watcher_config = watcher::Config::default()
         .labels(label_selector)
         .streaming_lists(); // Handles initial state and updates
@@ -101,12 +104,12 @@ pub async fn watch(
                                 .and_then(|s| s.succeeded)
                                 .map(|count| count > 0)
                                 .unwrap_or(false);
-                                
+
                             let failed = job.status.as_ref()
                                 .and_then(|s| s.failed)
                                 .map(|count| count > 0)
                                 .unwrap_or(false);
-                            
+
                             if completed {
                                 info!("Job {} (ID: {}) completed successfully", job_name, job_id);
                                 yield Ok(JobChange::Completed(job_id, job_name));
@@ -133,7 +136,7 @@ pub async fn watch(
         }
         error!("Job watcher stream unexpectedly ended. This may indicate a persistent issue.");
     };
-    
+
     Ok(job_stream)
 }
 
@@ -156,7 +159,7 @@ pub fn parse_job_id(job_id_str: &str) -> Result<JobID, std::num::ParseIntError> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_extract_job_id_from_name() {
         // Test valid job names
@@ -164,12 +167,12 @@ mod tests {
             extract_job_id_from_name("wal-compaction-123"),
             Some("123".to_string())
         );
-        
+
         assert_eq!(
             extract_job_id_from_name("table-buffer-compaction-456"),
             Some("456".to_string())
         );
-        
+
         assert_eq!(
             extract_job_id_from_name("table-tree-compaction-789"),
             Some("789".to_string())
@@ -177,28 +180,22 @@ mod tests {
 
         // Test cases for names without hyphens or empty strings
         assert_eq!(
-            extract_job_id_from_name("invalid123"), 
+            extract_job_id_from_name("invalid123"),
             Some("invalid123".to_string())
         ); // parse_job_id will handle if "invalid123" is not a number
-        
-        assert_eq!(
-            extract_job_id_from_name("123"), 
-            Some("123".to_string())
-        );
 
-        assert_eq!(
-            extract_job_id_from_name(""), 
-            Some("".to_string())
-        ); // parse_job_id will fail for empty string
+        assert_eq!(extract_job_id_from_name("123"), Some("123".to_string()));
+
+        assert_eq!(extract_job_id_from_name(""), Some("".to_string())); // parse_job_id will fail for empty string
     }
-    
+
     #[test]
     fn test_parse_job_id() {
         // Test valid job ID
         let job_id = parse_job_id("123").unwrap();
         assert_eq!(i64::from(job_id), 123);
-        
+
         // Test invalid job ID
         assert!(parse_job_id("not-a-number").is_err());
     }
-} 
+}
