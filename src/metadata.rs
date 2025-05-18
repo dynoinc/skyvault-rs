@@ -41,7 +41,7 @@ pub enum MetadataError {
     TableNotFound(TableName),
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Debug, Eq, PartialEq, Clone, Copy, sqlx::Type)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Eq, PartialEq, Clone, Copy, sqlx::Type, Hash)]
 #[sqlx(transparent)]
 pub struct JobID(i64);
 
@@ -1093,6 +1093,7 @@ impl MetadataStoreTrait for PostgresMetadataStore {
                     serde_json::from_value(row.output).map_err(MetadataError::JsonSerdeError)?;
                 JobStatus::Completed(seq_no)
             },
+            "failed" => JobStatus::Failed,
             _ => {
                 return Err(MetadataError::InvalidJobState(format!(
                     "Invalid job status: {}",

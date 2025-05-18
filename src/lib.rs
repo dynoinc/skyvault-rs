@@ -23,6 +23,7 @@ pub mod metadata;
 pub mod observability;
 pub mod orchestrator_service;
 mod pod_watcher;
+mod job_watcher;
 pub mod reader_service;
 mod runs;
 pub mod storage;
@@ -170,6 +171,7 @@ impl Builder {
                 self.metadata.clone(),
                 self.storage.clone(),
                 self.k8s_client.clone(),
+                self.namespace.clone(),
                 self.dynamic_config.clone(),
             )
             .await?;
