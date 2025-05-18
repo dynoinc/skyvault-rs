@@ -37,19 +37,36 @@ pub async fn execute(
 
     match job_params {
         JobParams::WALCompaction => {
-            let (compacted, table_runs) = wal_compaction::execute(metadata_store.clone(), object_store.clone()).await?;
-            metadata_store.append_wal_compaction(job_id, compacted, table_runs).await?;
+            let (compacted, table_runs) =
+                wal_compaction::execute(metadata_store.clone(), object_store.clone()).await?;
+            metadata_store
+                .append_wal_compaction(job_id, compacted, table_runs)
+                .await?;
             Ok(())
         },
         JobParams::TableBufferCompaction(table_id) => {
-            let (compacted, new_runs) = table_buffer_compaction::execute(metadata_store.clone(), object_store.clone(), table_id).await?;
-            metadata_store.append_table_compaction(job_id, compacted, new_runs).await?;
+            let (compacted, new_runs) = table_buffer_compaction::execute(
+                metadata_store.clone(),
+                object_store.clone(),
+                table_id,
+            )
+            .await?;
+            metadata_store
+                .append_table_compaction(job_id, compacted, new_runs)
+                .await?;
             Ok(())
         },
         JobParams::TableTreeCompaction(table_id, level) => {
-            let (compacted, new_runs) = table_tree_compaction::execute(metadata_store.clone(), object_store.clone(), table_id, level)
+            let (compacted, new_runs) = table_tree_compaction::execute(
+                metadata_store.clone(),
+                object_store.clone(),
+                table_id,
+                level,
+            )
+            .await?;
+            metadata_store
+                .append_table_compaction(job_id, compacted, new_runs)
                 .await?;
-            metadata_store.append_table_compaction(job_id, compacted, new_runs).await?;
             Ok(())
         },
     }

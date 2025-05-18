@@ -468,15 +468,14 @@ impl PostgresMetadataStore {
     }
 
     /// Attempts to perform the append_wal operation within a single transaction.
-    /// Returns Ok(()) on success, or sqlx::Error on failure.
-    /// The caller is responsible for retry logic based on the error type.
     async fn append_wal_attempt(
         &self,
-        transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         run_ids_with_stats: &[(RunId, Stats)],
-    ) -> Result<SeqNo, sqlx::Error> {
+    ) -> Result<SeqNo, MetadataError> {
+        let mut transaction = self.pg_pool.begin().await?;
+
         let first_seq_no: i64 = sqlx::query_scalar("SELECT nextval('changelog_id_seq')")
-            .fetch_one(&mut **transaction) // Deref the mutable reference
+            .fetch_one(&mut *transaction) // Deref the mutable reference
             .await?;
 
         let n = run_ids_with_stats.len();
@@ -484,7 +483,7 @@ impl PostgresMetadataStore {
             let last_seq_no = first_seq_no + (n as i64) - 1;
             sqlx::query("SELECT setval('changelog_id_seq', $1, true)")
                 .bind(last_seq_no)
-                .execute(&mut **transaction) // Deref the mutable reference
+                .execute(&mut *transaction) // Deref the mutable reference
                 .await?;
         }
 
@@ -505,7 +504,7 @@ impl PostgresMetadataStore {
             first_seq_no,
             changelog_changes
         )
-        .execute(&mut **transaction) // Deref the mutable reference
+        .execute(&mut *transaction) // Deref the mutable reference
         .await?;
 
         let run_ids: Vec<String> = run_ids_with_stats
@@ -533,9 +532,10 @@ impl PostgresMetadataStore {
             &belongs_to_values,
             &stats_values
         )
-        .execute(&mut **transaction) // Deref the mutable reference
+        .execute(&mut *transaction) // Deref the mutable reference
         .await?;
 
+        transaction.commit().await?;
         Ok(SeqNo::from(first_seq_no + n as i64 - 1))
     }
 
@@ -564,23 +564,21 @@ impl PostgresMetadataStore {
         .await?;
 
         if job_update_result.count.unwrap_or(0) != 1 {
-            // Use a specific DB error to indicate the job wasn't updated
-            Err(sqlx::Error::RowNotFound) // Or a custom error if preferred
+            Err(sqlx::Error::RowNotFound)
         } else {
             Ok(())
         }
     }
 
     /// Attempts to perform the append_wal_compaction operation within a single transaction.
-    /// Returns Ok(()) on success, or sqlx::Error on failure.
-    /// The caller is responsible for retry logic based on the error type.
     async fn append_wal_compaction_attempt(
         &self,
-        transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         job_id: JobID,
         compacted: &[RunId],
         new_table_runs: &[(RunId, TableID, Stats)],
     ) -> Result<SeqNo, MetadataError> {
+        let mut transaction = self.pg_pool.begin().await?;
+
         let compacted_strings: Vec<String> = compacted.iter().map(|id| id.to_string()).collect();
         let deleted_count_result = sqlx::query!(
             r#"
@@ -595,15 +593,14 @@ impl PostgresMetadataStore {
             "#,
             &compacted_strings
         )
-        .fetch_one(&mut **transaction) // Deref
+        .fetch_one(&mut *transaction) // Deref
         .await?;
 
-        let deleted_count = deleted_count_result.count.unwrap_or(0);
-        if deleted_count as usize != compacted.len() {
-            // Use a generic DB error here; mapping happens in the public fn
-            return Err(MetadataError::DatabaseError(sqlx::Error::Protocol(
+        let deleted_count = deleted_count_result.count.unwrap_or(0) as usize;
+        if deleted_count != compacted.len() {
+            return Err(MetadataError::AlreadyDeleted(
                 "Mismatch in number of deleted runs.".into(),
-            )));
+            ));
         }
 
         // --- Reserve Sequence Block for Changelog and potential new runs ---
@@ -612,14 +609,14 @@ impl PostgresMetadataStore {
         let num_ids_to_reserve = std::cmp::max(1, n_new_runs);
 
         let first_seq_no: i64 = sqlx::query_scalar("SELECT nextval('changelog_id_seq')")
-            .fetch_one(&mut **transaction)
+            .fetch_one(&mut *transaction)
             .await?;
 
         if num_ids_to_reserve > 1 {
             let last_seq_no = first_seq_no + (num_ids_to_reserve as i64) - 1;
             sqlx::query("SELECT setval('changelog_id_seq', $1, true)")
                 .bind(last_seq_no)
-                .execute(&mut **transaction) // Deref
+                .execute(&mut *transaction) // Deref
                 .await?;
         }
         // If num_ids_to_reserve == 1, nextval already advanced it correctly.
@@ -629,7 +626,7 @@ impl PostgresMetadataStore {
             runs_added: new_table_runs.iter().map(|(id, _, _)| id.clone()).collect(),
             runs_removed: compacted.to_vec(), // Clone if needed or take ownership
         }))
-        .map_err(|e| sqlx::Error::Configuration(e.into()))?;
+        .map_err(MetadataError::JsonSerdeError)?; // Map serde error
 
         sqlx::query!(
             r#"
@@ -639,23 +636,23 @@ impl PostgresMetadataStore {
             first_seq_no, // Use the first reserved ID for the changelog entry
             changelog_changes
         )
-        .execute(&mut **transaction) // Deref
+        .execute(&mut *transaction) // Deref
         .await?;
 
         PostgresMetadataStore::mark_job_completed(
-            transaction,
+            &mut transaction,
             job_id,
-            serde_json::to_value(first_seq_no)?,
+            serde_json::to_value(first_seq_no).map_err(MetadataError::JsonSerdeError)?,
         )
         .await
         .map_err(|e| {
             if matches!(e, sqlx::Error::RowNotFound) {
-                // Map specific error for clarity
-                sqlx::Error::Protocol(format!(
+                // Directly return the specific MetadataError
+                MetadataError::InvalidJobState(format!(
                     "Job {job_id} update failed or not in pending state."
                 ))
             } else {
-                e // Propagate other DB errors
+                MetadataError::DatabaseError(e) // Propagate other DB errors
             }
         })?;
 
@@ -678,13 +675,13 @@ impl PostgresMetadataStore {
                     ))
                 })
                 .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| sqlx::Error::Configuration(e.into()))?;
+                .map_err(MetadataError::JsonSerdeError)?; // Map serde error
 
             let stats_values: Vec<serde_json::Value> = new_table_runs
                 .iter()
                 .map(|(_, _, stats)| serde_json::to_value(stats))
                 .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| sqlx::Error::Configuration(e.into()))?;
+                .map_err(MetadataError::JsonSerdeError)?; // Map serde error
 
             // Use UNNEST to insert multiple runs correctly
             sqlx::query!(
@@ -696,12 +693,111 @@ impl PostgresMetadataStore {
                 &belongs_to_values,
                 &stats_values
             )
-            .execute(&mut **transaction) // Deref
+            .execute(&mut *transaction) // Deref
             .await?;
         }
 
+        transaction.commit().await?;
         Ok(SeqNo::from(first_seq_no + n_new_runs as i64 - 1))
     }
+
+    async fn append_table_compaction_attempt(
+        &self,
+        transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        job_id: JobID,
+        compacted: &[RunId],
+        new_runs: &[RunMetadata],
+    ) -> Result<SeqNo, MetadataError> {
+        let compacted_strings: Vec<String> = compacted.iter().map(ToString::to_string).collect();
+        let result = sqlx::query!(
+            r#"
+            WITH updated_runs AS (
+                UPDATE runs
+                SET deleted_at = NOW()
+                WHERE id = ANY($1)
+                AND deleted_at IS NULL
+                RETURNING id
+            )
+            SELECT COUNT(*) FROM updated_runs
+            "#,
+            &compacted_strings
+        )
+        .fetch_one(&mut **transaction)
+        .await?;
+
+        if result.count.unwrap_or(0) as usize != compacted.len() {
+            return Err(MetadataError::AlreadyDeleted(
+                "Some runs were already marked as deleted".to_string(),
+            ));
+        }
+
+        let changelog_entry_payload = ChangelogEntry::V1(ChangelogEntryV1 {
+            runs_added: new_runs.iter().map(|m| m.id.clone()).collect(),
+            runs_removed: compacted.to_vec(),
+        });
+        let changelog_changes_json = serde_json::to_value(changelog_entry_payload)?;
+
+        let changelog_record = sqlx::query!(
+            r#"
+            INSERT INTO changelog (changes)
+            VALUES ($1)
+            RETURNING id
+            "#,
+            changelog_changes_json
+        )
+        .fetch_one(&mut **transaction)
+        .await?;
+
+        let changelog_seq_no = SeqNo::from(changelog_record.id);
+
+        PostgresMetadataStore::mark_job_completed(
+            transaction,
+            job_id,
+            serde_json::to_value(changelog_seq_no)?,
+        )
+        .await
+        .map_err(|e| {
+            if matches!(e, sqlx::Error::RowNotFound) {
+                MetadataError::InvalidJobState(format!("Job {job_id} is not in pending state"))
+            } else {
+                MetadataError::DatabaseError(e)
+            }
+        })?;
+
+        if !new_runs.is_empty() {
+            let ids: Vec<String> = new_runs.iter().map(|m| m.id.to_string()).collect();
+
+            let belongs_to_values: Vec<serde_json::Value> = new_runs
+                .iter()
+                .map(|m| serde_json::to_value(&m.belongs_to))
+                .collect::<Result<Vec<_>, _>>()?;
+
+            let stats_values: Vec<serde_json::Value> = new_runs
+                .iter()
+                .map(|m| serde_json::to_value(&m.stats))
+                .collect::<Result<Vec<_>, _>>()?;
+
+            sqlx::query!(
+                r#"
+                INSERT INTO runs (id, belongs_to, stats)
+                SELECT * FROM UNNEST($1::text[], $2::jsonb[], $3::jsonb[])
+                "#,
+                &ids,
+                &belongs_to_values,
+                &stats_values
+            )
+            .execute(&mut **transaction)
+            .await?;
+        }
+
+        Ok(changelog_seq_no)
+    }
+}
+
+/// Helper function to check if a database error is retryable.
+/// Currently only considers serialization failures (error code 40001) as retryable.
+fn is_retryable_error(error: &MetadataError) -> bool {
+    matches!(error, MetadataError::DatabaseError(sqlx::Error::Database(db_err)) if db_err.code().is_some_and(|code| code == "40001"))
 }
 
 #[async_trait::async_trait]
@@ -809,44 +905,15 @@ impl MetadataStoreTrait for PostgresMetadataStore {
         run_ids_with_stats: Vec<(RunId, Stats)>,
     ) -> Result<SeqNo, MetadataError> {
         loop {
-            // Retry loop for transaction serialization failures
-            let mut transaction = self.pg_pool.begin().await?;
-
-            return match self
-                .append_wal_attempt(&mut transaction, &run_ids_with_stats)
-                .await
-            {
-                Ok(seq_no) => {
-                    // Attempt commit
-                    match transaction.commit().await {
-                        Ok(_) => Ok(seq_no), // Success! Exit function.
-                        Err(commit_err) => {
-                            // Check if commit error is retryable
-                            if let sqlx::Error::Database(db_err) = &commit_err {
-                                if db_err.code().is_some_and(|code| code == "40001") {
-                                    tokio::time::sleep(Duration::from_millis(10)).await;
-                                    continue; // Retry the whole transaction
-                                }
-                            }
-                            // Non-retryable commit error
-                            Err(MetadataError::DatabaseError(commit_err))
-                        },
-                    }
+            match self.append_wal_attempt(&run_ids_with_stats).await {
+                Ok(seq_no) => return Ok(seq_no), // Success! Exit function.
+                Err(err) if is_retryable_error(&err) => {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                    continue;
                 },
-                Err(attempt_err) => {
-                    // Rollback is implicitly handled by dropping the transaction on error return.
-                    // Check if the attempt error is retryable
-                    if let sqlx::Error::Database(db_err) = &attempt_err {
-                        if db_err.code().is_some_and(|code| code == "40001") {
-                            tokio::time::sleep(Duration::from_millis(10)).await;
-                            continue; // Retry the whole transaction
-                        }
-                    }
-                    // Non-retryable attempt error
-                    Err(MetadataError::DatabaseError(attempt_err))
-                },
-            };
-        } // End of loop
+                Err(err) => return Err(err),
+            }
+        }
     }
 
     async fn append_wal_compaction(
@@ -856,54 +923,14 @@ impl MetadataStoreTrait for PostgresMetadataStore {
         new_table_runs: Vec<(RunId, TableID, Stats)>,
     ) -> Result<SeqNo, MetadataError> {
         loop {
-            // Retry loop
-            let mut transaction = self.pg_pool.begin().await?;
-
             return match self
-                .append_wal_compaction_attempt(
-                    &mut transaction,
-                    job_id,
-                    &compacted,
-                    &new_table_runs,
-                )
+                .append_wal_compaction_attempt(job_id, &compacted, &new_table_runs)
                 .await
             {
-                Ok(seq_no) => {
-                    // Attempt commit
-                    match transaction.commit().await {
-                        Ok(_) => Ok(seq_no), // Success!
-                        Err(commit_err) => {
-                            if let sqlx::Error::Database(db_err) = &commit_err {
-                                if db_err.code().is_some_and(|code| code == "40001") {
-                                    tokio::time::sleep(Duration::from_millis(10)).await;
-                                    continue; // Retry transaction
-                                }
-                            }
-                            // Map non-retryable commit error
-                            Err(MetadataError::DatabaseError(commit_err))
-                        },
-                    }
-                },
-                Err(MetadataError::DatabaseError(attempt_err)) => {
-                    // Rollback implicitly handled by drop
-                    if let sqlx::Error::Database(db_err) = &attempt_err {
-                        if db_err.code().is_some_and(|code| code == "40001") {
-                            tokio::time::sleep(Duration::from_millis(10)).await;
-                            continue; // Retry transaction
-                        }
-                    }
-                    // Map non-retryable attempt error
-                    // Need to check for the specific protocol errors we returned
-                    if let sqlx::Error::Protocol(msg) = &attempt_err {
-                        if msg.contains("Mismatch in number of deleted runs") {
-                            return Err(MetadataError::AlreadyDeleted(msg.to_string()));
-                        }
-                        if msg.contains("Job") && msg.contains("update failed") {
-                            return Err(MetadataError::InvalidJobState(msg.to_string()));
-                        }
-                    }
-                    // Otherwise, assume it's a general DB connection error
-                    Err(MetadataError::DatabaseError(attempt_err))
+                Ok(seq_no) => return Ok(seq_no),
+                Err(err) if is_retryable_error(&err) => {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                    continue;
                 },
                 Err(e) => Err(e),
             };
@@ -916,91 +943,39 @@ impl MetadataStoreTrait for PostgresMetadataStore {
         compacted: Vec<RunId>,
         new_runs: Vec<RunMetadata>,
     ) -> Result<SeqNo, MetadataError> {
-        let mut transaction = self.pg_pool.begin().await?;
+        loop {
+            let mut transaction = self.pg_pool.begin().await?;
 
-        let compacted_strings: Vec<String> = compacted.iter().map(|id| id.to_string()).collect();
-        let result = sqlx::query!(
-            r#"
-            WITH updated_runs AS (
-                UPDATE runs
-                SET deleted_at = NOW()
-                WHERE id = ANY($1)
-                AND deleted_at IS NULL
-                RETURNING id
-            )
-            SELECT COUNT(*) FROM updated_runs
-            "#,
-            &compacted_strings
-        )
-        .fetch_one(&mut *transaction)
-        .await?;
-
-        if result.count.unwrap_or(0) as usize != compacted.len() {
-            return Err(MetadataError::AlreadyDeleted(
-                "Some runs were already marked as deleted".to_string(),
-            ));
-        }
-
-        let changelog_entry = sqlx::query_as!(
-            ChangelogEntryWithID,
-            r#"
-            INSERT INTO changelog (changes)
-            VALUES ($1)
-            RETURNING *
-            "#,
-            serde_json::to_value(ChangelogEntry::V1(ChangelogEntryV1 {
-                runs_added: new_runs.iter().map(|m| m.id.clone()).collect(),
-                runs_removed: compacted,
-            }))?
-        )
-        .fetch_one(&mut *transaction)
-        .await?;
-
-        PostgresMetadataStore::mark_job_completed(
-            &mut transaction,
-            job_id,
-            serde_json::to_value(changelog_entry.id)?,
-        )
-        .await
-        .map_err(|e| {
-            if matches!(e, sqlx::Error::RowNotFound) {
-                MetadataError::InvalidJobState(format!("Job {job_id} is not in pending state"))
-            } else {
-                MetadataError::DatabaseError(e) // Map other errors
+            match self
+                .append_table_compaction_attempt(&mut transaction, job_id, &compacted, &new_runs)
+                .await
+            {
+                Ok(seq_no) => match transaction.commit().await {
+                    Ok(_) => return Ok(seq_no),
+                    Err(commit_err) => {
+                        if let sqlx::Error::Database(db_err) = &commit_err {
+                            if db_err.code().is_some_and(|code| code == "40001") {
+                                tokio::time::sleep(Duration::from_millis(10)).await;
+                                continue;
+                            }
+                        }
+                        return Err(MetadataError::DatabaseError(commit_err));
+                    },
+                },
+                Err(attempt_meta_err) => match attempt_meta_err {
+                    MetadataError::DatabaseError(sqlx_err) => {
+                        if let sqlx::Error::Database(db_err) = &sqlx_err {
+                            if db_err.code().is_some_and(|code| code == "40001") {
+                                tokio::time::sleep(Duration::from_millis(10)).await;
+                                continue;
+                            }
+                        }
+                        return Err(MetadataError::DatabaseError(sqlx_err));
+                    },
+                    other_err => return Err(other_err),
+                },
             }
-        })?;
-
-        if !new_runs.is_empty() {
-            let ids: Vec<String> = new_runs.iter().map(|m| m.id.to_string()).collect();
-
-            let belongs_to_values: Vec<serde_json::Value> = new_runs
-                .iter()
-                .map(|m| serde_json::to_value(&m.belongs_to)) // Use belongs_to directly from RunMetadata
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| sqlx::Error::Configuration(e.into()))?; // Propagate errors
-
-            let stats_values: Vec<serde_json::Value> = new_runs
-                .iter()
-                .map(|m| serde_json::to_value(&m.stats)) // Use stats directly from RunMetadata
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| sqlx::Error::Configuration(e.into()))?; // Propagate errors
-
-            sqlx::query!(
-                r#"
-                INSERT INTO runs (id, belongs_to, stats)
-                SELECT * FROM UNNEST($1::text[], $2::jsonb[], $3::jsonb[])
-                "#,
-                &ids,
-                &belongs_to_values,
-                &stats_values
-            )
-            .execute(&mut *transaction)
-            .await?;
         }
-
-        transaction.commit().await?;
-
-        Ok(changelog_entry.id)
     }
 
     async fn get_run_metadata_batch(
