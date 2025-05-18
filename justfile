@@ -6,6 +6,7 @@ sqlx:
 check:
     buf generate
     cargo fmt --all
+    cargo check
     cargo clippy -- -D warnings
     RUST_BACKTRACE=1 cargo test
 

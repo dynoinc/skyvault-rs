@@ -5,7 +5,7 @@ use clap::Parser;
 use rustls::crypto::aws_lc_rs;
 use skyvault::config::{PostgresConfig, S3Config};
 use skyvault::metadata::JobID;
-use skyvault::{jobs, k8s, metadata, storage, telemetry};
+use skyvault::{jobs, k8s, metadata, observability, storage};
 use tracing::info;
 
 #[derive(Debug, Parser)]
@@ -23,7 +23,7 @@ pub struct Config {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let _sentry = telemetry::init();
+    let _sentry = observability::init_tracing_and_sentry();
 
     aws_lc_rs::default_provider()
         .install_default()

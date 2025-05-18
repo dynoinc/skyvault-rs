@@ -6,8 +6,6 @@ use anyhow::Result;
 use tonic::transport::Server;
 use tonic_health::ServingStatus;
 
-use crate::metrics;
-
 pub mod proto {
     tonic::include_proto!("skyvault.v1");
 
@@ -17,11 +15,10 @@ pub mod proto {
 
 pub mod cache_service;
 pub mod config;
-pub mod metrics;
+pub mod observability;
 pub mod orchestrator_service;
 pub mod reader_service;
 pub mod storage;
-pub mod telemetry;
 pub mod writer_service;
 
 mod consistent_hashring;
@@ -110,7 +107,7 @@ impl Builder {
             .expect("Failed to build reflection service");
 
         let mut builder = Server::builder()
-            .layer(metrics::MetricsLayer)
+            .layer(observability::MetricsLayer)
             .add_service(reflection_service);
 
         if self.enable_writer {

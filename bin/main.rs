@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use rustls::crypto::aws_lc_rs;
 use skyvault::config::{PostgresConfig, S3Config};
-use skyvault::{k8s, metadata, metrics, storage, telemetry};
+use skyvault::{k8s, metadata, observability, storage};
 use tracing::info;
 
 #[derive(Debug, Parser, Clone)]
@@ -35,17 +35,20 @@ pub struct Config {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let _sentry = telemetry::init();
+    let config = Config::parse();
+    let _sentry = observability::init_tracing_and_sentry();
 
     aws_lc_rs::default_provider()
         .install_default()
         .expect("failed to install aws-lc-rs CryptoProvider");
 
-    let config = Config::parse();
     let version = env!("CARGO_PKG_VERSION");
 
-    let handle = metrics::init_recorder();
-    tokio::spawn(metrics::serve(config.metrics_addr, handle.clone()));
+    let handle = observability::init_metrics_recorder();
+    tokio::spawn(observability::serve_metrics(
+        config.metrics_addr,
+        handle.clone(),
+    ));
 
     // Initialize K8s client
     let current_namespace = k8s::get_namespace()
