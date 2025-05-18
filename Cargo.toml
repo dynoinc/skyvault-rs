@@ -55,6 +55,7 @@ tower = "0.5"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 ulid = "1.2.1"
+tokio-retry = "0.3.0"
 
 
 [build-dependencies]

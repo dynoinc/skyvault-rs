@@ -2,9 +2,13 @@ use std::sync::Arc;
 
 use futures::{StreamExt, pin_mut};
 use kube::Error as KubeError;
+use k8s_openapi::api::batch::v1::Job;
+use kube::api::Api;
 use prost::Message;
 use thiserror::Error;
 use tonic::{Request, Response, Status};
+use tokio_retry::Retry;
+use tokio_retry::strategy::ExponentialBackoff;
 
 use crate::forest::{Forest, ForestError, ForestImpl, Snapshot};
 use crate::job_watcher::{self, JobChange, JobWatcherError};
@@ -60,7 +64,64 @@ impl MyOrchestrator {
 
         // Create a jobs map for tracking
         let known_jobs = Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
+        
+        // Initialize Kubernetes Jobs API
+        let jobs_api: Api<Job> = Api::namespaced(k8s_client.clone(), &namespace);
 
+        // Synchronize DB pending jobs with Kubernetes state on startup
+        tracing::info!("Starting initial synchronization of pending DB jobs with Kubernetes...");
+        match metadata.get_pending_jobs().await {
+            Ok(db_pending_jobs) => {
+                if db_pending_jobs.is_empty() {
+                    tracing::info!("No pending jobs found in the database to synchronize.");
+                } else {
+                    tracing::info!("Found {} pending job(s) in DB to synchronize with Kubernetes.", db_pending_jobs.len());
+                    let mut jobs_guard = known_jobs.write().await; // Acquire lock once for all updates
+
+                    for (db_job_id, db_job_params) in db_pending_jobs {
+                        let job_type_str = job_params_to_job_type_str(&db_job_params);
+                        let k8s_job_name = format!("{}-{}", job_type_str, db_job_id);
+
+                        tracing::debug!("Startup Sync: Checking K8s job '{}' (ID: {}) from DB.", k8s_job_name, db_job_id);
+
+                        match jobs_api.get_opt(&k8s_job_name).await {
+                            Ok(Some(k8s_job)) => {
+                                let succeeded = k8s_job.status.as_ref().and_then(|s| s.succeeded).map_or(false, |c| c > 0);
+                                let failed = k8s_job.status.as_ref().and_then(|s| s.failed).map_or(false, |c| c > 0);
+
+                                if succeeded {
+                                    tracing::info!("Startup Sync: K8s job '{}' (ID: {}) for DB pending job found as SUCCEEDED. Worker should handle DB update.", k8s_job_name, db_job_id);
+                                    // Optionally, if the job was in jobs_guard (e.g. from a quick previous watcher event before sync), remove it.
+                                    // jobs_guard.remove(&db_job_id); // Unlikely needed here as guard is for this sync pass
+                                } else if failed {
+                                    tracing::warn!("Startup Sync: K8s job '{}' (ID: {}) for DB pending job found as FAILED. Marking failed in DB.", k8s_job_name, db_job_id);
+                                    if let Err(e) = metadata.mark_job_failed(db_job_id).await {
+                                        tracing::error!("Startup Sync: Failed to mark job {} as failed in DB: {}", db_job_id, e);
+                                    }
+                                } else {
+                                    tracing::info!("Startup Sync: K8s job '{}' (ID: {}) for DB pending job found as ACTIVE in K8s. Adding to known_jobs.", k8s_job_name, db_job_id);
+                                    jobs_guard.insert(db_job_id, k8s_job_name.clone());
+                                }
+                            }
+                            Ok(None) => { // Job not found in Kubernetes
+                                tracing::warn!("Startup Sync: K8s job '{}' (ID: {}) for DB pending job NOT FOUND in K8s. Marking failed in DB.", k8s_job_name, db_job_id);
+                                if let Err(e) = metadata.mark_job_failed(db_job_id).await {
+                                    tracing::error!("Startup Sync: Failed to mark job {} (not found in K8s) as failed in DB: {}", db_job_id, e);
+                                }
+                            }
+                            Err(e) => {
+                                tracing::error!("Startup Sync: Error fetching K8s job '{}' (ID: {}): {}. Skipping sync for this job.", k8s_job_name, db_job_id, e);
+                            }
+                        }
+                    }
+                    tracing::info!("Initial synchronization of pending DB jobs complete. {} jobs now tracked.", jobs_guard.len());
+                }
+            }
+            Err(e) => {
+                tracing::error!("Startup Sync: Failed to get pending jobs from database: {}. Skipping synchronization.", e);
+            }
+        }
+        
         let orchestrator = Self {
             metadata,
             storage,
@@ -256,7 +317,6 @@ impl MyOrchestrator {
                 .await
             {
                 Ok(job_stream_unpinned) => {
-                    // Process job events
                     let job_stream = job_stream_unpinned;
                     pin_mut!(job_stream);
                     while let Some(job_event) = job_stream.next().await {
@@ -264,66 +324,54 @@ impl MyOrchestrator {
                             Ok(job_change) => {
                                 match job_change {
                                     JobChange::Added(job_id, job_name) => {
-                                        // Add job to known jobs
-                                        let mut jobs_guard = self.known_jobs.write().await;
-                                        tracing::info!(
-                                            "Job {} (ID: {}) added to tracking.",
+                                        tracing::debug!(
+                                            "Job watcher: K8s job {} (ID: {}) ADDED. No action taken by watcher.",
                                             job_name,
                                             job_id
                                         );
-                                        jobs_guard.insert(job_id, job_name);
                                     },
                                     JobChange::Completed(job_id, job_name) => {
-                                        // Remove from tracking
-                                        let mut jobs_guard = self.known_jobs.write().await;
-                                        if jobs_guard.remove(&job_id).is_some() {
-                                            tracing::info!(
-                                                "Job {} (ID: {}) completed successfully and \
-                                                 removed from tracking.",
-                                                job_name,
-                                                job_id
-                                            );
-                                        } else {
-                                            tracing::warn!(
-                                                "Job {} (ID: {}) completed but was not in \
-                                                 tracking map.",
-                                                job_name,
-                                                job_id
-                                            );
-                                        }
-                                        // Worker process updates the DB after success, so no DB
-                                        // update here for success.
+                                        tracing::info!(
+                                            "Job watcher: K8s job {} (ID: {}) COMPLETED. No action taken by watcher.",
+                                            job_name,
+                                            job_id
+                                        );
                                     },
                                     JobChange::Failed(job_id, job_name) => {
-                                        // Remove from tracking and mark as failed
-                                        let mut jobs_guard = self.known_jobs.write().await;
-                                        if jobs_guard.remove(&job_id).is_some() {
-                                            tracing::warn!(
-                                                "Job {} (ID: {}) failed (or was deleted) and \
-                                                 removed from tracking.",
-                                                job_name,
-                                                job_id
-                                            );
-                                        } else {
-                                            tracing::warn!(
-                                                "Job {} (ID: {}) failed (or was deleted) but was \
-                                                 not in tracking map.",
-                                                job_name,
-                                                job_id
-                                            );
-                                        }
+                                        tracing::warn!(
+                                            "Job watcher: K8s job '{}' (ID: {}) reported as FAILED/DELETED. Attempting to mark as failed in DB.",
+                                            job_name,
+                                            job_id
+                                        );
 
-                                        // Mark job as failed in database
-                                        if let Err(e) = self.metadata.mark_job_failed(job_id).await
+                                        let retry_strategy = ExponentialBackoff::from_millis(100)
+                                            .max_delay(std::time::Duration::from_secs(2))
+                                            .take(3);
+
+                                        match Retry::spawn(retry_strategy, || async {
+                                            self.metadata.mark_job_failed(job_id).await
+                                        })
+                                        .await
                                         {
-                                            tracing::error!(error = %e, job_id = %job_id, "Failed to update job status in DB to failed");
+                                            Ok(_) => {
+                                                tracing::info!(
+                                                    "Job watcher: Successfully marked job {} (K8s name: '{}') as failed in DB.",
+                                                    job_id, job_name
+                                                );
+                                            }
+                                            Err(e) => {
+                                                tracing::warn!(
+                                                    "Job watcher failed to mark job {} (K8s name: '{}') as failed in DB after retries: {}",
+                                                    job_id, job_name, e
+                                                );
+                                            }
                                         }
                                     },
                                 }
                             },
                             Err(e) => {
                                 tracing::error!(error = %e, "Error in job watcher stream");
-                                break; // Exit this stream and reconnect
+                                break;
                             },
                         }
                     }
@@ -473,6 +521,14 @@ impl MyOrchestrator {
             },
             Err(e) => Err(e),
         }
+    }
+}
+
+fn job_params_to_job_type_str(params: &JobParams) -> &'static str {
+    match params {
+        JobParams::WALCompaction => "wal-compaction",
+        JobParams::TableBufferCompaction(_) => "table-buffer-compaction",
+        JobParams::TableTreeCompaction(_, _) => "table-tree-compaction",
     }
 }
 
