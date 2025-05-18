@@ -58,6 +58,8 @@ pub struct Builder {
     grpc_addr: SocketAddr,
     metadata: metadata::MetadataStore,
     storage: storage::ObjectStore,
+    k8s_client: kube::Client,
+    namespace: String,
     dynamic_config: dynamic_config::SharedAppConfig,
 
     enable_writer: bool,
@@ -70,12 +72,16 @@ impl Builder {
         grpc_addr: SocketAddr,
         metadata: metadata::MetadataStore,
         storage: storage::ObjectStore,
+        k8s_client: kube::Client,
+        namespace: String,
         dynamic_config: dynamic_config::SharedAppConfig,
     ) -> Self {
         Self {
             grpc_addr,
             metadata,
             storage,
+            k8s_client,
+            namespace,
             dynamic_config,
             enable_writer: false,
             enable_reader: false,
@@ -132,6 +138,8 @@ impl Builder {
             let reader = reader_service::MyReader::new(
                 self.metadata.clone(),
                 self.storage.clone(),
+                self.k8s_client.clone(),
+                self.namespace.clone(),
                 self.grpc_addr.port(),
             )
             .await?;
@@ -161,6 +169,8 @@ impl Builder {
             let orchestrator = orchestrator_service::MyOrchestrator::new(
                 self.metadata.clone(),
                 self.storage.clone(),
+                self.k8s_client.clone(),
+                self.dynamic_config.clone(),
             )
             .await?;
             health_reporter

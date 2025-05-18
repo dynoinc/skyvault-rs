@@ -80,13 +80,20 @@ async fn main() -> Result<()> {
         .await?;
     let storage = Arc::new(storage::S3ObjectStore::new(s3_config, &config.s3.bucket_name).await?);
 
-    skyvault::Builder::new(config.grpc_addr, metadata, storage, dynamic_app_config)
-        .with_writer(config.enable_writer)
-        .with_reader(config.enable_reader)
-        .with_orchestrator(config.enable_orchestrator)
-        .start()
-        .await
-        .with_context(|| "Failed to start gRPC server")?;
+    skyvault::Builder::new(
+        config.grpc_addr,
+        metadata,
+        storage,
+        k8s_client.clone(),
+        current_namespace.clone(),
+        dynamic_app_config,
+    )
+    .with_writer(config.enable_writer)
+    .with_reader(config.enable_reader)
+    .with_orchestrator(config.enable_orchestrator)
+    .start()
+    .await
+    .with_context(|| "Failed to start gRPC server")?;
     info!("gRPC server stopped");
     Ok(())
 }

@@ -148,6 +148,7 @@ message GetJobStatusResponse {
   oneof status {
     bool pending = 1;
     int64 seq_no = 2;
+    bool failed = 3;
   }
 }
 

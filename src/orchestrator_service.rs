@@ -1,26 +1,30 @@
 use std::sync::Arc;
 
+use futures::StreamExt;
+use k8s_openapi::api::batch::v1::Job;
 use kube::Error as KubeError;
+use kube::api::Api;
+use kube::runtime::{WatchStreamExt, watcher};
 use prost::Message;
 use thiserror::Error;
 use tonic::{Request, Response, Status};
 
 use crate::forest::{Forest, ForestError, ForestImpl, Snapshot};
 use crate::metadata::{
-    JobParams, Level, MetadataError, MetadataStore, SeqNo, SnapshotID, TableConfig, TableID,
+    JobID, JobParams, Level, MetadataError, MetadataStore, SeqNo, SnapshotID, TableConfig, TableID,
     TableName,
 };
 use crate::runs::Stats;
 use crate::storage::{self, ObjectStore};
-use crate::{k8s, metadata, proto};
+use crate::{dynamic_config, metadata, proto};
 
 #[derive(Clone)]
 pub struct MyOrchestrator {
     metadata: MetadataStore,
     storage: ObjectStore,
     forest: Forest,
-
     k8s_client: kube::Client,
+    dynamic_config: dynamic_config::SharedAppConfig,
 }
 
 #[derive(Debug, Error)]
@@ -45,14 +49,16 @@ impl MyOrchestrator {
     pub async fn new(
         metadata: MetadataStore,
         storage: ObjectStore,
+        k8s_client: kube::Client,
+        dynamic_config: dynamic_config::SharedAppConfig,
     ) -> Result<Self, OrchestratorError> {
         let forest = ForestImpl::watch(metadata.clone(), storage.clone()).await?;
-        let k8s_client = k8s::create_k8s_client().await?;
         let orchestrator = Self {
             metadata,
             storage,
             forest,
             k8s_client,
+            dynamic_config,
         };
 
         let orchestrator_clone = orchestrator.clone();
@@ -66,6 +72,12 @@ impl MyOrchestrator {
 
 impl MyOrchestrator {
     pub async fn run(&self) {
+        // Start the job watcher
+        let orchestrator_clone = self.clone();
+        tokio::spawn(async move {
+            orchestrator_clone.watch_jobs().await;
+        });
+
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
 
         loop {
@@ -107,7 +119,8 @@ impl MyOrchestrator {
 
             if total_wal_size > 100_000_000 || state.wal.len() > 25 {
                 tracing::info!(
-                    "Total size of WALs {total_wal_size} exceeds 100MB or number of WALs {} exceeds 25, scheduling compaction",
+                    "Total size of WALs {total_wal_size} exceeds 100MB or number of WALs {} \
+                     exceeds 25, scheduling compaction",
                     state.wal.len()
                 );
 
@@ -127,7 +140,8 @@ impl MyOrchestrator {
 
                 if total_buffer_size > 100_000_000 || table.buffer.len() > 25 {
                     tracing::info!(
-                        "{table_id} table total size of buffer {total_buffer_size} exceeds 100MB or number of buffer runs {} exceeds 25, scheduling compaction",
+                        "{table_id} table total size of buffer {total_buffer_size} exceeds 100MB \
+                         or number of buffer runs {} exceeds 25, scheduling compaction",
                         table.buffer.len()
                     );
 
@@ -209,6 +223,73 @@ impl MyOrchestrator {
         }
     }
 
+    async fn watch_jobs(&self) {
+        let jobs: Api<Job> = Api::default_namespaced(self.k8s_client.clone());
+        tracing::info!("Starting K8s job watcher");
+
+        loop {
+            let mut job_stream = watcher(
+                jobs.clone(),
+                watcher::Config::default().labels("app=orchestrator"),
+            )
+            .applied_objects()
+            .boxed();
+
+            while let Some(job_res) = job_stream.next().await {
+                match job_res {
+                    Ok(job) => {
+                        let job_name = match job.metadata.name.as_ref() {
+                            Some(name) => name.clone(),
+                            None => continue,
+                        };
+
+                        // Extract job ID from name (format: "{job_type}-{job_id}")
+                        let parts: Vec<&str> = job_name.split('-').collect();
+                        if parts.len() < 2 {
+                            continue;
+                        }
+
+                        let job_id_str = parts[parts.len() - 1];
+                        if let Ok(job_id_int) = job_id_str.parse::<i64>() {
+                            let job_id = JobID::from(job_id_int);
+
+                            // Check if job has completed or failed
+                            if let Some(status) = job.status {
+                                if let Some(failed) = status.failed {
+                                    if failed > 0 {
+                                        tracing::info!("Job {} failed", job_name);
+                                        if let Err(e) = self.metadata.mark_job_failed(job_id).await
+                                        {
+                                            tracing::error!(error = %e, "Failed to update job status");
+                                        }
+                                    } else if let Some(succeeded) = status.succeeded {
+                                        if succeeded > 0 {
+                                            tracing::info!(
+                                                "Job {} completed successfully",
+                                                job_name
+                                            );
+                                            // We don't mark it completed here since the worker
+                                            // process should have
+                                            // already done this with the appropriate sequence
+                                            // number
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    Err(e) => {
+                        tracing::error!(error = %e, "Error watching job");
+                    },
+                }
+            }
+
+            // If we reach here, the watcher has terminated - wait a bit and restart
+            tracing::info!("Job watcher terminated, restarting in 10 seconds");
+            tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
+        }
+    }
+
     async fn persist_snapshot(
         &self,
         state: Arc<Snapshot>,
@@ -232,6 +313,12 @@ impl MyOrchestrator {
         use kube::api::{Api, PostParams};
 
         let jobs: Api<Job> = Api::default_namespaced(self.k8s_client.clone());
+
+        // Get job retry limit from dynamic config
+        let retry_limit = {
+            let config = self.dynamic_config.read().await;
+            config.job_retry_limit
+        };
 
         // Create a Kubernetes job specification
         let job_name = format!("{job_type}-{job_id}");
@@ -316,7 +403,7 @@ impl MyOrchestrator {
                         ..k8s_openapi::api::core::v1::PodSpec::default()
                     }),
                 },
-                backoff_limit: Some(3),
+                backoff_limit: Some(retry_limit),
                 ttl_seconds_after_finished: Some(3600), // Clean up after 1 hour
                 ..k8s_openapi::api::batch::v1::JobSpec::default()
             }),

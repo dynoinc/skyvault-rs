@@ -36,8 +36,8 @@ struct ConsistentHashCM {
 }
 
 impl ConsistentHashCM {
-    async fn new(port: u16) -> Result<Self, ReaderServiceError> {
-        let pods_stream = pod_watcher::watch().await?;
+    async fn new(k8s_client: kube::Client, namespace: String, port: u16) -> Result<Self, ReaderServiceError> {
+        let pods_stream = pod_watcher::watch(k8s_client, namespace).await?;
 
         // Create ConnectionManager instance
         let connection_manager = ConsistentHashCM {
@@ -185,11 +185,13 @@ impl MyReader {
     pub async fn new(
         metadata: MetadataStore,
         object_store: ObjectStore,
+        k8s_client: kube::Client,
+        namespace: String,
         port: u16,
     ) -> Result<Self, ReaderServiceError> {
         let table_cache = TableCache::new(metadata.clone());
         let forest = ForestImpl::watch(metadata, object_store).await?;
-        let connection_manager = ConsistentHashCM::new(port).await?;
+        let connection_manager = ConsistentHashCM::new(k8s_client, namespace, port).await?;
 
         Ok(Self {
             forest,

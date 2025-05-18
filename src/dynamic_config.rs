@@ -31,6 +31,7 @@ pub enum ConfigError {
 pub struct AppConfig {
     // Semaphore to control concurrent uploads
     pub uploads_semaphore: Arc<Semaphore>,
+    pub job_retry_limit: i32,
 }
 
 impl Default for AppConfig {
@@ -42,12 +43,14 @@ impl Default for AppConfig {
 #[derive(Debug, Clone)]
 struct ParsedConfigMap {
     pub concurrent_uploads: u32,
+    pub job_retry_limit: i32,
 }
 
 impl Default for ParsedConfigMap {
     fn default() -> Self {
         Self {
             concurrent_uploads: 4,
+            job_retry_limit: 3,
         }
     }
 }
@@ -62,6 +65,12 @@ impl ParsedConfigMap {
             }
         }
 
+        if let Some(retry_str) = data.get("job_retry_limit") {
+            if let Ok(retries) = retry_str.parse::<i32>() {
+                config.job_retry_limit = retries;
+            }
+        }
+
         Ok(config)
     }
 }
@@ -70,6 +79,7 @@ impl From<ParsedConfigMap> for AppConfig {
     fn from(parsed_config: ParsedConfigMap) -> Self {
         AppConfig {
             uploads_semaphore: Arc::new(Semaphore::new(parsed_config.concurrent_uploads as usize)),
+            job_retry_limit: parsed_config.job_retry_limit,
         }
     }
 }
@@ -93,6 +103,9 @@ impl AppConfig {
                 }
             }
         }
+
+        // Update job_retry_limit
+        self.job_retry_limit = new_config.job_retry_limit;
     }
 }
 

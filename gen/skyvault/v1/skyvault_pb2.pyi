@@ -168,12 +168,14 @@ class GetJobStatusRequest(_message.Message):
     def __init__(self, job_id: _Optional[int] = ...) -> None: ...
 
 class GetJobStatusResponse(_message.Message):
-    __slots__ = ("pending", "seq_no")
+    __slots__ = ("pending", "seq_no", "failed")
     PENDING_FIELD_NUMBER: _ClassVar[int]
     SEQ_NO_FIELD_NUMBER: _ClassVar[int]
+    FAILED_FIELD_NUMBER: _ClassVar[int]
     pending: bool
     seq_no: int
-    def __init__(self, pending: bool = ..., seq_no: _Optional[int] = ...) -> None: ...
+    failed: bool
+    def __init__(self, pending: bool = ..., seq_no: _Optional[int] = ..., failed: bool = ...) -> None: ...
 
 class DumpSnapshotRequest(_message.Message):
     __slots__ = ()

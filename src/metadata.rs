@@ -329,6 +329,7 @@ pub enum JobParams {
 pub enum JobStatus {
     Pending,
     Completed(SeqNo),
+    Failed,
 }
 
 impl From<JobStatus> for proto::get_job_status_response::Status {
@@ -336,6 +337,7 @@ impl From<JobStatus> for proto::get_job_status_response::Status {
         match status {
             JobStatus::Pending => proto::get_job_status_response::Status::Pending(true),
             JobStatus::Completed(seq_no) => proto::get_job_status_response::Status::SeqNo(seq_no.0),
+            JobStatus::Failed => proto::get_job_status_response::Status::Failed(true),
         }
     }
 }
@@ -426,6 +428,7 @@ pub trait MetadataStoreTrait: Send + Sync + 'static {
     async fn get_job_status(&self, job_id: JobID) -> Result<JobStatus, MetadataError>;
     async fn get_pending_jobs(&self) -> Result<Vec<(JobID, JobParams)>, MetadataError>;
     async fn get_job(&self, job_id: JobID) -> Result<JobParams, MetadataError>;
+    async fn mark_job_failed(&self, job_id: JobID) -> Result<(), MetadataError>;
 
     // TABLES
     async fn create_table(
@@ -1129,6 +1132,14 @@ impl MetadataStoreTrait for PostgresMetadataStore {
             serde_json::from_value(row.job).map_err(MetadataError::JsonSerdeError)?;
 
         Ok(params)
+    }
+
+    async fn mark_job_failed(&self, job_id: JobID) -> Result<(), MetadataError> {
+        sqlx::query!("UPDATE jobs SET status = 'failed' WHERE id = $1", job_id.0,)
+            .execute(&self.pg_pool)
+            .await?;
+
+        Ok(())
     }
 
     async fn create_table(

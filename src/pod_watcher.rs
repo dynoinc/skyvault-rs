@@ -6,8 +6,6 @@ use kube::runtime::watcher;
 use thiserror::Error;
 use tracing::warn;
 
-use crate::k8s;
-
 #[derive(Error, Debug)]
 pub enum PodWatcherError {
     #[error("Kubernetes request error: {0}")]
@@ -28,12 +26,8 @@ pub enum PodWatcherError {
 /// Returns a tuple containing:
 /// - A HashSet of current pod names
 /// - A stream that yields pod addition and removal events
-pub async fn watch()
+pub async fn watch(client: kube::Client, namespace: String)
 -> Result<impl Stream<Item = Result<PodChange, PodWatcherError>>, PodWatcherError> {
-    // Create Kubernetes client
-    let client = k8s::create_k8s_client().await?;
-    let namespace = k8s::get_namespace().await?;
-
     // Get pod name from hostname
     let pod_name = hostname::get()?.to_string_lossy().into_owned();
 
