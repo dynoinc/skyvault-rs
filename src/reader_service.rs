@@ -607,6 +607,7 @@ impl proto::reader_service_server::ReaderService for MyReader {
 #[cfg(test)]
 mod tests {
     use std::pin::Pin;
+    use std::time::Instant;
 
     use mockall::predicate::*;
     use tokio; // For async test runtime
@@ -664,7 +665,7 @@ mod tests {
 
         let table_cache = TableCache::new_for_test(HashMap::from([(
             TableName::from(table_name.to_string()),
-            (table_id, TableConfig::default()),
+            (Some((table_id, TableConfig::default())), Instant::now()),
         )]));
 
         let forest = create_test_forest(SeqNo::from(1), vec![
@@ -758,7 +759,7 @@ mod tests {
 
         let table_cache = TableCache::new_for_test(HashMap::from([(
             TableName::from(table_name.to_string()),
-            (table_id, TableConfig::default()),
+            (Some((table_id, TableConfig::default())), Instant::now()),
         )]));
 
         let forest = create_test_forest(SeqNo::from(1), vec![

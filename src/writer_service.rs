@@ -240,7 +240,7 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     use super::*;
     use crate::metadata::{
@@ -335,7 +335,10 @@ mod tests {
 
         let table_cache = TableCache::new_for_test(HashMap::from([(
             TableName::from("tbl".to_string()),
-            (TableID::from(1_i64), TableConfig::default()),
+            (
+                Some((TableID::from(1_i64), TableConfig::default())),
+                Instant::now(),
+            ),
         )]));
 
         let writer = MyWriter::new_for_test(Arc::new(mock_meta), Arc::new(mock_store), table_cache);

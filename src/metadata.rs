@@ -3,11 +3,12 @@ use std::fmt::{self, Display};
 use std::ops::Deref;
 use std::pin::Pin;
 use std::str::FromStr;
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use async_stream::stream;
 use futures::Stream;
+use rand::Rng;
 use sqlx::PgPool;
 use sqlx::migrate::Migrator;
 use sqlx::postgres::PgPoolOptions;
@@ -1215,41 +1216,92 @@ impl MetadataStoreTrait for PostgresMetadataStore {
 
 #[derive(Clone)]
 pub struct TableCache {
-    cache: Arc<Mutex<HashMap<TableName, (TableID, TableConfig)>>>,
+    cache: Arc<tokio::sync::Mutex<HashMap<TableName, (Option<(TableID, TableConfig)>, Instant)>>>,
     metadata_store: Option<MetadataStore>,
 }
 
 impl TableCache {
     pub fn new(metadata_store: MetadataStore) -> Self {
         Self {
-            cache: Arc::new(Mutex::new(HashMap::new())),
+            cache: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             metadata_store: Some(metadata_store),
         }
     }
 
     #[cfg(test)]
-    pub fn new_for_test(cache: HashMap<TableName, (TableID, TableConfig)>) -> Self {
+    pub fn new_for_test(
+        cache: HashMap<TableName, (Option<(TableID, TableConfig)>, Instant)>,
+    ) -> Self {
         Self {
-            cache: Arc::new(Mutex::new(cache)),
+            cache: Arc::new(tokio::sync::Mutex::new(cache)),
             metadata_store: None,
         }
     }
 
-    pub async fn get_table_id(&self, table_name: TableName) -> Result<TableID, MetadataError> {
-        if let Some((table_id, _)) = self.cache.lock().unwrap().get(&table_name) {
-            return Ok(*table_id);
+    fn needs_refresh(last_updated: Instant) -> bool {
+        let jitter = rand::rng().random_range(0..30);
+        last_updated.elapsed() > Duration::from_secs(60 - 15 + jitter)
+    }
+
+    async fn refresh_cache(
+        self: Self,
+        table_name: TableName,
+    ) -> Result<Option<(TableID, TableConfig)>, MetadataError> {
+        if let Some(metadata_store) = self.metadata_store {
+            let (table_id, config) = metadata_store.get_table(table_name.clone()).await?;
+            let mut cache = self.cache.lock().await;
+            cache.insert(
+                table_name,
+                (Some((table_id, config.clone())), Instant::now()),
+            );
+            Ok(Some((table_id, config)))
+        } else {
+            let mut cache = self.cache.lock().await;
+            cache.insert(table_name, (None, Instant::now()));
+            Ok(None)
         }
+    }
 
-        let (table_id, config) = match self.metadata_store {
-            Some(ref metadata_store) => metadata_store.get_table(table_name.clone()).await?,
-            None => return Err(MetadataError::TableNotFound(table_name)),
-        };
+    pub async fn get_table_id(&self, table_name: TableName) -> Result<TableID, MetadataError> {
+        let cache = self.cache.lock().await;
+        match cache.get(&table_name) {
+            Some((entry, last_updated)) => {
+                if Self::needs_refresh(*last_updated) {
+                    let table_cache = self.clone();
+                    let table_name_clone = table_name.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = table_cache.refresh_cache(table_name_clone.clone()).await {
+                            tracing::error!(
+                                "Error refreshing cache for table {table_name_clone}: {e}"
+                            );
+                        }
+                    });
+                }
 
-        self.cache
-            .lock()
-            .unwrap()
-            .insert(table_name, (table_id, config));
-        Ok(table_id)
+                match entry {
+                    Some((table_id, _)) => {
+                        return Ok(*table_id);
+                    },
+                    None => {
+                        return Err(MetadataError::TableNotFound(table_name));
+                    },
+                }
+            },
+            None => {
+                drop(cache);
+
+                let table_cache = self.clone();
+                let table_name_clone = table_name.clone();
+                match table_cache.refresh_cache(table_name_clone).await? {
+                    Some((table_id, _)) => {
+                        return Ok(table_id);
+                    },
+                    None => {
+                        return Err(MetadataError::TableNotFound(table_name));
+                    },
+                }
+            },
+        }
     }
 }
 

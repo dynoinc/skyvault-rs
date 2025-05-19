@@ -26,6 +26,7 @@ pub mod orchestrator_service;
 mod pod_watcher;
 pub mod reader_service;
 mod runs;
+mod singleflight;
 pub mod storage;
 pub mod writer_service;
 

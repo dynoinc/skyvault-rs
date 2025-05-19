@@ -4301,6 +4301,7 @@ dependencies = [
  "mockall",
  "proptest",
  "prost",
+ "rand 0.9.1",
  "rustls 0.23.26",
  "sentry",
  "sentry-tracing",
