@@ -7,8 +7,6 @@ import fire
 from google.protobuf import descriptor_pool, message_factory
 from google.protobuf.json_format import ParseDict
 
-sys.path.append("../gen")
-
 from skyvault.v1 import skyvault_pb2_grpc
 
 
@@ -66,7 +64,7 @@ def build_service(stub_cls, address: str):
 
         def make_rpc(method_desc):
             def rpc(request: dict = None, **kwargs):
-                msg = factory.GetPrototype(method_desc.input_type)()
+                msg = message_factory.GetMessageClass(method_desc.input_type)()
                 if request:
                     ParseDict(request, msg)
                 for k, v in kwargs.items():

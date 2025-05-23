@@ -12,8 +12,8 @@ check:
 
     helm lint charts/skyvault
 
-    for dir in smoke-tests skycli; do pushd $dir; uv run ruff format .; popd; done
-    for dir in smoke-tests skycli; do pushd $dir; uv run ruff check .; popd; done
+    cd skycli && uv run ruff format .
+    cd skycli && uv run ruff check .
 
 build:
     cargo sqlx prepare
@@ -32,4 +32,7 @@ cli *args:
     cd skycli && uv run python main.py {{args}}
 
 smoke *args:
-    cd smoke-tests && uv run pytest {{args}}
+    cd skycli && uv run pytest -m smoke {{args}}
+
+test *args:
+    cd skycli && uv run pytest {{args}}

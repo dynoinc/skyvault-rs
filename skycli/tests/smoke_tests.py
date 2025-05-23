@@ -5,8 +5,6 @@ import time
 import sys
 import pytest
 
-sys.path.append("../gen")
-
 from skyvault.v1 import skyvault_pb2
 from skyvault.v1 import skyvault_pb2_grpc
 
