@@ -161,19 +161,24 @@ message DumpSnapshotResponse {
 
 message Snapshot {
   int64 seq_no = 1;
-  repeated RunMetadata wal = 2;
-  repeated Table tables = 3;
+
+  // Tables
+  map<string, TableConfig> tables = 2;
+
+  // Runs
+  repeated RunMetadata wal = 3;
+  repeated TableTree trees = 4;
 }
 
-message Table {
-  int64 id = 1;
+message TableTree {
+  int64 table_id = 1;
   repeated RunMetadata buffer = 2;
   repeated TableLevel levels = 3;
 }
 
 message TableLevel {
   uint64 level = 1;
-  repeated RunMetadata tree = 2;
+  repeated RunMetadata runs = 2;
 }
 
 message DumpChangelogRequest {
@@ -188,13 +193,29 @@ message ChangelogEntryWithID {
   int64 id = 1;
 
   oneof entry {
-    ChangelogEntryV1 v1 = 2;
+    RunsChangelogEntryV1 runs_changelog_entry_v1 = 2;
+    TableChangelogEntryV1 table_changelog_entry_v1 = 3;
   }
 }
 
-message ChangelogEntryV1 {
+message RunsChangelogEntryV1 {
   repeated string runs_added = 1;
   repeated string runs_removed = 2;
+}
+
+message TableChangelogEntryV1 {
+  oneof entry {
+    TableCreated table_created = 1;
+    TableDropped table_dropped = 2;
+  }
+}
+
+message TableCreated {
+  int64 table_id = 1;
+}
+
+message TableDropped {
+  int64 table_id = 1;
 }
 
 message RunMetadata {
@@ -203,7 +224,7 @@ message RunMetadata {
   oneof belongs_to {
     int64 wal_seq_no = 2;
     TableBuffer table_buffer = 3;
-    TableTree table_tree = 4;
+    TableTreeLevel table_tree = 4;
   };
 
   oneof stats {
@@ -216,7 +237,7 @@ message TableBuffer {
   int64 seq_no = 2;
 }
 
-message TableTree {
+message TableTreeLevel {
   int64 table_id = 1;
   uint64 level = 2;
 }
@@ -238,19 +259,18 @@ message PersistSnapshotResponse {
 }
 
 message CreateTableRequest {
-  string table_name = 1;
-  TableConfig config = 2;
+  TableConfig config = 1;
 }
 
 message CreateTableResponse {
-  int64 table_id = 1;
+  int64 seq_no = 1;
 }
 
 message ListTablesRequest {
 }
 
 message ListTablesResponse {
-  repeated string table_names = 1;
+  repeated TableConfig tables = 1;
 }
 
 message DropTableRequest {
@@ -265,9 +285,10 @@ message GetTableRequest {
 }
 
 message GetTableResponse {
-  int64 table_id = 1;
-  TableConfig config = 2;
+  TableConfig table = 1;
 }
 
 message TableConfig {
+  optional int64 table_id = 1; // assigned after table is created
+  string table_name = 2;
 }

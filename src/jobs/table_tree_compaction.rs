@@ -29,7 +29,7 @@ pub async fn execute(
 
     // Pick first run at level and all the runs that overlap with it in the next level unless it's
     // the max level
-    let table = match state.tables.get_mut(&table_id) {
+    let table = match state.trees.get_mut(&table_id) {
         Some(table) => table,
         None => {
             // Table might have been dropped
@@ -169,7 +169,7 @@ pub async fn execute(
         // Collect the run metadata
         new_runs.push(metadata::RunMetadata {
             id: new_run_id,
-            belongs_to: metadata::BelongsTo::TableTree(
+            belongs_to: metadata::BelongsTo::TableTreeLevel(
                 table_id, next_level, // New runs belong to the next level
             ),
             stats,

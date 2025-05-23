@@ -26,7 +26,6 @@ pub mod orchestrator_service;
 mod pod_watcher;
 pub mod reader_service;
 mod runs;
-mod singleflight;
 pub mod storage;
 pub mod writer_service;
 
@@ -54,6 +53,10 @@ pub enum ServerError {
     /// Errors from the Cache component.
     #[error("Cache error: {0}")]
     Cache(#[from] cache_service::CacheServiceError),
+
+    /// Errors from the Writer component.
+    #[error("Writer error: {0}")]
+    Writer(#[from] writer_service::WriterServiceError),
 }
 
 pub struct Builder {
@@ -123,7 +126,8 @@ impl Builder {
                 self.metadata.clone(),
                 self.storage.clone(),
                 self.dynamic_config.clone(),
-            );
+            )
+            .await?;
             health_reporter
                 .set_service_status(
                     proto::writer_service_server::SERVICE_NAME,

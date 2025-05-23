@@ -139,7 +139,7 @@ impl MyOrchestrator {
                 }
             }
 
-            for (table_id, table) in state.tables.iter() {
+            for (table_id, table) in state.trees.iter() {
                 let total_buffer_size = table
                     .buffer
                     .values()
@@ -582,11 +582,13 @@ impl proto::orchestrator_service_server::OrchestratorService for MyOrchestrator 
         request: Request<proto::CreateTableRequest>,
     ) -> Result<Response<proto::CreateTableResponse>, Status> {
         let request = request.into_inner();
-        let table_name = TableName::from(request.table_name);
-        let config = request.config.map(TableConfig::from).unwrap_or_default();
+        let config = match request.config.map(TableConfig::from) {
+            Some(config) => config,
+            None => return Err(Status::invalid_argument("Table config is required")),
+        };
 
-        let table_id = match self.metadata.create_table(table_name, config).await {
-            Ok(table_id) => table_id,
+        let seq_no = match self.metadata.create_table(config).await {
+            Ok(seq_no) => seq_no,
             Err(MetadataError::TableAlreadyExists(_)) => {
                 return Err(Status::already_exists("Table already exists"));
             },
@@ -594,7 +596,7 @@ impl proto::orchestrator_service_server::OrchestratorService for MyOrchestrator 
         };
 
         Ok(Response::new(proto::CreateTableResponse {
-            table_id: table_id.into(),
+            seq_no: seq_no.into(),
         }))
     }
 
@@ -618,8 +620,8 @@ impl proto::orchestrator_service_server::OrchestratorService for MyOrchestrator 
         let request = request.into_inner();
         let table_name = TableName::from(request.table_name);
 
-        let (table_id, config) = match self.metadata.get_table(table_name).await {
-            Ok((table_id, config)) => (table_id, config),
+        let config = match self.metadata.get_table(table_name).await {
+            Ok(config) => config,
             Err(MetadataError::TableNotFound(_)) => {
                 return Err(Status::not_found("Table not found"));
             },
@@ -627,8 +629,7 @@ impl proto::orchestrator_service_server::OrchestratorService for MyOrchestrator 
         };
 
         Ok(Response::new(proto::GetTableResponse {
-            table_id: table_id.into(),
-            config: Some(config.into()),
+            table: Some((&config).into()),
         }))
     }
 
@@ -642,7 +643,7 @@ impl proto::orchestrator_service_server::OrchestratorService for MyOrchestrator 
         };
 
         Ok(Response::new(proto::ListTablesResponse {
-            table_names: tables.into_iter().map(|t| t.to_string()).collect(),
+            tables: tables.into_iter().map(|t| (&t).into()).collect(),
         }))
     }
 }

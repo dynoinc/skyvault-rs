@@ -1,29 +1,22 @@
-from contextlib import contextmanager
-from typing import Generator
-import typer
 import sys
 import subprocess
 import re
 import grpc
+import fire
+
+from google.protobuf import descriptor_pool, message_factory
+from google.protobuf.json_format import ParseDict
 
 sys.path.append("../gen")
 
-from skyvault.v1 import skyvault_pb2
 from skyvault.v1 import skyvault_pb2_grpc
 
-app = typer.Typer()
 
-
-@contextmanager
-def setup_connection[T](url: str, stub_class: type[T]) -> Generator[T, None, None]:
+def setup_connection(url: str) -> grpc.Channel:
     if url:
         channel = grpc.insecure_channel(url)
-        try:
-            grpc.channel_ready_future(channel).result(timeout=10)
-        except grpc.FutureTimeoutError:
-            typer.fail("Failed to connect to gRPC service")
-        yield stub_class(channel)
-        return
+        grpc.channel_ready_future(channel).result(timeout=10)
+        return channel
 
     command = [
         "minikube",
@@ -42,73 +35,56 @@ def setup_connection[T](url: str, stub_class: type[T]) -> Generator[T, None, Non
     if match:
         service_url = line
     else:
-        typer.fail(f"Failed to get service URL. Got: {line}")
+        raise RuntimeError("Unable to open tunnel")
 
-    # Connect to the service
     channel = grpc.insecure_channel(service_url)
-    try:
-        grpc.channel_ready_future(channel).result(timeout=10)
-    except grpc.FutureTimeoutError:
-        typer.fail("Failed to connect to gRPC service")
-
-    yield stub_class(channel)
+    grpc.channel_ready_future(channel).result(timeout=10)
+    return channel
 
 
-tables_app = typer.Typer()
-app.add_typer(tables_app, name="tables")
+SERVICE_CONFIG = {
+    "orchestrator": skyvault_pb2_grpc.OrchestratorServiceStub,
+    "writer": skyvault_pb2_grpc.WriterServiceStub,
+    "reader": skyvault_pb2_grpc.ReaderServiceStub,
+}
 
 
-@tables_app.command()
-def list(
-    url: str = typer.Option(
-        default="", help="The URL of the Skyvault orchestrator service"
-    ),
-):
-    with setup_connection(
-        url, skyvault_pb2_grpc.OrchestratorServiceStub
-    ) as orchestrator_stub:
-        response = orchestrator_stub.ListTables(skyvault_pb2.ListTablesRequest())
-        if not response.table_names:
-            typer.echo("No tables found")
-            return
+def build_service(stub_cls, address: str):
+    channel = setup_connection(address)
+    stub = stub_cls(channel)
 
-        typer.echo("Tables:")
-        for table_name in response.table_names:
-            typer.echo(f"  - {table_name}")
+    pool = descriptor_pool.Default()
+    factory = message_factory.MessageFactory(pool)
 
+    svc_name = stub_cls.__name__.replace("Stub", "")
+    full_svc_name = f"skyvault.v1.{svc_name}"
+    svc_desc = pool.FindServiceByName(full_svc_name)
 
-@tables_app.command()
-def get(
-    table_name: str,
-    url: str = typer.Option(
-        default="", help="The URL of the Skyvault orchestrator service"
-    ),
-):
-    with setup_connection(
-        url, skyvault_pb2_grpc.OrchestratorServiceStub
-    ) as orchestrator_stub:
-        response = orchestrator_stub.GetTable(
-            skyvault_pb2.GetTableRequest(table_name=table_name)
-        )
-        print(response)
+    methods = {}
+    for m in svc_desc.methods:
+        rpc_name = m.name.lower()
+
+        def make_rpc(method_desc):
+            def rpc(request: dict = None, **kwargs):
+                msg = factory.GetPrototype(method_desc.input_type)()
+                if request:
+                    ParseDict(request, msg)
+                for k, v in kwargs.items():
+                    setattr(msg, k, v)
+                resp = getattr(stub, method_desc.name)(msg)
+                print(resp)
+
+            rpc.__doc__ = f"{method_desc.name} → {method_desc.output_type.full_name}"
+            return rpc
+
+        methods[rpc_name] = make_rpc(m)
+
+    return methods
 
 
-snapshot_app = typer.Typer()
-app.add_typer(snapshot_app, name="snapshot")
-
-
-@snapshot_app.command()
-def dump(
-    url: str = typer.Option(
-        default="", help="The URL of the Skyvault orchestrator service"
-    ),
-):
-    with setup_connection(
-        url, skyvault_pb2_grpc.OrchestratorServiceStub
-    ) as orchestrator_stub:
-        response = orchestrator_stub.DumpSnapshot(skyvault_pb2.DumpSnapshotRequest())
-        print(response)
+def create_cli():
+    return {name: build_service(stub, "") for name, stub in SERVICE_CONFIG.items()}
 
 
 if __name__ == "__main__":
-    app()
+    fire.Fire(create_cli())

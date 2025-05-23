@@ -5,6 +5,7 @@ use thiserror::Error;
 use tonic::{Request, Response, Status};
 
 use crate::dynamic_config::SharedAppConfig;
+use crate::forest::{self, Forest, ForestImpl};
 use crate::metadata::TableName;
 use crate::proto::{self};
 use crate::runs::{RunError as RunsError, RunId, WriteOperation};
@@ -23,6 +24,9 @@ pub enum WriterServiceError {
 
     #[error("Internal error: {0}")]
     Internal(String),
+
+    #[error("Forest error: {0}")]
+    ForestError(#[from] forest::ForestError),
 }
 
 struct WriteReq {
@@ -32,48 +36,24 @@ struct WriteReq {
 
 pub struct MyWriter {
     tx: tokio::sync::mpsc::Sender<WriteReq>,
-    table_cache: metadata::TableCache,
+    forest: Forest,
 }
 
 impl MyWriter {
-    #[must_use]
-    pub fn new(
+    pub async fn new(
         metadata: metadata::MetadataStore,
         storage: storage::ObjectStore,
         dynamic_config: SharedAppConfig,
-    ) -> Self {
-        let table_cache = metadata::TableCache::new(metadata.clone());
+    ) -> Result<Self, WriterServiceError> {
         let (tx, rx) = tokio::sync::mpsc::channel(100);
+        let forest = ForestImpl::latest(metadata.clone(), storage.clone()).await?;
 
-        // Clone dynamic_config for the background task
         let task_config = dynamic_config.clone();
-
         tokio::spawn(async move {
             Self::process_batch_queue(metadata, storage, rx, task_config).await;
         });
 
-        Self { tx, table_cache }
-    }
-
-    #[cfg(test)]
-    pub fn new_for_test(
-        metadata: metadata::MetadataStore,
-        storage: storage::ObjectStore,
-        table_cache: metadata::TableCache,
-    ) -> Self {
-        let (tx, rx) = tokio::sync::mpsc::channel(100);
-        let dynamic_config = std::sync::Arc::new(tokio::sync::RwLock::new(
-            crate::dynamic_config::AppConfig::default(),
-        ));
-
-        // Clone for the background task
-        let task_config = dynamic_config.clone();
-
-        tokio::spawn(async move {
-            Self::process_batch_queue(metadata, storage, rx, task_config).await;
-        });
-
-        Self { tx, table_cache }
+        Ok(Self { tx, forest })
     }
 
     async fn process_batch_queue(
@@ -193,20 +173,20 @@ impl proto::writer_service_server::WriterService for MyWriter {
             return Err(Status::invalid_argument("No writes provided"));
         }
 
+        let forest_state = self.forest.get_state();
+
         let mut ops: Vec<WriteOperation> = Vec::new();
         for mut table in req.into_inner().tables.drain(..) {
-            if table.table_name.is_empty() || table.table_name.contains(".") {
-                return Err(Status::invalid_argument(
-                    "Table name cannot be empty or contain a dot",
-                ));
+            if table.table_name.is_empty() {
+                return Err(Status::invalid_argument("Table name cannot be empty"));
             }
 
             for item in table.items.drain(..) {
-                let table_id = self
-                    .table_cache
-                    .get_table_id(TableName::from(table.table_name.clone()))
-                    .await
-                    .map_err(|e| Status::internal(e.to_string()))?;
+                let table_id = forest_state
+                    .tables
+                    .get(&TableName::from(table.table_name.clone()))
+                    .and_then(|t| t.table_id)
+                    .ok_or_else(|| Status::not_found("Table not found"))?;
                 let key = format!("{}.{}", table_id, item.key);
                 match item.operation {
                     Some(proto::write_batch_item::Operation::Value(value)) => {
@@ -237,14 +217,14 @@ impl proto::writer_service_server::WriterService for MyWriter {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     use super::*;
     use crate::metadata::{
-        MockMetadataStoreTrait, SeqNo, TableCache, TableConfig, TableID, TableName,
+        ChangelogEntry, ChangelogEntryWithID, MockMetadataStoreTrait, SeqNo, TableChangelogEntryV1,
+        TableConfig, TableID, TableName,
     };
     use crate::proto::writer_service_server::WriterService;
     use crate::requires_docker;
@@ -260,19 +240,20 @@ mod tests {
         // Create a table
         let table_name = "test_table";
         metadata
-            .create_table(
-                TableName::from(table_name.to_string()),
-                TableConfig::default(),
-            )
+            .create_table(TableConfig {
+                table_id: Some(TableID::from(1)),
+                table_name: TableName::from(table_name.to_string()),
+            })
             .await
             .unwrap();
 
-        // Create a dummy dynamic config for testing
         let dynamic_config = std::sync::Arc::new(tokio::sync::RwLock::new(
             crate::dynamic_config::AppConfig::default(),
         ));
 
-        let writer = MyWriter::new(metadata, storage, dynamic_config);
+        let writer = MyWriter::new(metadata, storage, dynamic_config)
+            .await
+            .unwrap();
 
         let response = writer
             .write_batch(Request::new(proto::WriteBatchRequest {
@@ -288,12 +269,37 @@ mod tests {
             .unwrap();
 
         let seq_no = response.into_inner().seq_no;
-        assert_eq!(seq_no, 1);
+        assert_eq!(seq_no, 2); // 1 is used by create_table
     }
 
     #[tokio::test]
     async fn test_concurrent_batch_upload_limit() {
+        let test_table_name = "test_table";
         let mut mock_meta = MockMetadataStoreTrait::new();
+        mock_meta
+            .expect_get_latest_snapshot()
+            .times(1)
+            .returning(|| {
+                Box::pin(async {
+                    Ok((None, vec![ChangelogEntryWithID {
+                        id: SeqNo::from(1),
+                        changes: ChangelogEntry::TablesV1(TableChangelogEntryV1::TableCreated(
+                            TableID::from(1),
+                        )),
+                    }]))
+                })
+            });
+        mock_meta
+            .expect_get_table_by_id()
+            .times(1)
+            .returning(|_id| {
+                Box::pin(async {
+                    Ok(TableConfig {
+                        table_id: Some(TableID::from(1)),
+                        table_name: TableName::from(test_table_name.to_string()),
+                    })
+                })
+            });
         mock_meta
             .expect_append_wal()
             .times(8)
@@ -333,15 +339,13 @@ mod tests {
                 })
             });
 
-        let table_cache = TableCache::new_for_test(HashMap::from([(
-            TableName::from("tbl".to_string()),
-            (
-                Some((TableID::from(1_i64), TableConfig::default())),
-                Instant::now(),
-            ),
-        )]));
+        let dynamic_config = std::sync::Arc::new(tokio::sync::RwLock::new(
+            crate::dynamic_config::AppConfig::default(),
+        ));
 
-        let writer = MyWriter::new_for_test(Arc::new(mock_meta), Arc::new(mock_store), table_cache);
+        let writer = MyWriter::new(Arc::new(mock_meta), Arc::new(mock_store), dynamic_config)
+            .await
+            .unwrap();
 
         let writer = Arc::new(writer);
 
@@ -351,7 +355,7 @@ mod tests {
             handles.push(tokio::spawn(async move {
                 w.write_batch(Request::new(proto::WriteBatchRequest {
                     tables: vec![proto::TableWriteBatchRequest {
-                        table_name: "tbl".to_string(),
+                        table_name: test_table_name.to_string(),
                         items: vec![proto::WriteBatchItem {
                             key: format!("key{i}"),
                             operation: Some(proto::write_batch_item::Operation::Value(vec![1])),

@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
 
 use bytes::Bytes;
@@ -8,7 +8,8 @@ use thiserror::Error;
 use tracing::{debug, error};
 
 use crate::metadata::{
-    self, ChangelogEntry, ChangelogEntryWithID, Level, MetadataError, MetadataStore, SeqNo, TableID,
+    self, ChangelogEntry, ChangelogEntryWithID, Level, MetadataError, MetadataStore,
+    RunsChangelogEntryV1, SeqNo, TableChangelogEntryV1, TableConfig, TableID, TableName,
 };
 use crate::storage::{ObjectStore, StorageError};
 use crate::{proto, runs};
@@ -29,7 +30,7 @@ pub enum ForestError {
 }
 
 #[derive(Default, Clone)]
-pub struct Table {
+pub struct TableTree {
     pub buffer: BTreeMap<metadata::SeqNo, metadata::RunMetadata>,
     pub tree: BTreeMap<metadata::Level, BTreeMap<runs::Key, metadata::RunMetadata>>,
 }
@@ -37,21 +38,35 @@ pub struct Table {
 #[derive(Default, Clone)]
 pub struct Snapshot {
     pub seq_no: metadata::SeqNo,
+
+    // Tables
+    pub tables: HashMap<metadata::TableName, TableConfig>,
+
+    // Runs
     pub wal: BTreeMap<metadata::SeqNo, metadata::RunMetadata>,
-    pub tables: HashMap<metadata::TableID, Table>,
+    pub trees: HashMap<metadata::TableID, TableTree>,
 }
 
 impl From<Snapshot> for proto::Snapshot {
     fn from(snapshot: Snapshot) -> Self {
         let mut response = proto::Snapshot {
             seq_no: snapshot.seq_no.into(),
+
+            // Tables
+            tables: snapshot
+                .tables
+                .iter()
+                .map(|(name, config)| (name.to_string(), config.into()))
+                .collect(),
+
+            // Runs
             wal: snapshot.wal.values().cloned().map(|r| r.into()).collect(),
-            tables: vec![],
+            trees: vec![],
         };
 
-        for (table_id, table) in snapshot.tables.iter() {
-            let mut table_response = proto::Table {
-                id: (*table_id).into(),
+        for (table_id, table) in snapshot.trees.iter() {
+            let mut table_response = proto::TableTree {
+                table_id: (*table_id).into(),
                 buffer: table.buffer.values().cloned().map(|r| r.into()).collect(),
                 levels: vec![],
             };
@@ -59,13 +74,13 @@ impl From<Snapshot> for proto::Snapshot {
             for (level, level_data) in table.tree.iter() {
                 let level_response = proto::TableLevel {
                     level: (*level).into(),
-                    tree: level_data.values().cloned().map(|r| r.into()).collect(),
+                    runs: level_data.values().cloned().map(|r| r.into()).collect(),
                 };
 
                 table_response.levels.push(level_response);
             }
 
-            response.tables.push(table_response);
+            response.trees.push(table_response);
         }
 
         response
@@ -75,17 +90,17 @@ impl From<Snapshot> for proto::Snapshot {
 impl From<proto::Snapshot> for Snapshot {
     fn from(snapshot: proto::Snapshot) -> Self {
         let mut wal = BTreeMap::new();
-        let mut tables = HashMap::new();
+        let mut trees = HashMap::new();
 
-        for table in snapshot.tables {
-            let mut table_data = Table {
+        for table in snapshot.trees {
+            let mut table_data = TableTree {
                 buffer: BTreeMap::new(),
                 tree: BTreeMap::new(),
             };
 
-            for (i, level) in table.levels.into_iter().enumerate() {
+            for (i, tree) in table.levels.into_iter().enumerate() {
                 let mut level_data = BTreeMap::new();
-                for run in level.tree {
+                for run in tree.runs {
                     match run.stats {
                         Some(proto::run_metadata::Stats::StatsV1(ref stats)) => {
                             level_data.insert(stats.min_key.clone(), run.into());
@@ -97,7 +112,7 @@ impl From<proto::Snapshot> for Snapshot {
                 table_data.tree.insert(Level::from(i as u64), level_data);
             }
 
-            tables.insert(TableID::from(table.id), table_data);
+            trees.insert(TableID::from(table.table_id), table_data);
         }
 
         for run in snapshot.wal {
@@ -112,19 +127,28 @@ impl From<proto::Snapshot> for Snapshot {
 
         Self {
             seq_no: snapshot.seq_no.into(),
+            tables: snapshot
+                .tables
+                .into_iter()
+                .map(|(name, config)| (TableName::from(name), config.into()))
+                .collect(),
             wal,
-            tables,
+            trees,
         }
     }
 }
 
 impl Snapshot {
-    pub async fn from_raw<I>(seq_no: metadata::SeqNo, runs: I) -> Self
+    pub async fn from_raw<I>(
+        seq_no: metadata::SeqNo,
+        tables: HashMap<metadata::TableName, TableConfig>,
+        runs: I,
+    ) -> Self
     where
         I: IntoIterator<Item = metadata::RunMetadata>,
     {
         let mut wal = BTreeMap::new();
-        let mut tables: HashMap<_, Table> = HashMap::new();
+        let mut trees: HashMap<_, TableTree> = HashMap::new();
 
         for run_metadata in runs {
             let min_key = match run_metadata.stats {
@@ -136,14 +160,14 @@ impl Snapshot {
                     wal.insert(seq_no, run_metadata);
                 },
                 metadata::BelongsTo::TableBuffer(ref table_id, seq_no) => {
-                    tables
+                    trees
                         .entry(*table_id)
                         .or_default()
                         .buffer
                         .insert(seq_no, run_metadata);
                 },
-                metadata::BelongsTo::TableTree(ref table_id, level) => {
-                    tables
+                metadata::BelongsTo::TableTreeLevel(ref table_id, level) => {
+                    trees
                         .entry(*table_id)
                         .or_default()
                         .tree
@@ -156,8 +180,9 @@ impl Snapshot {
 
         Self {
             seq_no,
-            wal,
             tables,
+            wal,
+            trees,
         }
     }
 
@@ -269,12 +294,20 @@ impl ForestImpl {
         &self,
         entry: ChangelogEntryWithID,
     ) -> Result<(), ForestError> {
-        let (runs_added, runs_removed) = match entry.changes {
-            ChangelogEntry::V1(v1) => (
-                v1.runs_added,
-                v1.runs_removed.into_iter().collect::<HashSet<_>>(),
-            ),
-        };
+        let seq_no = entry.id;
+        match entry.changes {
+            ChangelogEntry::RunsV1(v1) => self.process_runs_changelog_entry(seq_no, v1).await,
+            ChangelogEntry::TablesV1(v1) => self.process_tables_changelog_entry(seq_no, v1).await,
+        }
+    }
+
+    async fn process_runs_changelog_entry(
+        &self,
+        seq_no: SeqNo,
+        entry: RunsChangelogEntryV1,
+    ) -> Result<(), ForestError> {
+        let runs_added = entry.runs_added;
+        let runs_removed = entry.runs_removed;
 
         let new_runs = self
             .metadata_store
@@ -286,7 +319,7 @@ impl ForestImpl {
 
         // Remove runs that are no longer present
         new_state.wal.retain(|_, m| !runs_removed.contains(&m.id));
-        for table in new_state.tables.values_mut() {
+        for table in new_state.trees.values_mut() {
             table.buffer.retain(|_, m| !runs_removed.contains(&m.id));
             for table_entries in table.tree.values_mut() {
                 table_entries.retain(|_, m| !runs_removed.contains(&m.id));
@@ -296,7 +329,7 @@ impl ForestImpl {
                 .retain(|_, table_entries| !table_entries.is_empty());
         }
         new_state
-            .tables
+            .trees
             .retain(|_, table| !table.buffer.is_empty() || !table.tree.is_empty());
 
         // Add new runs
@@ -307,19 +340,19 @@ impl ForestImpl {
                 },
                 metadata::BelongsTo::TableBuffer(table_id, seq_no) => {
                     new_state
-                        .tables
+                        .trees
                         .entry(table_id)
                         .or_default()
                         .buffer
                         .insert(seq_no, new_run);
                 },
-                metadata::BelongsTo::TableTree(table_id, level) => {
+                metadata::BelongsTo::TableTreeLevel(table_id, level) => {
                     let min_key = match new_run.stats {
                         runs::Stats::StatsV1(ref stats) => stats.min_key.clone(),
                     };
 
                     new_state
-                        .tables
+                        .trees
                         .entry(table_id)
                         .or_default()
                         .tree
@@ -330,7 +363,36 @@ impl ForestImpl {
             }
         }
 
-        new_state.seq_no = entry.id;
+        new_state.seq_no = seq_no;
+        Ok(())
+    }
+
+    async fn process_tables_changelog_entry(
+        &self,
+        seq_no: SeqNo,
+        entry: TableChangelogEntryV1,
+    ) -> Result<(), ForestError> {
+        let table_id = match entry {
+            TableChangelogEntryV1::TableCreated(table_id) => table_id,
+            TableChangelogEntryV1::TableDropped(table_id) => table_id,
+        };
+        let table_config = self.metadata_store.get_table_by_id(table_id).await?;
+
+        let mut state = self.state.lock().unwrap();
+        let new_state = Arc::make_mut(&mut state);
+
+        match entry {
+            TableChangelogEntryV1::TableCreated(_) => {
+                new_state
+                    .tables
+                    .insert(table_config.table_name.clone(), table_config);
+            },
+            TableChangelogEntryV1::TableDropped(_) => {
+                new_state.tables.remove(&table_config.table_name.clone());
+            },
+        }
+
+        new_state.seq_no = seq_no;
         Ok(())
     }
 }

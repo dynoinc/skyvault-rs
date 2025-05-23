@@ -4,11 +4,10 @@ use std::ops::Deref;
 use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use async_stream::stream;
 use futures::Stream;
-use rand::Rng;
 use sqlx::PgPool;
 use sqlx::migrate::Migrator;
 use sqlx::postgres::PgPoolOptions;
@@ -40,6 +39,9 @@ pub enum MetadataError {
 
     #[error("Table not found")]
     TableNotFound(TableName),
+
+    #[error("Table ID not found")]
+    TableIDNotFound(TableID),
 }
 
 #[derive(
@@ -206,7 +208,7 @@ impl Deref for TableName {
 pub enum BelongsTo {
     WalSeqNo(SeqNo),
     TableBuffer(TableID, SeqNo),
-    TableTree(TableID, Level),
+    TableTreeLevel(TableID, Level),
 }
 
 impl From<BelongsTo> for proto::run_metadata::BelongsTo {
@@ -219,8 +221,8 @@ impl From<BelongsTo> for proto::run_metadata::BelongsTo {
                     seq_no: seq_no.0,
                 })
             },
-            BelongsTo::TableTree(table_id, level) => {
-                proto::run_metadata::BelongsTo::TableTree(proto::TableTree {
+            BelongsTo::TableTreeLevel(table_id, level) => {
+                proto::run_metadata::BelongsTo::TableTree(proto::TableTreeLevel {
                     table_id: table_id.0,
                     level: level.0,
                 })
@@ -237,7 +239,7 @@ impl From<proto::run_metadata::BelongsTo> for BelongsTo {
                 BelongsTo::TableBuffer(TableID(table_buffer.table_id), SeqNo(table_buffer.seq_no))
             },
             proto::run_metadata::BelongsTo::TableTree(table_tree) => {
-                BelongsTo::TableTree(TableID(table_tree.table_id), Level(table_tree.level))
+                BelongsTo::TableTreeLevel(TableID(table_tree.table_id), Level(table_tree.level))
             },
         }
     }
@@ -277,14 +279,14 @@ impl From<proto::RunMetadata> for RunMetadata {
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
-pub struct ChangelogEntryV1 {
+pub struct RunsChangelogEntryV1 {
     pub runs_added: Vec<RunId>,
     pub runs_removed: Vec<RunId>,
 }
 
-impl From<ChangelogEntryV1> for proto::ChangelogEntryV1 {
-    fn from(entry: ChangelogEntryV1) -> Self {
-        proto::ChangelogEntryV1 {
+impl From<RunsChangelogEntryV1> for proto::RunsChangelogEntryV1 {
+    fn from(entry: RunsChangelogEntryV1) -> Self {
+        proto::RunsChangelogEntryV1 {
             runs_added: entry.runs_added.iter().map(|id| id.to_string()).collect(),
             runs_removed: entry.runs_removed.iter().map(|id| id.to_string()).collect(),
         }
@@ -292,8 +294,34 @@ impl From<ChangelogEntryV1> for proto::ChangelogEntryV1 {
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
+pub enum TableChangelogEntryV1 {
+    TableCreated(TableID),
+    TableDropped(TableID),
+}
+
+impl From<TableChangelogEntryV1> for proto::TableChangelogEntryV1 {
+    fn from(entry: TableChangelogEntryV1) -> Self {
+        proto::TableChangelogEntryV1 {
+            entry: match entry {
+                TableChangelogEntryV1::TableCreated(table_id) => Some(
+                    proto::table_changelog_entry_v1::Entry::TableCreated(proto::TableCreated {
+                        table_id: table_id.0,
+                    }),
+                ),
+                TableChangelogEntryV1::TableDropped(table_id) => Some(
+                    proto::table_changelog_entry_v1::Entry::TableDropped(proto::TableDropped {
+                        table_id: table_id.0,
+                    }),
+                ),
+            },
+        }
+    }
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Debug)]
 pub enum ChangelogEntry {
-    V1(ChangelogEntryV1),
+    RunsV1(RunsChangelogEntryV1),
+    TablesV1(TableChangelogEntryV1),
 }
 
 impl From<JsonValue> for ChangelogEntry {
@@ -314,8 +342,11 @@ impl From<ChangelogEntryWithID> for proto::ChangelogEntryWithId {
         proto::ChangelogEntryWithId {
             id: entry_with_id.id.0,
             entry: match entry_with_id.changes {
-                ChangelogEntry::V1(v1) => {
-                    Some(proto::changelog_entry_with_id::Entry::V1(v1.into()))
+                ChangelogEntry::RunsV1(v1) => Some(
+                    proto::changelog_entry_with_id::Entry::RunsChangelogEntryV1(v1.into()),
+                ),
+                ChangelogEntry::TablesV1(v1) => {
+                    Some(proto::changelog_entry_with_id::Entry::TableChangelogEntryV1(v1.into()))
                 },
             },
         }
@@ -366,18 +397,27 @@ impl Display for TableID {
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone, Default, Debug)]
-pub struct TableConfig {}
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+pub struct TableConfig {
+    pub table_id: Option<TableID>,
+    pub table_name: TableName,
+}
 
 impl From<proto::TableConfig> for TableConfig {
-    fn from(_config: proto::TableConfig) -> Self {
-        TableConfig {}
+    fn from(config: proto::TableConfig) -> Self {
+        TableConfig {
+            table_id: config.table_id.map(TableID),
+            table_name: TableName::from(config.table_name),
+        }
     }
 }
 
-impl From<TableConfig> for proto::TableConfig {
-    fn from(_config: TableConfig) -> Self {
-        proto::TableConfig {}
+impl From<&TableConfig> for proto::TableConfig {
+    fn from(config: &TableConfig) -> Self {
+        proto::TableConfig {
+            table_id: config.table_id.map(|id| id.0),
+            table_name: config.table_name.to_string(),
+        }
     }
 }
 
@@ -434,17 +474,11 @@ pub trait MetadataStoreTrait: Send + Sync + 'static {
     async fn mark_job_failed(&self, job_id: JobID) -> Result<(), MetadataError>;
 
     // TABLES
-    async fn create_table(
-        &self,
-        table_name: TableName,
-        config: TableConfig,
-    ) -> Result<TableID, MetadataError>;
+    async fn create_table(&self, config: TableConfig) -> Result<SeqNo, MetadataError>;
     async fn drop_table(&self, table_name: TableName) -> Result<(), MetadataError>;
-    async fn list_tables(&self) -> Result<Vec<TableName>, MetadataError>;
-    async fn get_table(
-        &self,
-        table_name: TableName,
-    ) -> Result<(TableID, TableConfig), MetadataError>;
+    async fn list_tables(&self) -> Result<Vec<TableConfig>, MetadataError>;
+    async fn get_table(&self, table_name: TableName) -> Result<TableConfig, MetadataError>;
+    async fn get_table_by_id(&self, table_id: TableID) -> Result<TableConfig, MetadataError>;
 }
 
 pub type MetadataStore = Arc<dyn MetadataStoreTrait>;
@@ -488,14 +522,15 @@ impl PostgresMetadataStore {
                 .await?;
         }
 
-        let changelog_changes = serde_json::to_value(ChangelogEntry::V1(ChangelogEntryV1 {
-            runs_added: run_ids_with_stats
-                .iter()
-                .map(|(id, _)| id.clone())
-                .collect(),
-            runs_removed: vec![],
-        }))
-        .map_err(|e| sqlx::Error::Configuration(e.into()))?; // Convert serde error appropriately if needed
+        let changelog_changes =
+            serde_json::to_value(ChangelogEntry::RunsV1(RunsChangelogEntryV1 {
+                runs_added: run_ids_with_stats
+                    .iter()
+                    .map(|(id, _)| id.clone())
+                    .collect(),
+                runs_removed: vec![],
+            }))
+            .map_err(|e| sqlx::Error::Configuration(e.into()))?; // Convert serde error appropriately if needed
 
         sqlx::query!(
             r#"
@@ -623,11 +658,12 @@ impl PostgresMetadataStore {
         // If num_ids_to_reserve == 1, nextval already advanced it correctly.
 
         // --- Insert Changelog Entry ---
-        let changelog_changes = serde_json::to_value(ChangelogEntry::V1(ChangelogEntryV1 {
-            runs_added: new_table_runs.iter().map(|(id, _, _)| id.clone()).collect(),
-            runs_removed: compacted.to_vec(), // Clone if needed or take ownership
-        }))
-        .map_err(MetadataError::JsonSerdeError)?; // Map serde error
+        let changelog_changes =
+            serde_json::to_value(ChangelogEntry::RunsV1(RunsChangelogEntryV1 {
+                runs_added: new_table_runs.iter().map(|(id, _, _)| id.clone()).collect(),
+                runs_removed: compacted.to_vec(), // Clone if needed or take ownership
+            }))
+            .map_err(MetadataError::JsonSerdeError)?; // Map serde error
 
         sqlx::query!(
             r#"
@@ -732,7 +768,7 @@ impl PostgresMetadataStore {
             ));
         }
 
-        let changelog_entry_payload = ChangelogEntry::V1(ChangelogEntryV1 {
+        let changelog_entry_payload = ChangelogEntry::RunsV1(RunsChangelogEntryV1 {
             runs_added: new_runs.iter().map(|m| m.id.clone()).collect(),
             runs_removed: compacted.to_vec(),
         });
@@ -1124,13 +1160,10 @@ impl MetadataStoreTrait for PostgresMetadataStore {
         Ok(())
     }
 
-    async fn create_table(
-        &self,
-        table_name: TableName,
-        config: TableConfig,
-    ) -> Result<TableID, MetadataError> {
+    async fn create_table(&self, config: TableConfig) -> Result<SeqNo, MetadataError> {
         let mut transaction = self.pg_pool.begin().await?;
 
+        let table_name = config.table_name.clone();
         let result = sqlx::query_scalar!(
             r#"
             INSERT INTO tables (name, config)
@@ -1145,8 +1178,24 @@ impl MetadataStoreTrait for PostgresMetadataStore {
 
         match result {
             Ok(id) => {
+                let table_id = TableID::from(id);
+                let changelog_changes = serde_json::to_value(ChangelogEntry::TablesV1(
+                    TableChangelogEntryV1::TableCreated(table_id),
+                ))?;
+
+                let seq_no = sqlx::query_scalar!(
+                    r#"
+                    INSERT INTO changelog (changes)
+                    VALUES ($1)
+                    RETURNING id
+                    "#,
+                    changelog_changes
+                )
+                .fetch_one(&mut *transaction)
+                .await?;
+
                 transaction.commit().await?;
-                Ok(TableID::from(id))
+                Ok(SeqNo::from(seq_no))
             },
             Err(sqlx::Error::Database(db_error)) if db_error.code().as_deref() == Some("23505") => {
                 transaction.rollback().await?;
@@ -1162,6 +1211,31 @@ impl MetadataStoreTrait for PostgresMetadataStore {
     async fn drop_table(&self, table_name: TableName) -> Result<(), MetadataError> {
         let mut transaction = self.pg_pool.begin().await?;
 
+        let id = sqlx::query_scalar!(
+            r#"
+            SELECT id FROM tables WHERE name = $1 AND deleted_at IS NULL FOR UPDATE
+            "#,
+            table_name.to_string()
+        )
+        .fetch_optional(&mut *transaction)
+        .await?;
+
+        if let Some(id) = id {
+            let changelog_changes = serde_json::to_value(ChangelogEntry::TablesV1(
+                TableChangelogEntryV1::TableDropped(TableID::from(id)),
+            ))?;
+
+            sqlx::query!(
+                r#"
+                INSERT INTO changelog (changes)
+                VALUES ($1)
+                "#,
+                changelog_changes
+            )
+            .execute(&mut *transaction)
+            .await?;
+        }
+
         sqlx::query!(
             r#"
             DELETE FROM tables WHERE name = $1 AND deleted_at IS NULL
@@ -1176,10 +1250,7 @@ impl MetadataStoreTrait for PostgresMetadataStore {
         Ok(())
     }
 
-    async fn get_table(
-        &self,
-        table_name: TableName,
-    ) -> Result<(TableID, TableConfig), MetadataError> {
+    async fn get_table(&self, table_name: TableName) -> Result<TableConfig, MetadataError> {
         let row = sqlx::query!(
             r#"
             SELECT id, name, config FROM tables WHERE name = $1 AND deleted_at IS NULL
@@ -1191,117 +1262,53 @@ impl MetadataStoreTrait for PostgresMetadataStore {
 
         match row {
             Some(row) => {
-                let config: TableConfig =
+                let mut config: TableConfig =
                     serde_json::from_value(row.config).map_err(MetadataError::JsonSerdeError)?;
-                Ok((TableID::from(row.id), config))
+                config.table_id = Some(TableID::from(row.id));
+                Ok(config)
             },
             None => Err(MetadataError::TableNotFound(table_name)),
         }
     }
 
-    async fn list_tables(&self) -> Result<Vec<TableName>, MetadataError> {
+    async fn get_table_by_id(&self, table_id: TableID) -> Result<TableConfig, MetadataError> {
+        let row = sqlx::query!(
+            r#"
+            SELECT id, name, config FROM tables WHERE id = $1 AND deleted_at IS NULL
+            "#,
+            table_id.0
+        )
+        .fetch_optional(&self.pg_pool)
+        .await?;
+
+        match row {
+            Some(row) => {
+                let mut config: TableConfig =
+                    serde_json::from_value(row.config).map_err(MetadataError::JsonSerdeError)?;
+                config.table_id = Some(TableID::from(row.id));
+                Ok(config)
+            },
+            None => Err(MetadataError::TableIDNotFound(table_id)),
+        }
+    }
+
+    async fn list_tables(&self) -> Result<Vec<TableConfig>, MetadataError> {
         let rows = sqlx::query!(
             r#"
-            SELECT name FROM tables WHERE deleted_at IS NULL
+            SELECT id, config FROM tables WHERE deleted_at IS NULL
             "#
         )
         .fetch_all(&self.pg_pool)
         .await?;
 
         rows.into_iter()
-            .map(|row| Ok(TableName::from(row.name)))
+            .map(|row| {
+                let mut config: TableConfig =
+                    serde_json::from_value(row.config).map_err(MetadataError::JsonSerdeError)?;
+                config.table_id = Some(TableID::from(row.id));
+                Ok(config)
+            })
             .collect()
-    }
-}
-
-#[derive(Clone)]
-pub struct TableCache {
-    cache: Arc<tokio::sync::Mutex<HashMap<TableName, (Option<(TableID, TableConfig)>, Instant)>>>,
-    metadata_store: Option<MetadataStore>,
-}
-
-impl TableCache {
-    pub fn new(metadata_store: MetadataStore) -> Self {
-        Self {
-            cache: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
-            metadata_store: Some(metadata_store),
-        }
-    }
-
-    #[cfg(test)]
-    pub fn new_for_test(
-        cache: HashMap<TableName, (Option<(TableID, TableConfig)>, Instant)>,
-    ) -> Self {
-        Self {
-            cache: Arc::new(tokio::sync::Mutex::new(cache)),
-            metadata_store: None,
-        }
-    }
-
-    fn needs_refresh(last_updated: Instant) -> bool {
-        let jitter = rand::rng().random_range(0..30);
-        last_updated.elapsed() > Duration::from_secs(60 - 15 + jitter)
-    }
-
-    async fn refresh_cache(
-        self: Self,
-        table_name: TableName,
-    ) -> Result<Option<(TableID, TableConfig)>, MetadataError> {
-        if let Some(metadata_store) = self.metadata_store {
-            let (table_id, config) = metadata_store.get_table(table_name.clone()).await?;
-            let mut cache = self.cache.lock().await;
-            cache.insert(
-                table_name,
-                (Some((table_id, config.clone())), Instant::now()),
-            );
-            Ok(Some((table_id, config)))
-        } else {
-            let mut cache = self.cache.lock().await;
-            cache.insert(table_name, (None, Instant::now()));
-            Ok(None)
-        }
-    }
-
-    pub async fn get_table_id(&self, table_name: TableName) -> Result<TableID, MetadataError> {
-        let cache = self.cache.lock().await;
-        match cache.get(&table_name) {
-            Some((entry, last_updated)) => {
-                if Self::needs_refresh(*last_updated) {
-                    let table_cache = self.clone();
-                    let table_name_clone = table_name.clone();
-                    tokio::spawn(async move {
-                        if let Err(e) = table_cache.refresh_cache(table_name_clone.clone()).await {
-                            tracing::error!(
-                                "Error refreshing cache for table {table_name_clone}: {e}"
-                            );
-                        }
-                    });
-                }
-
-                match entry {
-                    Some((table_id, _)) => {
-                        return Ok(*table_id);
-                    },
-                    None => {
-                        return Err(MetadataError::TableNotFound(table_name));
-                    },
-                }
-            },
-            None => {
-                drop(cache);
-
-                let table_cache = self.clone();
-                let table_name_clone = table_name.clone();
-                match table_cache.refresh_cache(table_name_clone).await? {
-                    Some((table_id, _)) => {
-                        return Ok(table_id);
-                    },
-                    None => {
-                        return Err(MetadataError::TableNotFound(table_name));
-                    },
-                }
-            },
-        }
     }
 }
 
@@ -1328,13 +1335,19 @@ mod tests {
 
         // Create a table
         metadata_store
-            .create_table(TableName::from("test_table"), TableConfig::default())
+            .create_table(TableConfig {
+                table_id: None,
+                table_name: TableName::from("test_table"),
+            })
             .await
             .unwrap();
 
         // Try to create the same table again
         let result = metadata_store
-            .create_table(TableName::from("test_table"), TableConfig::default())
+            .create_table(TableConfig {
+                table_id: None,
+                table_name: TableName::from("test_table"),
+            })
             .await;
 
         // Verify that the second creation returns an error

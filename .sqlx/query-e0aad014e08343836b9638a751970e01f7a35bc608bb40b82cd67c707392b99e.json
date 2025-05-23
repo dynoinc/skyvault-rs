@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            INSERT INTO changelog (changes)\n            VALUES ($1)\n            RETURNING *\n            ",
+  "query": "\n            SELECT id, config FROM tables WHERE deleted_at IS NULL\n            ",
   "describe": {
     "columns": [
       {
@@ -10,19 +10,17 @@
       },
       {
         "ordinal": 1,
-        "name": "changes",
+        "name": "config",
         "type_info": "Jsonb"
       }
     ],
     "parameters": {
-      "Left": [
-        "Jsonb"
-      ]
+      "Left": []
     },
     "nullable": [
       false,
       false
     ]
   },
-  "hash": "d217a345c64d2873ac04054fe74cab4bc1c37d55adc213a3318982de5f1113a6"
+  "hash": "e0aad014e08343836b9638a751970e01f7a35bc608bb40b82cd67c707392b99e"
 }

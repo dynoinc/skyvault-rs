@@ -2,7 +2,6 @@
 name = "skyvault"
 version = "0.0.8"
 edition = "2024"
-license = "AGPL-3.0-or-later"
 license-file = "LICENSE"
 description = "Object store backed key-value store"
 readme = "README.md"

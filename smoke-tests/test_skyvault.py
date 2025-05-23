@@ -71,8 +71,11 @@ def stubs(service_connection):
 
 def create_table(stub, table_name):
     try:
-        request = skyvault_pb2.CreateTableRequest(table_name=table_name)
-        stub.CreateTable(request, timeout=10)
+        request = skyvault_pb2.CreateTableRequest(
+            config=skyvault_pb2.TableConfig(table_name=table_name)
+        )
+        response = stub.CreateTable(request, timeout=10)
+        return response.seq_no
     except grpc.RpcError as e:
         if e.code() != grpc.StatusCode.ALREADY_EXISTS:
             raise
@@ -85,7 +88,17 @@ def perform_write(stub, table_name, key, value_bytes):
         table_name=table_name, items=[write_item]
     )
     request = skyvault_pb2.WriteBatchRequest(tables=[table_request])
-    return stub.WriteBatch(request, timeout=15)
+
+    start_time = time.time()
+    while time.time() - start_time < 5:
+        try:
+            return stub.WriteBatch(request, timeout=15).seq_no
+        except grpc.RpcError as e:
+            if e.code() != grpc.StatusCode.NOT_FOUND:
+                raise
+            time.sleep(1)
+
+    raise grpc.RpcError("Write failed after retries")
 
 
 def perform_read(stub, table_name, key, expected_value_bytes):
@@ -222,12 +235,12 @@ def test_snapshot_persistence(stubs):
     create_table(orchestrator_stub, table_name)
 
     # Write some data
-    perform_write(writer_stub, table_name, key, value)
+    seq_no = perform_write(writer_stub, table_name, key, value)
 
     # Trigger snapshot persistence
     persist_snapshot(orchestrator_stub)
 
     # Verify snapshot is persisted
-    assert perform_read(reader_stub, table_name, key, value), (
+    assert perform_read_with_retry(reader_stub, table_name, seq_no, key, value), (
         f"Failed to read back key '{key}' after snapshot persistence"
     )

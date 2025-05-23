@@ -19,7 +19,7 @@ pub async fn execute(
     let forest = ForestImpl::latest(metadata_store.clone(), object_store.clone()).await?;
     let state = forest.get_state();
 
-    let table = match state.tables.get(&table_id) {
+    let table = match state.trees.get(&table_id) {
         Some(table) if table.buffer.is_empty() => return Ok((vec![], vec![])),
         Some(table) => table,
         None => return Ok((vec![], vec![])),
@@ -113,7 +113,7 @@ pub async fn execute(
         // Collect the run ID and stats
         new_runs.push(metadata::RunMetadata {
             id: run_id,
-            belongs_to: metadata::BelongsTo::TableTree(table_id, metadata::Level::zero()),
+            belongs_to: metadata::BelongsTo::TableTreeLevel(table_id, metadata::Level::zero()),
             stats,
         });
     }
