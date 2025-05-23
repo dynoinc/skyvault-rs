@@ -1,19 +1,35 @@
-use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc,
+        RwLock,
+    },
+};
 
 use async_trait::async_trait;
-use aws_sdk_s3::Client as S3Client;
-use aws_sdk_s3::operation::create_bucket::CreateBucketError;
-use aws_sdk_s3::operation::get_object::GetObjectError;
-use aws_sdk_s3::operation::put_object::PutObjectError;
-use aws_sdk_s3::primitives::{ByteStream, ByteStreamError};
-use aws_smithy_runtime_api::client::orchestrator::HttpResponse;
-use aws_smithy_runtime_api::client::result::SdkError;
+use aws_sdk_s3::{
+    Client as S3Client,
+    operation::{
+        create_bucket::CreateBucketError,
+        get_object::GetObjectError,
+        put_object::PutObjectError,
+    },
+    primitives::{
+        ByteStream,
+        ByteStreamError,
+    },
+};
+use aws_smithy_runtime_api::client::{
+    orchestrator::HttpResponse,
+    result::SdkError,
+};
 use bytes::Bytes;
 use thiserror::Error;
 
-use crate::metadata::SnapshotID;
-use crate::runs::RunId;
+use crate::{
+    metadata::SnapshotID,
+    runs::RunId,
+};
 
 #[derive(Error, Debug)]
 pub enum StorageError {
@@ -73,10 +89,7 @@ pub struct S3ObjectStore {
 }
 
 impl S3ObjectStore {
-    pub async fn new(
-        s3_config: aws_sdk_s3::config::Config,
-        bucket_name: &str,
-    ) -> Result<Self, StorageError> {
+    pub async fn new(s3_config: aws_sdk_s3::config::Config, bucket_name: &str) -> Result<Self, StorageError> {
         let client = S3Client::from_conf(s3_config);
 
         // Create the bucket if it doesn't exist
@@ -84,8 +97,7 @@ impl S3ObjectStore {
         match client.create_bucket().bucket(bucket_name).send().await {
             Ok(_) => {},
             Err(SdkError::ServiceError(err))
-                if err.err().is_bucket_already_exists()
-                    || err.err().is_bucket_already_owned_by_you() => {},
+                if err.err().is_bucket_already_exists() || err.err().is_bucket_already_owned_by_you() => {},
             Err(err) => return Err(StorageError::CreateBucketError(Box::new(err))),
         }
 

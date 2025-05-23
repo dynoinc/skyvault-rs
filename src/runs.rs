@@ -1,9 +1,20 @@
-use std::fmt::{self, Display};
-use std::io::Cursor;
+use std::{
+    fmt::{
+        self,
+        Display,
+    },
+    io::Cursor,
+};
 
-use byteorder::{BigEndian, ReadBytesExt};
+use byteorder::{
+    BigEndian,
+    ReadBytesExt,
+};
 use bytes::Bytes;
-use futures::{Stream, StreamExt};
+use futures::{
+    Stream,
+    StreamExt,
+};
 
 use crate::proto;
 
@@ -56,9 +67,7 @@ impl From<WriteOperation> for proto::GetFromRunItem {
         proto::GetFromRunItem {
             key: val.key().to_string(),
             result: match val {
-                WriteOperation::Put(_, value) => {
-                    Some(proto::get_from_run_item::Result::Value(value))
-                },
+                WriteOperation::Put(_, value) => Some(proto::get_from_run_item::Result::Value(value)),
                 WriteOperation::Delete(_) => Some(proto::get_from_run_item::Result::Deleted(())),
             },
         }
@@ -308,9 +317,7 @@ pub fn search_run(run_data: &[u8], search_key: &str) -> SearchResult {
         }
 
         // Read key
-        let key_len = cursor
-            .read_u32::<BigEndian>()
-            .expect("Failed to read key length") as usize;
+        let key_len = cursor.read_u32::<BigEndian>().expect("Failed to read key length") as usize;
         let current_pos = cursor.position() as usize;
 
         // Check for potential overflow or incomplete data before allocation
@@ -335,10 +342,7 @@ pub fn search_run(run_data: &[u8], search_key: &str) -> SearchResult {
                     }
 
                     // Skip value if it was a Put operation
-                    let value_len = cursor
-                        .read_u32::<BigEndian>()
-                        .expect("Failed to read value length")
-                        as usize;
+                    let value_len = cursor.read_u32::<BigEndian>().expect("Failed to read value length") as usize;
                     let val_pos = cursor.position() as usize;
 
                     // Check for potential overflow or incomplete data
@@ -352,7 +356,8 @@ pub fn search_run(run_data: &[u8], search_key: &str) -> SearchResult {
 
                     cursor.set_position((val_pos + value_len) as u64); // Move cursor past the value
                 }
-                // If marker was Delete, we've already skipped the key, nothing more to skip.
+                // If marker was Delete, we've already skipped the key, nothing
+                // more to skip.
             },
             std::cmp::Ordering::Equal => {
                 // Found the key
@@ -364,10 +369,7 @@ pub fn search_run(run_data: &[u8], search_key: &str) -> SearchResult {
                             panic!("Incomplete value length data for found key");
                         }
 
-                        let value_len = cursor
-                            .read_u32::<BigEndian>()
-                            .expect("Failed to read value length")
-                            as usize;
+                        let value_len = cursor.read_u32::<BigEndian>().expect("Failed to read value length") as usize;
                         let val_pos = cursor.position() as usize;
 
                         // Check for potential overflow or incomplete data
@@ -400,8 +402,9 @@ pub fn search_run(run_data: &[u8], search_key: &str) -> SearchResult {
 
 /// Reads a serialized run file and returns a stream of write operations.
 ///
-/// This function takes a stream of bytes representing a serialized run and returns
-/// a stream that yields each write operation (Put or Delete) contained in the run.
+/// This function takes a stream of bytes representing a serialized run and
+/// returns a stream that yields each write operation (Put or Delete) contained
+/// in the run.
 pub fn read_run_stream<S>(stream: S) -> impl Stream<Item = Result<WriteOperation, RunError>>
 where
     S: Stream<Item = Result<Bytes, std::io::Error>> + Unpin,
@@ -518,8 +521,10 @@ where
 #[cfg(test)]
 mod tests {
     use futures::stream;
-    use proptest::collection::btree_map;
-    use proptest::prelude::*;
+    use proptest::{
+        collection::btree_map,
+        prelude::*,
+    };
 
     use super::*;
 
@@ -551,15 +556,10 @@ mod tests {
         }
     }
 
-    // Strategy to generate a BTreeMap of keys to values/tombstones, which ensures unique, sorted
-    // keys.
-    fn arb_write_operations_map()
-    -> impl Strategy<Value = std::collections::BTreeMap<String, Option<Vec<u8>>>> {
-        btree_map(
-            arb_key(),
-            prop_oneof![Just(None), arb_value().prop_map(Some)],
-            1..50,
-        ) // 1 to 50 operations
+    // Strategy to generate a BTreeMap of keys to values/tombstones, which ensures
+    // unique, sorted keys.
+    fn arb_write_operations_map() -> impl Strategy<Value = std::collections::BTreeMap<String, Option<Vec<u8>>>> {
+        btree_map(arb_key(), prop_oneof![Just(None), arb_value().prop_map(Some)], 1..50) // 1 to 50 operations
     }
 
     proptest! {
@@ -649,7 +649,8 @@ mod tests {
                         let s = match stats {
                             Stats::StatsV1(s) => s,
                         };
-                        if non_existent_key.as_str() >= s.min_key.as_str() && non_existent_key.as_str() <= s.max_key.as_str() {
+                        if non_existent_key.as_str() >= s.min_key.as_str() &&
+                            non_existent_key.as_str() <= s.max_key.as_str() {
                             let result = search_run(run_data, &non_existent_key);
                             prop_assert_eq!(result.clone(), SearchResult::NotFound,
                                 "Search for non-existent key {} yielded {:?}, expected NotFound",
@@ -672,9 +673,7 @@ mod tests {
         ];
 
         let results: Vec<Result<(Bytes, Stats), RunError>> =
-            build_runs(stream::iter(ops.into_iter().map(Ok)))
-                .collect()
-                .await;
+            build_runs(stream::iter(ops.into_iter().map(Ok))).collect().await;
 
         // Assert exactly one run was produced for this small input
         assert_eq!(results.len(), 1);
@@ -702,9 +701,7 @@ mod tests {
             WriteOperation::Put("apple".to_string(), value("green")),
             WriteOperation::Put("apple".to_string(), value("red")),
         ];
-        let results: Vec<_> = build_runs(stream::iter(ops.into_iter().map(Ok)))
-            .collect()
-            .await;
+        let results: Vec<_> = build_runs(stream::iter(ops.into_iter().map(Ok))).collect().await;
         assert_eq!(results.len(), 1); // Expect one item, which is an error
         assert!(matches!(results[0], Err(RunError::Format(_))));
     }
@@ -712,9 +709,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_run_empty_input() {
         let ops: Vec<WriteOperation> = vec![];
-        let results: Vec<_> = build_runs(stream::iter(ops.into_iter().map(Ok)))
-            .collect()
-            .await;
+        let results: Vec<_> = build_runs(stream::iter(ops.into_iter().map(Ok))).collect().await;
         assert!(results.is_empty());
     }
 
@@ -725,24 +720,13 @@ mod tests {
             WriteOperation::Put("banana".to_string(), value("yellow")),
             WriteOperation::Put("cherry".to_string(), value("red")),
         ];
-        let results: Vec<_> = build_runs(stream::iter(ops.into_iter().map(Ok)))
-            .collect()
-            .await;
+        let results: Vec<_> = build_runs(stream::iter(ops.into_iter().map(Ok))).collect().await;
         assert_eq!(results.len(), 1);
         let (data, _) = results.into_iter().next().unwrap().unwrap();
 
-        assert_eq!(
-            search_run(&data, "banana"),
-            SearchResult::Found(value("yellow"))
-        );
-        assert_eq!(
-            search_run(&data, "apple"),
-            SearchResult::Found(value("red"))
-        );
-        assert_eq!(
-            search_run(&data, "cherry"),
-            SearchResult::Found(value("red"))
-        );
+        assert_eq!(search_run(&data, "banana"), SearchResult::Found(value("yellow")));
+        assert_eq!(search_run(&data, "apple"), SearchResult::Found(value("red")));
+        assert_eq!(search_run(&data, "cherry"), SearchResult::Found(value("red")));
     }
 
     #[tokio::test]
@@ -752,17 +736,12 @@ mod tests {
             WriteOperation::Delete("banana".to_string()),
             WriteOperation::Put("cherry".to_string(), value("red")),
         ];
-        let results: Vec<_> = build_runs(stream::iter(ops.into_iter().map(Ok)))
-            .collect()
-            .await;
+        let results: Vec<_> = build_runs(stream::iter(ops.into_iter().map(Ok))).collect().await;
         assert_eq!(results.len(), 1);
         let (data, _) = results.into_iter().next().unwrap().unwrap();
 
         assert_eq!(search_run(&data, "banana"), SearchResult::Tombstone);
-        assert_eq!(
-            search_run(&data, "apple"),
-            SearchResult::Found(value("red"))
-        );
+        assert_eq!(search_run(&data, "apple"), SearchResult::Found(value("red")));
     }
 
     #[tokio::test]
@@ -771,9 +750,7 @@ mod tests {
             WriteOperation::Put("banana".to_string(), value("yellow")),
             WriteOperation::Put("date".to_string(), value("brown")),
         ];
-        let results: Vec<_> = build_runs(stream::iter(ops.into_iter().map(Ok)))
-            .collect()
-            .await;
+        let results: Vec<_> = build_runs(stream::iter(ops.into_iter().map(Ok))).collect().await;
         assert_eq!(results.len(), 1);
         let (data, _) = results.into_iter().next().unwrap().unwrap();
 
@@ -806,9 +783,7 @@ mod tests {
             WriteOperation::Put("banana".to_string(), value("yellow")),
         ];
         let ops_copy = ops.clone();
-        let results1: Vec<_> = build_runs(stream::iter(ops_copy.into_iter().map(Ok)))
-            .collect()
-            .await;
+        let results1: Vec<_> = build_runs(stream::iter(ops_copy.into_iter().map(Ok))).collect().await;
         assert_eq!(results1.len(), 1);
         let (data1, _) = results1.into_iter().next().unwrap().unwrap();
 
@@ -817,9 +792,7 @@ mod tests {
             WriteOperation::Put("apple".to_string(), value("red")),
             WriteOperation::Put("banana".to_string(), value("yellow")),
         ];
-        let results2: Vec<_> = build_runs(stream::iter(array_ops.into_iter().map(Ok)))
-            .collect()
-            .await;
+        let results2: Vec<_> = build_runs(stream::iter(array_ops.into_iter().map(Ok))).collect().await;
         assert_eq!(results2.len(), 1);
         let (data2, _) = results2.into_iter().next().unwrap().unwrap();
 
@@ -830,10 +803,10 @@ mod tests {
     // Add a new test case for splitting runs
     #[tokio::test]
     async fn test_create_multiple_runs_due_to_size() {
-        // Temporarily override MAX_RUN_SIZE_BYTES for this test scope - this requires more setup.
-        // For now, let's simulate by assuming each op exceeds a hypothetical small limit.
-        // A more robust test would involve actually setting a low limit, maybe via config or
-        // feature flag.
+        // Temporarily override MAX_RUN_SIZE_BYTES for this test scope - this requires
+        // more setup. For now, let's simulate by assuming each op exceeds a
+        // hypothetical small limit. A more robust test would involve actually
+        // setting a low limit, maybe via config or feature flag.
 
         // Simulating the logic with a very small conceptual limit (e.g., 30 bytes).
         // Version byte (1)
@@ -843,8 +816,8 @@ mod tests {
         // Run 3: cherry (1+4+6+4+4=19). Would exceed limit (22+19=41). Start new run.
         //        New Run 3: version(1) + cherry(19) = 20.
 
-        // Create a larger stream to test the actual 128MB limit splitting (this will be slow/large)
-        // We need a helper to generate large-ish data.
+        // Create a larger stream to test the actual 128MB limit splitting (this will be
+        // slow/large) We need a helper to generate large-ish data.
         fn generate_op(key_prefix: &str, index: usize, size: usize) -> WriteOperation {
             let key = format!("{}_{:010}", key_prefix, index);
             let value = vec![0u8; size]; // Generate a value of specified size
@@ -866,11 +839,7 @@ mod tests {
         let results: Vec<Result<(Bytes, Stats), RunError>> = build_runs(stream).collect().await;
 
         // Assert that more than one run was produced
-        assert!(
-            results.len() > 1,
-            "Expected multiple runs, got {}",
-            results.len()
-        );
+        assert!(results.len() > 1, "Expected multiple runs, got {}", results.len());
 
         // Basic sanity checks on the yielded runs
         let mut previous_max_key: Option<String> = None;
@@ -892,9 +861,11 @@ mod tests {
                                     s.size_bytes,
                                     MAX_RUN_SIZE_BYTES
                                 );
-                                // Check it's reasonably full (e.g., > 90%? - this might be too
+                                // Check it's reasonably full (e.g., > 90%? -
+                                // this might be too
                                 // strict depending on op sizes)
-                                // assert!(s.size_bytes > (MAX_RUN_SIZE_BYTES * 9 / 10));
+                                // assert!(s.size_bytes > (MAX_RUN_SIZE_BYTES *
+                                // 9 / 10));
                             } else {
                                 assert!(
                                     s.size_bytes <= MAX_RUN_SIZE_BYTES,

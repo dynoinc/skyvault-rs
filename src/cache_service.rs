@@ -1,12 +1,34 @@
 use std::pin::Pin;
 
-use futures::{Stream, StreamExt, TryStreamExt, pin_mut};
+use futures::{
+    Stream,
+    StreamExt,
+    TryStreamExt,
+    pin_mut,
+};
 use thiserror::Error;
-use tonic::{Request, Response, Status};
+use tonic::{
+    Request,
+    Response,
+    Status,
+};
 
-use crate::runs::{RunError, RunId, SearchResult, WriteOperation};
-use crate::storage::{self, StorageCache};
-use crate::{k_way, metadata, proto, runs};
+use crate::{
+    k_way,
+    metadata,
+    proto,
+    runs,
+    runs::{
+        RunError,
+        RunId,
+        SearchResult,
+        WriteOperation,
+    },
+    storage::{
+        self,
+        StorageCache,
+    },
+};
 
 #[derive(Debug, Error)]
 pub enum CacheServiceError {
@@ -76,9 +98,7 @@ impl proto::cache_service_server::CacheService for MyCache {
         request: Request<proto::ScanFromRunRequest>,
     ) -> Result<Response<proto::ScanFromRunResponse>, Status> {
         if request.get_ref().max_results == 0 || request.get_ref().max_results > 10_000 {
-            return Err(Status::invalid_argument(
-                "max_results must be between 1 and 10000",
-            ));
+            return Err(Status::invalid_argument("max_results must be between 1 and 10000"));
         }
 
         let request = request.into_inner();
@@ -94,13 +114,10 @@ impl proto::cache_service_server::CacheService for MyCache {
             let run_data = match self.storage_cache.get_run(run_id).await {
                 Ok(run_data) => run_data,
                 Err(e) => {
-                    return Err(Status::internal(format!(
-                        "Error getting run {run_id_str}: {e}"
-                    )));
+                    return Err(Status::internal(format!("Error getting run {run_id_str}: {e}")));
                 },
             };
-            let stream =
-                runs::read_run_stream(futures::stream::once(futures::future::ok(run_data)));
+            let stream = runs::read_run_stream(futures::stream::once(futures::future::ok(run_data)));
 
             let filtered_stream = {
                 let exclusive_start_key = exclusive_start_key.clone();
@@ -129,8 +146,7 @@ impl proto::cache_service_server::CacheService for MyCache {
         let mut count = 0;
 
         while let Some(result) = merged_stream.next().await {
-            let write_op =
-                result.map_err(|e| Status::internal(format!("Merge stream error: {e}")))?;
+            let write_op = result.map_err(|e| Status::internal(format!("Merge stream error: {e}")))?;
 
             count += if matches!(write_op, WriteOperation::Put(_, _)) {
                 1
@@ -153,14 +169,26 @@ mod tests {
     use std::collections::HashMap;
 
     use bytes::Bytes;
-    use futures::{TryStreamExt, stream};
+    use futures::{
+        TryStreamExt,
+        stream,
+    };
 
     use super::*;
-    use crate::proto::cache_service_server::CacheService;
-    use crate::runs::{RunError, RunId, Stats, WriteOperation};
-    use crate::storage::ObjectStore;
-    use crate::test_utils::setup_test_object_store;
-    use crate::{proto, requires_docker, runs};
+    use crate::{
+        proto,
+        proto::cache_service_server::CacheService,
+        requires_docker,
+        runs,
+        runs::{
+            RunError,
+            RunId,
+            Stats,
+            WriteOperation,
+        },
+        storage::ObjectStore,
+        test_utils::setup_test_object_store,
+    };
 
     async fn create_and_store_run(
         object_store: &ObjectStore,
@@ -172,11 +200,7 @@ mod tests {
         let mut run_items: Vec<(Bytes, Stats)> = runs::build_runs(ops_stream).try_collect().await?;
 
         if run_items.len() != 1 {
-            return Err(format!(
-                "Expected 1 run, got {}. Ensure operations are sorted.",
-                run_items.len()
-            )
-            .into());
+            return Err(format!("Expected 1 run, got {}. Ensure operations are sorted.", run_items.len()).into());
         }
 
         let (data_bytes, _stats) = run_items.pop().unwrap();
@@ -263,9 +287,7 @@ mod tests {
             WriteOperation::Put("c_key3".to_string(), Bytes::from("value3").to_vec()),
             WriteOperation::Put("d_key4".to_string(), Bytes::from("value4").to_vec()),
         ];
-        create_and_store_run(&object_store, &run_id, ops.clone())
-            .await
-            .unwrap();
+        create_and_store_run(&object_store, &run_id, ops.clone()).await.unwrap();
 
         let request_all = Request::new(proto::ScanFromRunRequest {
             run_ids: vec![run_id_str.clone()],
@@ -277,8 +299,7 @@ mod tests {
         let inner_all = response_all.into_inner();
 
         assert_eq!(inner_all.items.len(), 4);
-        let expected_items: Vec<proto::GetFromRunItem> =
-            ops.iter().cloned().map(Into::into).collect();
+        let expected_items: Vec<proto::GetFromRunItem> = ops.iter().cloned().map(Into::into).collect();
         assert_eq!(inner_all.items[0], expected_items[0]);
         assert_eq!(inner_all.items[1], expected_items[1]);
         assert_eq!(inner_all.items[2], expected_items[2]);
@@ -303,10 +324,7 @@ mod tests {
             max_results: 10,
         });
 
-        let response_start_key = cache_service
-            .scan_from_run(request_start_key)
-            .await
-            .unwrap();
+        let response_start_key = cache_service.scan_from_run(request_start_key).await.unwrap();
         let inner_start_key = response_start_key.into_inner();
         assert_eq!(inner_start_key.items.len(), 2);
         assert_eq!(inner_start_key.items[0], expected_items[2]);
@@ -317,24 +335,14 @@ mod tests {
             exclusive_start_key: "".to_string(),
             max_results: 0,
         });
-        assert!(
-            cache_service
-                .scan_from_run(request_invalid_max_zero)
-                .await
-                .is_err()
-        );
+        assert!(cache_service.scan_from_run(request_invalid_max_zero).await.is_err());
 
         let request_invalid_max_large = Request::new(proto::ScanFromRunRequest {
             run_ids: vec![run_id_str.clone()],
             exclusive_start_key: "".to_string(),
             max_results: 10001,
         });
-        assert!(
-            cache_service
-                .scan_from_run(request_invalid_max_large)
-                .await
-                .is_err()
-        );
+        assert!(cache_service.scan_from_run(request_invalid_max_large).await.is_err());
     }
 
     #[tokio::test]
@@ -347,31 +355,23 @@ mod tests {
         let run_id_1 = RunId(run_id_1_str.clone());
         let ops1 = vec![
             WriteOperation::Put("apple".to_string(), Bytes::from("red_from_run1").to_vec()),
-            WriteOperation::Put(
-                "banana".to_string(),
-                Bytes::from("yellow_from_run1").to_vec(),
-            ),
+            WriteOperation::Put("banana".to_string(), Bytes::from("yellow_from_run1").to_vec()),
         ];
         create_and_store_run(&object_store, &run_id_1, ops1.clone())
             .await
             .unwrap();
-        let proto_items1: Vec<proto::GetFromRunItem> =
-            ops1.iter().cloned().map(Into::into).collect();
+        let proto_items1: Vec<proto::GetFromRunItem> = ops1.iter().cloned().map(Into::into).collect();
 
         let run_id_2_str = "scan_multi_run_2".to_string();
         let run_id_2 = RunId(run_id_2_str.clone());
         let ops2 = vec![
-            WriteOperation::Put(
-                "banana".to_string(),
-                Bytes::from("green_from_run2").to_vec(),
-            ),
+            WriteOperation::Put("banana".to_string(), Bytes::from("green_from_run2").to_vec()),
             WriteOperation::Delete("cherry".to_string()),
         ];
         create_and_store_run(&object_store, &run_id_2, ops2.clone())
             .await
             .unwrap();
-        let proto_items2: Vec<proto::GetFromRunItem> =
-            ops2.iter().cloned().map(Into::into).collect();
+        let proto_items2: Vec<proto::GetFromRunItem> = ops2.iter().cloned().map(Into::into).collect();
 
         let request = Request::new(proto::ScanFromRunRequest {
             run_ids: vec![run_id_2_str.clone(), run_id_1_str.clone()],

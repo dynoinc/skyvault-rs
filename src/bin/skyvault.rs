@@ -1,11 +1,25 @@
-use std::net::SocketAddr;
-use std::sync::Arc;
+use std::{
+    net::SocketAddr,
+    sync::Arc,
+};
 
-use anyhow::{Context, Result};
+use anyhow::{
+    Context,
+    Result,
+};
 use clap::Parser;
 use rustls::crypto::aws_lc_rs;
-use skyvault::config::{PostgresConfig, S3Config};
-use skyvault::{dynamic_config, k8s, metadata, observability, storage};
+use skyvault::{
+    config::{
+        PostgresConfig,
+        S3Config,
+    },
+    dynamic_config,
+    k8s,
+    metadata,
+    observability,
+    storage,
+};
 use tracing::info;
 
 #[derive(Debug, Parser, Clone)]
@@ -45,10 +59,7 @@ async fn main() -> Result<()> {
     let version = env!("CARGO_PKG_VERSION");
 
     let handle = observability::init_metrics_recorder();
-    tokio::spawn(observability::serve_metrics(
-        config.metrics_addr,
-        handle.clone(),
-    ));
+    tokio::spawn(observability::serve_metrics(config.metrics_addr, handle.clone()));
 
     // Initialize K8s client
     let current_namespace = k8s::get_namespace()
@@ -61,23 +72,16 @@ async fn main() -> Result<()> {
     info!(config = ?config, version = version, current_namespace = %current_namespace, "Starting skyvault");
 
     // Initialize Dynamic Configuration
-    let dynamic_app_config =
-        dynamic_config::initialize_dynamic_config(k8s_client.clone(), &current_namespace)
-            .await
-            .context("Failed to initialize dynamic configuration")?;
+    let dynamic_app_config = dynamic_config::initialize_dynamic_config(k8s_client.clone(), &current_namespace)
+        .await
+        .context("Failed to initialize dynamic configuration")?;
 
     // Create metadata client
-    let metadata_url = config
-        .postgres
-        .to_url(k8s_client.clone(), &current_namespace)
-        .await?;
+    let metadata_url = config.postgres.to_url(k8s_client.clone(), &current_namespace).await?;
     let metadata = Arc::new(metadata::PostgresMetadataStore::new(metadata_url).await?);
 
     // Create storage client
-    let s3_config = config
-        .s3
-        .to_config(k8s_client.clone(), &current_namespace)
-        .await?;
+    let s3_config = config.s3.to_config(k8s_client.clone(), &current_namespace).await?;
     let storage = Arc::new(storage::S3ObjectStore::new(s3_config, &config.s3.bucket_name).await?);
 
     skyvault::Builder::new(

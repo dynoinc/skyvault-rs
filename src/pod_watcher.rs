@@ -1,8 +1,14 @@
 use async_stream::stream;
-use futures::{Stream, StreamExt, pin_mut};
+use futures::{
+    Stream,
+    StreamExt,
+    pin_mut,
+};
 use k8s_openapi::api::core::v1::Pod;
-use kube::api::Api;
-use kube::runtime::watcher;
+use kube::{
+    api::Api,
+    runtime::watcher,
+};
 use thiserror::Error;
 use tracing::warn;
 
@@ -21,7 +27,8 @@ pub enum PodWatcherError {
     WatcherError(#[from] kube::runtime::watcher::Error),
 }
 
-/// Watches Kubernetes pods with a specific instance-id label and provides a stream of pod changes.
+/// Watches Kubernetes pods with a specific instance-id label and provides a
+/// stream of pod changes.
 ///
 /// Returns a tuple containing:
 /// - A HashSet of current pod names
@@ -48,9 +55,7 @@ pub async fn watch(
     let label_selector = format!("app.kubernetes.io/instance-id={instance_id}");
     let raw_stream = watcher(
         pods_api,
-        watcher::Config::default()
-            .labels(&label_selector)
-            .streaming_lists(),
+        watcher::Config::default().labels(&label_selector).streaming_lists(),
     );
 
     let pod_stream = stream! {

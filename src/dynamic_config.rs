@@ -1,15 +1,32 @@
 // src/dynamic_config.rs
-use std::collections::BTreeMap;
-use std::sync::Arc;
-use std::time::Duration;
+use std::{
+    collections::BTreeMap,
+    sync::Arc,
+    time::Duration,
+};
 
 use futures_util::StreamExt;
 use k8s_openapi::api::core::v1::ConfigMap;
-use kube::runtime::watcher::{self, Event, watcher};
-use kube::{Api, Client, ResourceExt};
+use kube::{
+    Api,
+    Client,
+    ResourceExt,
+    runtime::watcher::{
+        self,
+        Event,
+        watcher,
+    },
+};
 use thiserror::Error;
-use tokio::sync::{RwLock, Semaphore};
-use tracing::{error, info, warn};
+use tokio::sync::{
+    RwLock,
+    Semaphore,
+};
+use tracing::{
+    error,
+    info,
+    warn,
+};
 
 // --- Error Handling ---
 #[derive(Error, Debug)]
@@ -91,8 +108,7 @@ impl AppConfig {
 
         if new_permits > current_permits {
             // Add permits if new limit is higher
-            self.uploads_semaphore
-                .add_permits(new_permits - current_permits);
+            self.uploads_semaphore.add_permits(new_permits - current_permits);
         } else if new_permits < current_permits {
             // Remove permits if new limit is lower by acquiring them
             for _ in 0..(current_permits - new_permits) {
@@ -114,48 +130,32 @@ pub type SharedAppConfig = Arc<RwLock<AppConfig>>;
 
 async fn load_initial_config(client: Client, namespace: &str) -> Result<AppConfig, ConfigError> {
     let api: Api<ConfigMap> = Api::namespaced(client, namespace);
-    info!(
-        "Attempting to load initial configuration from ConfigMap \
-         '{namespace}/skyvault-dynamic-config'"
-    );
+    info!("Attempting to load initial configuration from ConfigMap '{namespace}/skyvault-dynamic-config'");
 
     match api.get("skyvault-dynamic-config").await {
         Ok(cm) => {
             if let Some(data_map) = &cm.data {
                 if data_map.is_empty() {
-                    warn!(
-                        "ConfigMap '{namespace}/skyvault-dynamic-config' 'data' field is empty. \
-                         Using defaults."
-                    );
+                    warn!("ConfigMap '{namespace}/skyvault-dynamic-config' 'data' field is empty. Using defaults.");
                     Ok(AppConfig::from(ParsedConfigMap::default()))
                 } else {
                     let deserializable_config = ParsedConfigMap::from_k8s_data(data_map)?;
                     Ok(AppConfig::from(deserializable_config))
                 }
             } else {
-                warn!(
-                    "ConfigMap '{namespace}/skyvault-dynamic-config' has no 'data' field. Using \
-                     defaults."
-                );
+                warn!("ConfigMap '{namespace}/skyvault-dynamic-config' has no 'data' field. Using defaults.");
                 Ok(AppConfig::from(ParsedConfigMap::default()))
             }
         },
         Err(kube::Error::Api(ae)) if ae.code == 404 => {
-            warn!(
-                "ConfigMap '{namespace}/skyvault-dynamic-config' not found. Using default \
-                 configuration."
-            );
+            warn!("ConfigMap '{namespace}/skyvault-dynamic-config' not found. Using default configuration.");
             Ok(AppConfig::from(ParsedConfigMap::default()))
         },
         Err(e) => Err(ConfigError::KubeError(e)),
     }
 }
 
-async fn watch_config_changes_task(
-    client: Client,
-    namespace: String,
-    shared_config: SharedAppConfig,
-) {
+async fn watch_config_changes_task(client: Client, namespace: String, shared_config: SharedAppConfig) {
     let api: Api<ConfigMap> = Api::namespaced(client.clone(), &namespace);
     let watcher_params = watcher::Config::default();
 
@@ -170,20 +170,16 @@ async fn watch_config_changes_task(
                 Ok(event) => match event {
                     Event::Apply(cm) => {
                         if cm.name_any() == "skyvault-dynamic-config" {
-                            info!(
-                                "ConfigMap '{namespace}/skyvault-dynamic-config' added/modified. \
-                                 Processing update."
-                            );
+                            info!("ConfigMap '{namespace}/skyvault-dynamic-config' added/modified. Processing update.");
                             if let Some(data_map) = &cm.data {
-                                let new_config =
-                                    ParsedConfigMap::from_k8s_data(data_map).unwrap_or_default();
+                                let new_config = ParsedConfigMap::from_k8s_data(data_map).unwrap_or_default();
                                 let mut config_guard = shared_config.write().await;
                                 config_guard.apply(new_config.clone());
                                 info!("Successfully reloaded configuration: {new_config:?}");
                             } else {
                                 warn!(
-                                    "ConfigMap '{namespace}/skyvault-dynamic-config' event \
-                                     received but 'data' field was empty."
+                                    "ConfigMap '{namespace}/skyvault-dynamic-config' event received but 'data' field \
+                                     was empty."
                                 );
                             }
                         }
@@ -191,8 +187,8 @@ async fn watch_config_changes_task(
                     Event::Delete(cm) => {
                         if cm.name_any() == "skyvault-dynamic-config" {
                             warn!(
-                                "ConfigMap '{namespace}/skyvault-dynamic-config' was deleted. \
-                                 Reverting to default configuration."
+                                "ConfigMap '{namespace}/skyvault-dynamic-config' was deleted. Reverting to default \
+                                 configuration."
                             );
                             let mut config_guard = shared_config.write().await;
                             config_guard.apply(ParsedConfigMap::default());
@@ -203,10 +199,7 @@ async fn watch_config_changes_task(
                     },
                 },
                 Err(e) => {
-                    error!(
-                        "Error watching ConfigMap: {:?}. Attempting to restart watcher.",
-                        e
-                    );
+                    error!("Error watching ConfigMap: {:?}. Attempting to restart watcher.", e);
                     tokio::time::sleep(Duration::from_secs(5)).await;
                     break;
                 },
@@ -218,10 +211,7 @@ async fn watch_config_changes_task(
     }
 }
 
-pub async fn initialize_dynamic_config(
-    client: Client,
-    namespace: &str,
-) -> Result<SharedAppConfig, ConfigError> {
+pub async fn initialize_dynamic_config(client: Client, namespace: &str) -> Result<SharedAppConfig, ConfigError> {
     let initial_config = load_initial_config(client.clone(), namespace).await?;
 
     info!("Initial dynamic configuration loaded: {initial_config:?}");

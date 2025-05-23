@@ -1,12 +1,30 @@
-use futures::future;
-use futures::stream::{self, BoxStream, StreamExt, TryStreamExt};
+use futures::{
+    future,
+    stream::{
+        self,
+        BoxStream,
+        StreamExt,
+        TryStreamExt,
+    },
+};
 
 use super::JobError;
-use crate::forest::ForestImpl;
-use crate::metadata::{self, MetadataStore, RunMetadata};
-use crate::runs::{RunError, RunId, WriteOperation};
-use crate::storage::ObjectStore;
-use crate::{k_way, runs};
+use crate::{
+    forest::ForestImpl,
+    k_way,
+    metadata::{
+        self,
+        MetadataStore,
+        RunMetadata,
+    },
+    runs,
+    runs::{
+        RunError,
+        RunId,
+        WriteOperation,
+    },
+    storage::ObjectStore,
+};
 
 // Define a type alias for the boxed stream
 type RunStream = BoxStream<'static, Result<WriteOperation, RunError>>;
@@ -80,9 +98,7 @@ pub async fn execute(
                         Box::pin(async move {
                             match bs.next().await {
                                 Some(Ok(bytes)) => Some((Ok(bytes), bs)),
-                                Some(Err(e)) => {
-                                    Some((Err(std::io::Error::other(e.to_string())), bs))
-                                },
+                                Some(Err(e)) => Some((Err(std::io::Error::other(e.to_string())), bs)),
                                 None => None,
                             }
                         })
@@ -119,9 +135,7 @@ pub async fn execute(
     }
 
     if new_runs.is_empty() {
-        return Err(JobError::Internal(
-            "No runs were generated during compaction".into(),
-        ));
+        return Err(JobError::Internal("No runs were generated during compaction".into()));
     }
 
     let compacted = table

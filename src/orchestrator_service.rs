@@ -1,22 +1,55 @@
 use std::sync::Arc;
 
-use futures::{StreamExt, pin_mut};
+use futures::{
+    StreamExt,
+    pin_mut,
+};
 use kube::Error as KubeError;
 use prost::Message;
 use thiserror::Error;
-use tokio_retry::Retry;
-use tokio_retry::strategy::ExponentialBackoff;
-use tonic::{Request, Response, Status};
-
-use crate::forest::{Forest, ForestError, ForestImpl, Snapshot};
-use crate::job_watcher::{self, JobChange, JobWatcherError};
-use crate::metadata::{
-    JobID, JobParams, Level, MetadataError, MetadataStore, SeqNo, SnapshotID, TableConfig, TableID,
-    TableName,
+use tokio_retry::{
+    Retry,
+    strategy::ExponentialBackoff,
 };
-use crate::runs::Stats;
-use crate::storage::{self, ObjectStore};
-use crate::{dynamic_config, metadata, proto};
+use tonic::{
+    Request,
+    Response,
+    Status,
+};
+
+use crate::{
+    dynamic_config,
+    forest::{
+        Forest,
+        ForestError,
+        ForestImpl,
+        Snapshot,
+    },
+    job_watcher::{
+        self,
+        JobChange,
+        JobWatcherError,
+    },
+    metadata,
+    metadata::{
+        JobID,
+        JobParams,
+        Level,
+        MetadataError,
+        MetadataStore,
+        SeqNo,
+        SnapshotID,
+        TableConfig,
+        TableID,
+        TableName,
+    },
+    proto,
+    runs::Stats,
+    storage::{
+        self,
+        ObjectStore,
+    },
+};
 
 #[derive(Clone)]
 pub struct MyOrchestrator {
@@ -106,11 +139,7 @@ impl MyOrchestrator {
             } {
                 match self.persist_snapshot(state.clone()).await {
                     Ok((snapshot_id, seq_no)) => {
-                        tracing::info!(
-                            "Successfully persisted snapshot {} at seq_no {}",
-                            snapshot_id,
-                            seq_no
-                        );
+                        tracing::info!("Successfully persisted snapshot {} at seq_no {}", snapshot_id, seq_no);
                     },
                     Err(e) => {
                         tracing::error!(error = %e, "Failed to persist snapshot");
@@ -129,8 +158,8 @@ impl MyOrchestrator {
 
             if total_wal_size > 100_000_000 || state.wal.len() > 25 {
                 tracing::info!(
-                    "Total size of WALs {total_wal_size} exceeds 100MB or number of WALs {} \
-                     exceeds 25, scheduling compaction",
+                    "Total size of WALs {total_wal_size} exceeds 100MB or number of WALs {} exceeds 25, scheduling \
+                     compaction",
                     state.wal.len()
                 );
 
@@ -150,8 +179,8 @@ impl MyOrchestrator {
 
                 if total_buffer_size > 100_000_000 || table.buffer.len() > 25 {
                     tracing::info!(
-                        "{table_id} table total size of buffer {total_buffer_size} exceeds 100MB \
-                         or number of buffer runs {} exceeds 25, scheduling compaction",
+                        "{table_id} table total size of buffer {total_buffer_size} exceeds 100MB or number of buffer \
+                         runs {} exceeds 25, scheduling compaction",
                         table.buffer.len()
                     );
 
@@ -175,8 +204,8 @@ impl MyOrchestrator {
 
                     if total_level_size > max_level_size {
                         tracing::info!(
-                            "Level {level} size {total_level_size} exceeds max level size \
-                             {max_level_size}, scheduling compaction"
+                            "Level {level} size {total_level_size} exceeds max level size {max_level_size}, \
+                             scheduling compaction"
                         );
 
                         if let Err(e) = self
@@ -202,8 +231,8 @@ impl MyOrchestrator {
             };
 
             // Prune known_jobs: Remove entries that are no longer in pending_jobs_vec
-            // This handles cases where a job was completed/failed and removed from pending state by
-            // another process (e.g. worker)
+            // This handles cases where a job was completed/failed and removed from pending
+            // state by another process (e.g. worker)
             let pending_job_ids_set: std::collections::HashSet<JobID> =
                 pending_jobs_vec.iter().map(|(id, _)| *id).collect();
             self.known_jobs
@@ -218,36 +247,20 @@ impl MyOrchestrator {
 
                 match job_params {
                     JobParams::WALCompaction => {
-                        tracing::info!(
-                            "Kicking off WAL compaction job with ID: {}",
-                            current_job_id
-                        );
-                        if let Err(e) = self.create_k8s_job(current_job_id, "wal-compaction").await
-                        {
+                        tracing::info!("Kicking off WAL compaction job with ID: {}", current_job_id);
+                        if let Err(e) = self.create_k8s_job(current_job_id, "wal-compaction").await {
                             tracing::error!(error = %e, "Failed to create k8s job for WAL compaction");
                         }
                     },
                     JobParams::TableBufferCompaction(_) => {
-                        tracing::info!(
-                            "Kicking off table buffer compaction job with ID: {}",
-                            current_job_id
-                        );
-                        if let Err(e) = self
-                            .create_k8s_job(current_job_id, "table-buffer-compaction")
-                            .await
-                        {
+                        tracing::info!("Kicking off table buffer compaction job with ID: {}", current_job_id);
+                        if let Err(e) = self.create_k8s_job(current_job_id, "table-buffer-compaction").await {
                             tracing::error!(error = %e, "Failed to create k8s job for table buffer compaction");
                         }
                     },
-                    JobParams::TableTreeCompaction(_, _) => {
-                        tracing::info!(
-                            "Kicking off table tree compaction job with ID: {}",
-                            current_job_id
-                        );
-                        if let Err(e) = self
-                            .create_k8s_job(current_job_id, "table-tree-compaction")
-                            .await
-                        {
+                    JobParams::TableTreeCompaction(..) => {
+                        tracing::info!("Kicking off table tree compaction job with ID: {}", current_job_id);
+                        if let Err(e) = self.create_k8s_job(current_job_id, "table-tree-compaction").await {
                             tracing::error!(error = %e, "Failed to create k8s job for table tree compaction");
                         }
                     },
@@ -261,9 +274,7 @@ impl MyOrchestrator {
 
         // Create a job watcher that will reconnect on failures
         loop {
-            match job_watcher::watch(self.k8s_client.clone(), namespace.clone(), label_selector)
-                .await
-            {
+            match job_watcher::watch(self.k8s_client.clone(), namespace.clone(), label_selector).await {
                 Ok(job_stream_unpinned) => {
                     let job_stream = job_stream_unpinned;
                     pin_mut!(job_stream);
@@ -272,24 +283,22 @@ impl MyOrchestrator {
                             Ok(job_change) => match job_change {
                                 JobChange::Added(job_id, job_name) => {
                                     tracing::debug!(
-                                        "Job watcher: K8s job {} (ID: {}) ADDED. No action taken \
-                                         by watcher.",
+                                        "Job watcher: K8s job {} (ID: {}) ADDED. No action taken by watcher.",
                                         job_name,
                                         job_id
                                     );
                                 },
                                 JobChange::Completed(job_id, job_name) => {
                                     tracing::info!(
-                                        "Job watcher: K8s job {} (ID: {}) COMPLETED. No action \
-                                         taken by watcher.",
+                                        "Job watcher: K8s job {} (ID: {}) COMPLETED. No action taken by watcher.",
                                         job_name,
                                         job_id
                                     );
                                 },
                                 JobChange::Failed(job_id, job_name) => {
                                     tracing::warn!(
-                                        "Job watcher: K8s job '{}' (ID: {}) reported as \
-                                         FAILED/DELETED. Attempting to mark as failed in DB.",
+                                        "Job watcher: K8s job '{}' (ID: {}) reported as FAILED/DELETED. Attempting to \
+                                         mark as failed in DB.",
                                         job_name,
                                         job_id
                                     );
@@ -305,16 +314,16 @@ impl MyOrchestrator {
                                     {
                                         Ok(_) => {
                                             tracing::info!(
-                                                "Job watcher: Successfully marked job {} (K8s \
-                                                 name: '{}') as failed in DB.",
+                                                "Job watcher: Successfully marked job {} (K8s name: '{}') as failed \
+                                                 in DB.",
                                                 job_id,
                                                 job_name
                                             );
                                         },
                                         Err(e) => {
                                             tracing::warn!(
-                                                "Job watcher failed to mark job {} (K8s name: \
-                                                 '{}') as failed in DB after retries: {}",
+                                                "Job watcher failed to mark job {} (K8s name: '{}') as failed in DB \
+                                                 after retries: {}",
                                                 job_id,
                                                 job_name,
                                                 e
@@ -341,10 +350,7 @@ impl MyOrchestrator {
         }
     }
 
-    async fn persist_snapshot(
-        &self,
-        state: Arc<Snapshot>,
-    ) -> Result<(SnapshotID, SeqNo), OrchestratorError> {
+    async fn persist_snapshot(&self, state: Arc<Snapshot>) -> Result<(SnapshotID, SeqNo), OrchestratorError> {
         let snapshot = proto::Snapshot::encode_to_vec(&Arc::unwrap_or_clone(state.clone()).into());
         let snapshot_id = metadata::SnapshotID::from(ulid::Ulid::new().to_string());
         self.storage
@@ -359,9 +365,14 @@ impl MyOrchestrator {
     }
 
     async fn create_k8s_job(&self, job_id: JobID, job_type: &str) -> Result<(), kube::Error> {
-        use k8s_openapi::api::batch::v1::Job;
-        use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
-        use kube::api::{Api, PostParams};
+        use k8s_openapi::{
+            api::batch::v1::Job,
+            apimachinery::pkg::apis::meta::v1::ObjectMeta,
+        };
+        use kube::api::{
+            Api,
+            PostParams,
+        };
 
         let jobs: Api<Job> = Api::default_namespaced(self.k8s_client.clone());
 
@@ -541,9 +552,7 @@ impl proto::orchestrator_service_server::OrchestratorService for MyOrchestrator 
             Err(e) => return Err(Status::internal(format!("Failed to schedule job: {e}"))),
         };
 
-        Ok(Response::new(proto::KickOffJobResponse {
-            job_id: job_id.into(),
-        }))
+        Ok(Response::new(proto::KickOffJobResponse { job_id: job_id.into() }))
     }
 
     async fn get_job_status(
@@ -595,9 +604,7 @@ impl proto::orchestrator_service_server::OrchestratorService for MyOrchestrator 
             Err(e) => return Err(Status::internal(e.to_string())),
         };
 
-        Ok(Response::new(proto::CreateTableResponse {
-            seq_no: seq_no.into(),
-        }))
+        Ok(Response::new(proto::CreateTableResponse { seq_no: seq_no.into() }))
     }
 
     async fn drop_table(

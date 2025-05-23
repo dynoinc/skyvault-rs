@@ -1,14 +1,34 @@
 use std::sync::Arc;
 
-use futures::future;
-use futures::stream::{self, BoxStream, StreamExt, TryStreamExt};
+use futures::{
+    future,
+    stream::{
+        self,
+        BoxStream,
+        StreamExt,
+        TryStreamExt,
+    },
+};
 
 use super::JobError;
-use crate::forest::ForestImpl;
-use crate::metadata::{self, MetadataStore, RunMetadata};
-use crate::runs::{RunError, RunId, Stats, StatsV1, WriteOperation};
-use crate::storage::ObjectStore;
-use crate::{k_way, runs};
+use crate::{
+    forest::ForestImpl,
+    k_way,
+    metadata::{
+        self,
+        MetadataStore,
+        RunMetadata,
+    },
+    runs,
+    runs::{
+        RunError,
+        RunId,
+        Stats,
+        StatsV1,
+        WriteOperation,
+    },
+    storage::ObjectStore,
+};
 
 // Define a type alias for the boxed stream
 type RunStream = BoxStream<'static, Result<WriteOperation, RunError>>;
@@ -27,8 +47,8 @@ pub async fn execute(
     let forest = ForestImpl::latest(metadata_store.clone(), object_store.clone()).await?;
     let mut state = Arc::unwrap_or_clone(forest.get_state());
 
-    // Pick first run at level and all the runs that overlap with it in the next level unless it's
-    // the max level
+    // Pick first run at level and all the runs that overlap with it in the next
+    // level unless it's the max level
     let table = match state.trees.get_mut(&table_id) {
         Some(table) => table,
         None => {
@@ -46,13 +66,11 @@ pub async fn execute(
     };
 
     let key_range = match level_run_metadata.stats {
-        Stats::StatsV1(StatsV1 {
-            min_key, max_key, ..
-        }) => min_key..=max_key,
+        Stats::StatsV1(StatsV1 { min_key, max_key, .. }) => min_key..=max_key,
     };
 
-    // Note: We clone the RunMetadata here. The original tree state remains untouched until the
-    // metadata update.
+    // Note: We clone the RunMetadata here. The original tree state remains
+    // untouched until the metadata update.
     let next_level_overlapping_runs: Vec<metadata::RunMetadata> = table
         .tree
         .get(&level.next()) // Use immutable borrow here
@@ -74,10 +92,7 @@ pub async fn execute(
         })
         .unwrap_or_default(); // If level.next() doesn't exist or has no runs, default to empty Vec
 
-    let next_level_run_ids: Vec<_> = next_level_overlapping_runs
-        .iter()
-        .map(|m| m.id.clone())
-        .collect();
+    let next_level_run_ids: Vec<_> = next_level_overlapping_runs.iter().map(|m| m.id.clone()).collect();
 
     // --- Stream Creation ---
 
@@ -138,10 +153,7 @@ pub async fn execute(
     // k_way::merge sorts by seq_no first, then by key, then by operation type.
     let streams_to_merge = vec![
         (metadata::SeqNo::from(1), level_run_stream),
-        (
-            metadata::SeqNo::from(0),
-            Box::pin(next_level_runs_stream) as RunStream,
-        ),
+        (metadata::SeqNo::from(0), Box::pin(next_level_runs_stream) as RunStream),
     ];
 
     let next_level = level.next();
@@ -149,9 +161,9 @@ pub async fn execute(
     if next_level == metadata::Level::max() {
         // At the max level, we filter out all Delete operations
         // since they're no longer needed (nothing can be below this level)
-        merged_stream = Box::pin(merged_stream.filter(|op_result| {
-            future::ready(!matches!(op_result, Ok(WriteOperation::Delete(_))))
-        }));
+        merged_stream = Box::pin(
+            merged_stream.filter(|op_result| future::ready(!matches!(op_result, Ok(WriteOperation::Delete(_))))),
+        );
     }
 
     let run_builder_stream = runs::build_runs(merged_stream);

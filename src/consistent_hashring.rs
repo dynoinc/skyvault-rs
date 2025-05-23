@@ -1,6 +1,13 @@
-use std::collections::BTreeMap;
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
+use std::{
+    collections::{
+        BTreeMap,
+        hash_map::DefaultHasher,
+    },
+    hash::{
+        Hash,
+        Hasher,
+    },
+};
 
 /// A consistent hash ring implementation.
 ///
@@ -10,7 +17,8 @@ pub struct ConsistentHashRing<T>
 where
     T: Clone + Eq + Hash,
 {
-    /// The virtual nodes in the ring, mapping hash positions to node identifiers.
+    /// The virtual nodes in the ring, mapping hash positions to node
+    /// identifiers.
     ring: BTreeMap<u64, T>,
 
     /// The number of virtual nodes per real node.
@@ -21,7 +29,8 @@ impl<T> ConsistentHashRing<T>
 where
     T: Clone + Eq + Hash,
 {
-    /// Create a new consistent hash ring with the specified number of virtual nodes per real node.
+    /// Create a new consistent hash ring with the specified number of virtual
+    /// nodes per real node.
     pub fn new(replicas: usize) -> Self {
         ConsistentHashRing {
             ring: BTreeMap::new(),

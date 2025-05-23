@@ -1,4 +1,3 @@
-import sys
 import subprocess
 import re
 import grpc
@@ -52,8 +51,6 @@ def build_service(stub_cls, address: str):
     stub = stub_cls(channel)
 
     pool = descriptor_pool.Default()
-    factory = message_factory.MessageFactory(pool)
-
     svc_name = stub_cls.__name__.replace("Stub", "")
     full_svc_name = f"skyvault.v1.{svc_name}"
     svc_desc = pool.FindServiceByName(full_svc_name)

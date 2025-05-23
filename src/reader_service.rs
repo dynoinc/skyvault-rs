@@ -1,19 +1,57 @@
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc,
+        Mutex,
+    },
+};
 
-use futures::{FutureExt, StreamExt, TryStreamExt, pin_mut, stream};
+use futures::{
+    FutureExt,
+    StreamExt,
+    TryStreamExt,
+    pin_mut,
+    stream,
+};
 use thiserror::Error;
-use tonic::transport::Channel;
-use tonic::{Request, Response, Status};
-use tracing::{error, info};
+use tonic::{
+    Request,
+    Response,
+    Status,
+    transport::Channel,
+};
+use tracing::{
+    error,
+    info,
+};
 
-use crate::consistent_hashring::ConsistentHashRing;
-use crate::forest::{Forest, ForestError, ForestImpl, Snapshot as ForestState};
-use crate::metadata::{self, MetadataStore, SeqNo};
-use crate::pod_watcher::{self, PodChange, PodWatcherError};
-use crate::runs::{RunError, Stats, WriteOperation};
-use crate::storage::ObjectStore;
-use crate::{k_way, proto};
+use crate::{
+    consistent_hashring::ConsistentHashRing,
+    forest::{
+        Forest,
+        ForestError,
+        ForestImpl,
+        Snapshot as ForestState,
+    },
+    k_way,
+    metadata::{
+        self,
+        MetadataStore,
+        SeqNo,
+    },
+    pod_watcher::{
+        self,
+        PodChange,
+        PodWatcherError,
+    },
+    proto,
+    runs::{
+        RunError,
+        Stats,
+        WriteOperation,
+    },
+    storage::ObjectStore,
+};
 
 #[derive(Debug, Error)]
 pub enum ReaderServiceError {
@@ -30,17 +68,12 @@ pub enum ReaderServiceError {
 #[derive(Clone)]
 struct ConsistentHashCM {
     port: u16,
-    connections:
-        Arc<Mutex<HashMap<String, proto::cache_service_client::CacheServiceClient<Channel>>>>,
+    connections: Arc<Mutex<HashMap<String, proto::cache_service_client::CacheServiceClient<Channel>>>>,
     consistent_hashring: Arc<Mutex<ConsistentHashRing<String>>>,
 }
 
 impl ConsistentHashCM {
-    async fn new(
-        k8s_client: kube::Client,
-        namespace: String,
-        port: u16,
-    ) -> Result<Self, ReaderServiceError> {
+    async fn new(k8s_client: kube::Client, namespace: String, port: u16) -> Result<Self, ReaderServiceError> {
         let pods_stream = pod_watcher::watch(k8s_client, namespace).await?;
 
         // Create ConnectionManager instance
@@ -95,10 +128,7 @@ impl ConsistentHashCM {
 
         // Now acquire the lock again to insert the new connection
         let conn_clone = conn.clone();
-        self.connections
-            .lock()
-            .unwrap()
-            .insert(pod.to_string(), conn);
+        self.connections.lock().unwrap().insert(pod.to_string(), conn);
         Ok(conn_clone)
     }
 }
@@ -203,10 +233,7 @@ impl MyReader {
 
     // Add a test constructor accepting mocks
     #[cfg(test)]
-    pub fn new_for_test(
-        forest: Forest,
-        connection_manager: Arc<dyn ConnectionManager + Send + Sync>,
-    ) -> Self {
+    pub fn new_for_test(forest: Forest, connection_manager: Arc<dyn ConnectionManager + Send + Sync>) -> Self {
         Self {
             forest,
             connection_manager,
@@ -231,17 +258,8 @@ impl MyReader {
         if !forest_state.wal.is_empty() {
             // Make WAL request
             let wal_request = proto::GetFromRunRequest {
-                run_ids: forest_state
-                    .wal
-                    .values()
-                    .rev()
-                    .map(|r| r.id.to_string())
-                    .collect(),
-                keys: request
-                    .keys
-                    .iter()
-                    .map(|key| format!("{table_id}.{key}"))
-                    .collect(),
+                run_ids: forest_state.wal.values().rev().map(|r| r.id.to_string()).collect(),
+                keys: request.keys.iter().map(|key| format!("{table_id}.{key}")).collect(),
             };
 
             // Clone the Arc containing the trait object
@@ -293,10 +311,7 @@ impl MyReader {
 
                 for key in request.keys.iter() {
                     if let Some((_, run_metadata)) = run_metadatas
-                        .range::<str, _>((
-                            std::ops::Bound::Unbounded,
-                            std::ops::Bound::Included(key.as_str()),
-                        ))
+                        .range::<str, _>((std::ops::Bound::Unbounded, std::ops::Bound::Included(key.as_str())))
                         .next_back()
                     {
                         keys_by_run
@@ -348,9 +363,7 @@ impl MyReader {
             items: merged
                 .into_iter()
                 .filter_map(|(key, result)| match result {
-                    proto::get_from_run_item::Result::Value(value) => {
-                        Some(proto::GetBatchItem { key, value })
-                    },
+                    proto::get_from_run_item::Result::Value(value) => Some(proto::GetBatchItem { key, value }),
                     proto::get_from_run_item::Result::Deleted(_) => None,
                 })
                 .collect(),
@@ -375,12 +388,7 @@ impl MyReader {
 
         if !forest_state.wal.is_empty() {
             let wal_request = proto::ScanFromRunRequest {
-                run_ids: forest_state
-                    .wal
-                    .values()
-                    .rev()
-                    .map(|r| r.id.to_string())
-                    .collect(),
+                run_ids: forest_state.wal.values().rev().map(|r| r.id.to_string()).collect(),
                 exclusive_start_key: format!("{table_id}.{}", &request.exclusive_start_key),
                 max_results: request.max_results,
             };
@@ -394,9 +402,7 @@ impl MyReader {
             };
 
             let wal_stream = stream::once(wal_scan_fut)
-                .map_ok(|resp| {
-                    stream::iter(resp.into_inner().items.into_iter().map(Ok::<_, Status>))
-                })
+                .map_ok(|resp| stream::iter(resp.into_inner().items.into_iter().map(Ok::<_, Status>)))
                 .try_flatten()
                 .map_ok(move |item: proto::GetFromRunItem| {
                     let mut item = item;
@@ -526,9 +532,7 @@ impl MyReader {
             .try_collect::<Vec<_>>()
             .await?;
 
-        Ok(proto::ScanResponse {
-            items: merged_items,
-        })
+        Ok(proto::ScanResponse { items: merged_items })
     }
 }
 
@@ -579,15 +583,10 @@ impl proto::reader_service_server::ReaderService for MyReader {
         Ok(Response::new(response))
     }
 
-    async fn scan(
-        &self,
-        request: Request<proto::ScanRequest>,
-    ) -> Result<Response<proto::ScanResponse>, Status> {
+    async fn scan(&self, request: Request<proto::ScanRequest>) -> Result<Response<proto::ScanResponse>, Status> {
         let max_results_val = request.get_ref().max_results;
         if max_results_val > 10_000 {
-            return Err(Status::invalid_argument(
-                "max_results must be between 1 and 10000",
-            ));
+            return Err(Status::invalid_argument("max_results must be between 1 and 10000"));
         }
 
         let forest_state = self.forest.get_state();
@@ -605,46 +604,54 @@ mod tests {
 
     use mockall::predicate::*;
     use tokio; // For async test runtime
-    use tonic::{Request, Response, Status};
+    use tonic::{
+        Request,
+        Response,
+        Status,
+    };
 
     use super::*;
-    use crate::forest::{Forest, MockForestTrait};
-    use crate::metadata::{BelongsTo, RunMetadata, SeqNo, TableConfig, TableID, TableName};
-    use crate::proto;
-    use crate::proto::reader_service_server::ReaderService;
-    use crate::runs::{RunId, Stats, StatsV1};
+    use crate::{
+        forest::{
+            Forest,
+            MockForestTrait,
+        },
+        metadata::{
+            BelongsTo,
+            RunMetadata,
+            SeqNo,
+            TableConfig,
+            TableID,
+            TableName,
+        },
+        proto,
+        proto::reader_service_server::ReaderService,
+        runs::{
+            RunId,
+            Stats,
+            StatsV1,
+        },
+    };
 
-    async fn create_test_forest(
-        seq_no: SeqNo,
-        tables: Vec<TableConfig>,
-        runs: Vec<RunMetadata>,
-    ) -> Forest {
-        let tables = tables
-            .into_iter()
-            .map(|t| (t.table_name.clone(), t))
-            .collect();
+    async fn create_test_forest(seq_no: SeqNo, tables: Vec<TableConfig>, runs: Vec<RunMetadata>) -> Forest {
+        let tables = tables.into_iter().map(|t| (t.table_name.clone(), t)).collect();
         let state = ForestState::from_raw(seq_no, tables, runs).await;
 
         let mut mock_forest = MockForestTrait::new();
-        mock_forest
-            .expect_get_state()
-            .times(1)
-            .return_const(state.clone());
+        mock_forest.expect_get_state().times(1).return_const(state.clone());
 
         Arc::new(mock_forest)
     }
 
     fn create_run_response(
         items: Vec<proto::GetFromRunItem>,
-    ) -> Pin<Box<dyn Future<Output = Result<Response<proto::GetFromRunResponse>, Status>> + Send>>
-    {
+    ) -> Pin<Box<dyn Future<Output = Result<Response<proto::GetFromRunResponse>, Status>> + Send>> {
         Box::pin(async move { Ok(Response::new(proto::GetFromRunResponse { items })) })
     }
 
     fn create_scan_response(
         items: Vec<proto::GetFromRunItem>,
-    ) -> Pin<Box<dyn Future<Output = Result<Response<proto::ScanFromRunResponse>, Status>> + Send>>
-    {
+    ) -> Pin<Box<dyn Future<Output = Result<Response<proto::ScanFromRunResponse>, Status>> + Send>> {
         Box::pin(async move { Ok(Response::new(proto::ScanFromRunResponse { items })) })
     }
 
@@ -706,8 +713,7 @@ mod tests {
                 // Check that the request contains the correct run_id and key
                 function(move |req: &Request<proto::GetFromRunRequest>| {
                     let inner = req.get_ref();
-                    inner.run_ids == vec![wal_run_id.to_string()]
-                        && inner.keys == vec![format!("{}.{}", table_id, key)]
+                    inner.run_ids == vec![wal_run_id.to_string()] && inner.keys == vec![format!("{}.{}", table_id, key)]
                 }),
             )
             .times(1)
@@ -723,14 +729,11 @@ mod tests {
                 eq(buf_run_id.to_string()),
                 function(move |req: &Request<proto::GetFromRunRequest>| {
                     let inner = req.get_ref();
-                    inner.run_ids == vec![buf_run_id.to_string()]
-                        && inner.keys == vec![key.to_string()]
+                    inner.run_ids == vec![buf_run_id.to_string()] && inner.keys == vec![key.to_string()]
                 }),
             )
             .times(1)
-            .returning(move |_routing_key, _req| {
-                create_run_response(vec![create_run_item(key, Some("buf_value"))])
-            });
+            .returning(move |_routing_key, _req| create_run_response(vec![create_run_item(key, Some("buf_value"))]));
 
         let reader = MyReader::new_for_test(forest, Arc::new(mock_conn));
 
@@ -803,16 +806,12 @@ mod tests {
                 function(move |req: &Request<proto::ScanFromRunRequest>| {
                     let inner = req.get_ref();
                     inner.run_ids == vec![wal_run_id.to_string()]
-                        && inner.exclusive_start_key
-                            == format!("{}.{}", table_id, exclusive_start_key)
+                        && inner.exclusive_start_key == format!("{}.{}", table_id, exclusive_start_key)
                 }),
             )
             .times(1)
             .returning(move |_routing_key, _req| {
-                create_scan_response(vec![create_run_item(
-                    &format!("{}.key2", table_id),
-                    Some("wal_value"),
-                )])
+                create_scan_response(vec![create_run_item(&format!("{}.key2", table_id), Some("wal_value"))])
             });
         mock_conn
             .expect_table_scan_run()

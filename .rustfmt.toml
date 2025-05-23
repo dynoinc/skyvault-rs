@@ -1,42 +1,16 @@
-# Rustfmt configuration for nightly Rust
-# Includes advanced options available in nightly
-
-# Basic formatting
-max_width = 100
-tab_spaces = 4
-hard_tabs = false
-newline_style = "Unix"
-
-# Imports
-imports_indent = "Block"
-imports_layout = "Mixed"
-group_imports = "StdExternalCrate"
-imports_granularity = "Module"
-
-# Code structure
-reorder_imports = true
-reorder_modules = true
-match_block_trailing_comma = true
-trailing_semicolon = true
 use_field_init_shorthand = true
+use_try_shorthand = true
+match_block_trailing_comma = true
+max_width = 120
 
-# Comments
-wrap_comments = true
-comment_width = 100
-normalize_comments = true
-
-# Misc
-format_code_in_doc_comments = true
-format_macro_matchers = true
-format_macro_bodies = true
+# Nightly only options:
+unstable_features = true
+condense_wildcard_suffixes = true
 format_strings = true
-
-# Spacing and brackets
-space_after_colon = true
-space_before_colon = false
-spaces_around_ranges = false
-binop_separator = "Front"
-combine_control_expr = true
-overflow_delimited_expr = true
-struct_field_align_threshold = 0
-enum_discrim_align_threshold = 0
+imports_granularity = "Crate"
+reorder_impl_items = true
+imports_layout = "Vertical"
+group_imports = "StdExternalCrate"
+wrap_comments = true
+normalize_comments = false
+error_on_line_overflow = true

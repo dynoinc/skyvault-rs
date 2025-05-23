@@ -2,14 +2,32 @@ use std::collections::BTreeMap;
 
 use futures::TryStreamExt;
 use thiserror::Error;
-use tonic::{Request, Response, Status};
+use tonic::{
+    Request,
+    Response,
+    Status,
+};
 
-use crate::dynamic_config::SharedAppConfig;
-use crate::forest::{self, Forest, ForestImpl};
-use crate::metadata::TableName;
-use crate::proto::{self};
-use crate::runs::{RunError as RunsError, RunId, WriteOperation};
-use crate::{metadata, runs, storage};
+use crate::{
+    dynamic_config::SharedAppConfig,
+    forest::{
+        self,
+        Forest,
+        ForestImpl,
+    },
+    metadata,
+    metadata::TableName,
+    proto::{
+        self,
+    },
+    runs,
+    runs::{
+        RunError as RunsError,
+        RunId,
+        WriteOperation,
+    },
+    storage,
+};
 
 #[derive(Error, Debug)]
 pub enum WriterServiceError {
@@ -101,8 +119,8 @@ impl MyWriter {
             }
 
             // Get a permit from the dynamic config's semaphore
-            // Clone semaphore while holding read lock briefly, then release lock before acquiring
-            // permit
+            // Clone semaphore while holding read lock briefly, then release lock before
+            // acquiring permit
             let semaphore = {
                 let config = dynamic_config.read().await;
                 config.uploads_semaphore.clone()
@@ -209,27 +227,43 @@ impl proto::writer_service_server::WriterService for MyWriter {
             .await
             .map_err(|e| Status::internal(format!("Failed to receive batch result: {e}")))??;
 
-        Ok(Response::new(proto::WriteBatchResponse {
-            seq_no: seq_no.into(),
-        }))
+        Ok(Response::new(proto::WriteBatchResponse { seq_no: seq_no.into() }))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::time::Duration;
+    use std::{
+        sync::{
+            Arc,
+            atomic::{
+                AtomicUsize,
+                Ordering,
+            },
+        },
+        time::Duration,
+    };
 
     use super::*;
-    use crate::metadata::{
-        ChangelogEntry, ChangelogEntryWithID, MockMetadataStoreTrait, SeqNo, TableChangelogEntryV1,
-        TableConfig, TableID, TableName,
+    use crate::{
+        metadata::{
+            ChangelogEntry,
+            ChangelogEntryWithID,
+            MockMetadataStoreTrait,
+            SeqNo,
+            TableChangelogEntryV1,
+            TableConfig,
+            TableID,
+            TableName,
+        },
+        proto::writer_service_server::WriterService,
+        requires_docker,
+        storage::MockObjectStoreTrait,
+        test_utils::{
+            setup_test_db,
+            setup_test_object_store,
+        },
     };
-    use crate::proto::writer_service_server::WriterService;
-    use crate::requires_docker;
-    use crate::storage::MockObjectStoreTrait;
-    use crate::test_utils::{setup_test_db, setup_test_object_store};
 
     #[tokio::test]
     async fn test_writer_service() {
@@ -247,13 +281,9 @@ mod tests {
             .await
             .unwrap();
 
-        let dynamic_config = std::sync::Arc::new(tokio::sync::RwLock::new(
-            crate::dynamic_config::AppConfig::default(),
-        ));
+        let dynamic_config = std::sync::Arc::new(tokio::sync::RwLock::new(crate::dynamic_config::AppConfig::default()));
 
-        let writer = MyWriter::new(metadata, storage, dynamic_config)
-            .await
-            .unwrap();
+        let writer = MyWriter::new(metadata, storage, dynamic_config).await.unwrap();
 
         let response = writer
             .write_batch(Request::new(proto::WriteBatchRequest {
@@ -276,30 +306,25 @@ mod tests {
     async fn test_concurrent_batch_upload_limit() {
         let test_table_name = "test_table";
         let mut mock_meta = MockMetadataStoreTrait::new();
-        mock_meta
-            .expect_get_latest_snapshot()
-            .times(1)
-            .returning(|| {
-                Box::pin(async {
-                    Ok((None, vec![ChangelogEntryWithID {
+        mock_meta.expect_get_latest_snapshot().times(1).returning(|| {
+            Box::pin(async {
+                Ok((
+                    None,
+                    vec![ChangelogEntryWithID {
                         id: SeqNo::from(1),
-                        changes: ChangelogEntry::TablesV1(TableChangelogEntryV1::TableCreated(
-                            TableID::from(1),
-                        )),
-                    }]))
+                        changes: ChangelogEntry::TablesV1(TableChangelogEntryV1::TableCreated(TableID::from(1))),
+                    }],
+                ))
+            })
+        });
+        mock_meta.expect_get_table_by_id().times(1).returning(|_id| {
+            Box::pin(async {
+                Ok(TableConfig {
+                    table_id: Some(TableID::from(1)),
+                    table_name: TableName::from(test_table_name.to_string()),
                 })
-            });
-        mock_meta
-            .expect_get_table_by_id()
-            .times(1)
-            .returning(|_id| {
-                Box::pin(async {
-                    Ok(TableConfig {
-                        table_id: Some(TableID::from(1)),
-                        table_name: TableName::from(test_table_name.to_string()),
-                    })
-                })
-            });
+            })
+        });
         mock_meta
             .expect_append_wal()
             .times(8)
@@ -312,36 +337,31 @@ mod tests {
         let mut mock_store = MockObjectStoreTrait::new();
         let active_clone = active.clone();
         let max_clone = max_active.clone();
-        mock_store
-            .expect_put_run()
-            .times(8)
-            .returning(move |_id, _data| {
-                let active = active_clone.clone();
-                let max = max_clone.clone();
-                Box::pin(async move {
-                    let current = active.fetch_add(1, Ordering::SeqCst) + 1;
-                    loop {
-                        let prev = max.load(Ordering::SeqCst);
-                        if current > prev {
-                            if max
-                                .compare_exchange(prev, current, Ordering::SeqCst, Ordering::SeqCst)
-                                .is_ok()
-                            {
-                                break;
-                            }
-                        } else {
+        mock_store.expect_put_run().times(8).returning(move |_id, _data| {
+            let active = active_clone.clone();
+            let max = max_clone.clone();
+            Box::pin(async move {
+                let current = active.fetch_add(1, Ordering::SeqCst) + 1;
+                loop {
+                    let prev = max.load(Ordering::SeqCst);
+                    if current > prev {
+                        if max
+                            .compare_exchange(prev, current, Ordering::SeqCst, Ordering::SeqCst)
+                            .is_ok()
+                        {
                             break;
                         }
+                    } else {
+                        break;
                     }
-                    tokio::time::sleep(delay).await;
-                    active.fetch_sub(1, Ordering::SeqCst);
-                    Ok(())
-                })
-            });
+                }
+                tokio::time::sleep(delay).await;
+                active.fetch_sub(1, Ordering::SeqCst);
+                Ok(())
+            })
+        });
 
-        let dynamic_config = std::sync::Arc::new(tokio::sync::RwLock::new(
-            crate::dynamic_config::AppConfig::default(),
-        ));
+        let dynamic_config = std::sync::Arc::new(tokio::sync::RwLock::new(crate::dynamic_config::AppConfig::default()));
 
         let writer = MyWriter::new(Arc::new(mock_meta), Arc::new(mock_store), dynamic_config)
             .await

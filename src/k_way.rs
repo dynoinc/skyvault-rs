@@ -1,12 +1,26 @@
-use std::collections::hash_map::Entry;
-use std::collections::{BinaryHeap, HashMap};
-use std::pin::Pin;
+use std::{
+    collections::{
+        BinaryHeap,
+        HashMap,
+        hash_map::Entry,
+    },
+    pin::Pin,
+};
 
-use futures::{Stream, StreamExt, stream};
+use futures::{
+    Stream,
+    StreamExt,
+    stream,
+};
 use tokio::sync::mpsc;
 
-use crate::metadata;
-use crate::runs::{RunError, WriteOperation};
+use crate::{
+    metadata,
+    runs::{
+        RunError,
+        WriteOperation,
+    },
+};
 
 #[derive(Eq, PartialEq)]
 struct HeapItem {
@@ -104,11 +118,10 @@ mod heap_item_tests {
     }
 }
 
-/// Merges multiple run streams into a single stream, preserving correct ordering
-/// by key and taking the latest value (highest sequence number) for each key.
-pub fn merge<S>(
-    run_streams: Vec<(metadata::SeqNo, S)>,
-) -> impl Stream<Item = Result<WriteOperation, RunError>>
+/// Merges multiple run streams into a single stream, preserving correct
+/// ordering by key and taking the latest value (highest sequence number) for
+/// each key.
+pub fn merge<S>(run_streams: Vec<(metadata::SeqNo, S)>) -> impl Stream<Item = Result<WriteOperation, RunError>>
 where
     S: Stream<Item = Result<WriteOperation, RunError>> + Send + 'static,
 {
@@ -141,11 +154,7 @@ where
         let mut last_key: Option<String> = None;
         while !heap.is_empty() || !streams_map.is_empty() {
             let item = heap.pop().unwrap();
-            if !last_key
-                .as_ref()
-                .map(|k| item.op.key() == k)
-                .unwrap_or_default()
-            {
+            if !last_key.as_ref().map(|k| item.op.key() == k).unwrap_or_default() {
                 last_key = Some(item.op.key().to_string());
                 if tx.send(Ok(item.op)).await.is_err() {
                     return;
@@ -199,10 +208,7 @@ mod tests {
         ]);
 
         // Create input for merge_run_streams with different sequence numbers
-        let run_streams = vec![
-            (metadata::SeqNo::from(1), stream1),
-            (metadata::SeqNo::from(2), stream2),
-        ];
+        let run_streams = vec![(metadata::SeqNo::from(1), stream1), (metadata::SeqNo::from(2), stream2)];
 
         // Merge the streams
         let merged = merge(run_streams);

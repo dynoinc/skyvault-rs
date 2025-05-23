@@ -1,27 +1,48 @@
-use std::future::Future;
-use std::net::SocketAddr;
-use std::pin::Pin;
-use std::task::{Context, Poll};
-use std::time::Instant;
+use std::{
+    future::Future,
+    net::SocketAddr,
+    pin::Pin,
+    task::{
+        Context,
+        Poll,
+    },
+    time::Instant,
+};
 
-use axum::Router;
-use axum::extract::State;
-use axum::http::StatusCode;
-use axum::routing::get;
-use metrics::{counter, histogram};
-use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
+use axum::{
+    Router,
+    extract::State,
+    http::StatusCode,
+    routing::get,
+};
+use metrics::{
+    counter,
+    histogram,
+};
+use metrics_exporter_prometheus::{
+    PrometheusBuilder,
+    PrometheusHandle,
+};
 use sentry::ClientInitGuard;
 use tokio::net::TcpListener;
-use tower::{Layer, Service};
-use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::util::SubscriberInitExt;
+use tower::{
+    Layer,
+    Service,
+};
+use tracing_subscriber::{
+    layer::SubscriberExt,
+    util::SubscriberInitExt,
+};
 
 pub fn init_tracing_and_sentry() -> Option<ClientInitGuard> {
     let guard = std::env::var("SENTRY_DSN").ok().map(|dsn| {
-        sentry::init((dsn, sentry::ClientOptions {
-            release: Some(env!("CARGO_PKG_VERSION").into()),
-            ..Default::default()
-        }))
+        sentry::init((
+            dsn,
+            sentry::ClientOptions {
+                release: Some(env!("CARGO_PKG_VERSION").into()),
+                ..Default::default()
+            },
+        ))
     });
 
     let fmt_layer = tracing_subscriber::fmt::layer()
@@ -41,9 +62,7 @@ pub fn init_tracing_and_sentry() -> Option<ClientInitGuard> {
 
 pub fn init_metrics_recorder() -> PrometheusHandle {
     let builder = PrometheusBuilder::new();
-    builder
-        .install_recorder()
-        .expect("failed to install metrics recorder")
+    builder.install_recorder().expect("failed to install metrics recorder")
 }
 
 async fn metrics_handler(State(handle): State<PrometheusHandle>) -> (StatusCode, String) {
@@ -51,9 +70,7 @@ async fn metrics_handler(State(handle): State<PrometheusHandle>) -> (StatusCode,
 }
 
 pub async fn serve_metrics(addr: SocketAddr, handle: PrometheusHandle) {
-    let app = Router::new()
-        .route("/metrics", get(metrics_handler))
-        .with_state(handle);
+    let app = Router::new().route("/metrics", get(metrics_handler)).with_state(handle);
 
     tracing::info!("Metrics server listening on {}", addr);
     let listener = match TcpListener::bind(addr).await {
@@ -92,10 +109,9 @@ where
     S::Error: 'static,
     ReqBody: Send + 'static,
 {
-    type Response = S::Response;
     type Error = S::Error;
-    type Future =
-        Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send + 'static>>;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send + 'static>>;
+    type Response = S::Response;
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.inner.poll_ready(cx)
@@ -143,11 +159,7 @@ fn parse_method(path: &str) -> Option<(String, String)> {
     parts.next()?;
     let service_candidate = parts.next()?;
     if service_candidate.is_empty()
-        || service_candidate.starts_with('v')
-            && service_candidate
-                .chars()
-                .skip(1)
-                .all(|c| c.is_ascii_digit())
+        || service_candidate.starts_with('v') && service_candidate.chars().skip(1).all(|c| c.is_ascii_digit())
     {
         return None;
     }

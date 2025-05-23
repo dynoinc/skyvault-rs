@@ -1,10 +1,23 @@
 use async_stream::stream;
-use futures::{Stream, StreamExt, pin_mut};
+use futures::{
+    Stream,
+    StreamExt,
+    pin_mut,
+};
 use k8s_openapi::api::batch::v1::Job;
-use kube::api::Api;
-use kube::runtime::watcher::{self};
+use kube::{
+    api::Api,
+    runtime::watcher::{
+        self,
+    },
+};
 use thiserror::Error;
-use tracing::{debug, error, info, warn};
+use tracing::{
+    debug,
+    error,
+    info,
+    warn,
+};
 
 use crate::metadata::JobID;
 
@@ -34,7 +47,8 @@ pub enum JobChange {
     Failed(JobID, String),    // JobID, Job Name
 }
 
-/// Watches Kubernetes jobs with a specific label selector and provides a stream of job changes.
+/// Watches Kubernetes jobs with a specific label selector and provides a stream
+/// of job changes.
 ///
 /// Returns a stream that yields job status change events.
 pub async fn watch(
@@ -48,9 +62,7 @@ pub async fn watch(
         namespace, label_selector
     );
 
-    let watcher_config = watcher::Config::default()
-        .labels(label_selector)
-        .streaming_lists(); // Handles initial state and updates
+    let watcher_config = watcher::Config::default().labels(label_selector).streaming_lists(); // Handles initial state and updates
 
     let raw_watcher_stream = watcher::watcher(jobs_api, watcher_config);
 
@@ -125,7 +137,7 @@ pub async fn watch(
                             warn!("Job {} (ID: {}) was deleted from Kubernetes. Marking as Failed for tracking.", job_name, job_id);
                             yield Ok(JobChange::Failed(job_id, job_name.clone()));
                         }
-                        watcher::Event::Init | watcher::Event::InitDone => { /* Handled in the outer match */ }
+                        watcher::Event::Init | watcher::Event::InitDone => {}
                     }
                 }
                 Err(e) => {
@@ -143,11 +155,12 @@ pub async fn watch(
 /// Helper method to extract job ID from job name
 /// Extracts the last segment after splitting by '-'.
 /// Example: "wal-compaction-123" -> Some("123")
-/// Example: "myjob" -> Some("myjob") (parse_job_id will then fail if not numeric)
-/// Example: "" -> Some("") (parse_job_id will then fail)
+/// Example: "myjob" -> Some("myjob") (parse_job_id will then fail if not
+/// numeric) Example: "" -> Some("") (parse_job_id will then fail)
 pub fn extract_job_id_from_name(job_name: &str) -> Option<String> {
-    // Ensure this aligns with how job names are constructed (e.g., format!("{job_type}-{job_id}"))
-    // rsplit will return the last part, or the string itself if no '-' is present.
+    // Ensure this aligns with how job names are constructed (e.g.,
+    // format!("{job_type}-{job_id}")) rsplit will return the last part, or the
+    // string itself if no '-' is present.
     job_name.rsplit('-').next().map(|s| s.to_string())
 }
 
@@ -163,10 +176,7 @@ mod tests {
     #[test]
     fn test_extract_job_id_from_name() {
         // Test valid job names
-        assert_eq!(
-            extract_job_id_from_name("wal-compaction-123"),
-            Some("123".to_string())
-        );
+        assert_eq!(extract_job_id_from_name("wal-compaction-123"), Some("123".to_string()));
 
         assert_eq!(
             extract_job_id_from_name("table-buffer-compaction-456"),
@@ -179,10 +189,7 @@ mod tests {
         );
 
         // Test cases for names without hyphens or empty strings
-        assert_eq!(
-            extract_job_id_from_name("invalid123"),
-            Some("invalid123".to_string())
-        ); // parse_job_id will handle if "invalid123" is not a number
+        assert_eq!(extract_job_id_from_name("invalid123"), Some("invalid123".to_string())); // parse_job_id will handle if "invalid123" is not a number
 
         assert_eq!(extract_job_id_from_name("123"), Some("123".to_string()));
 

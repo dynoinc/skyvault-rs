@@ -1,18 +1,49 @@
-use std::collections::{BTreeMap, HashMap};
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::{
+        BTreeMap,
+        HashMap,
+    },
+    sync::{
+        Arc,
+        Mutex,
+    },
+};
 
 use bytes::Bytes;
-use futures::{Stream, StreamExt, pin_mut};
+use futures::{
+    Stream,
+    StreamExt,
+    pin_mut,
+};
 use prost::Message;
 use thiserror::Error;
-use tracing::{debug, error};
-
-use crate::metadata::{
-    self, ChangelogEntry, ChangelogEntryWithID, Level, MetadataError, MetadataStore,
-    RunsChangelogEntryV1, SeqNo, TableChangelogEntryV1, TableConfig, TableID, TableName,
+use tracing::{
+    debug,
+    error,
 };
-use crate::storage::{ObjectStore, StorageError};
-use crate::{proto, runs};
+
+use crate::{
+    metadata::{
+        self,
+        ChangelogEntry,
+        ChangelogEntryWithID,
+        Level,
+        MetadataError,
+        MetadataStore,
+        RunsChangelogEntryV1,
+        SeqNo,
+        TableChangelogEntryV1,
+        TableConfig,
+        TableID,
+        TableName,
+    },
+    proto,
+    runs,
+    storage::{
+        ObjectStore,
+        StorageError,
+    },
+};
 
 #[derive(Error, Debug)]
 pub enum ForestError {
@@ -160,11 +191,7 @@ impl Snapshot {
                     wal.insert(seq_no, run_metadata);
                 },
                 metadata::BelongsTo::TableBuffer(ref table_id, seq_no) => {
-                    trees
-                        .entry(*table_id)
-                        .or_default()
-                        .buffer
-                        .insert(seq_no, run_metadata);
+                    trees.entry(*table_id).or_default().buffer.insert(seq_no, run_metadata);
                 },
                 metadata::BelongsTo::TableTreeLevel(ref table_id, level) => {
                     trees
@@ -200,7 +227,8 @@ pub trait ForestTrait: Send + Sync + 'static {
 pub type Forest = Arc<dyn ForestTrait>;
 
 /// Forest maintains an in-memory map of all runs.
-/// It streams the changelog from metadata store and loads run metadata for runs.
+/// It streams the changelog from metadata store and loads run metadata for
+/// runs.
 #[derive(Clone)]
 pub struct ForestImpl {
     metadata_store: MetadataStore,
@@ -208,10 +236,7 @@ pub struct ForestImpl {
 }
 
 impl ForestImpl {
-    pub async fn latest(
-        metadata_store: MetadataStore,
-        object_store: ObjectStore,
-    ) -> Result<Forest, ForestError> {
+    pub async fn latest(metadata_store: MetadataStore, object_store: ObjectStore) -> Result<Forest, ForestError> {
         let (snapshot_id, entries) = metadata_store.get_latest_snapshot().await?;
         let snapshot = match snapshot_id {
             Some(snapshot_id) => {
@@ -234,10 +259,7 @@ impl ForestImpl {
     }
 
     /// Creates a new Forest instance and starts the changelog stream processor.
-    pub async fn watch(
-        metadata_store: MetadataStore,
-        object_store: ObjectStore,
-    ) -> Result<Forest, ForestError> {
+    pub async fn watch(metadata_store: MetadataStore, object_store: ObjectStore) -> Result<Forest, ForestError> {
         let (snapshot_id, stream) = metadata_store.stream_changelog().await?;
         let state = match snapshot_id {
             Some(snapshot_id) => {
@@ -263,7 +285,8 @@ impl ForestImpl {
         Ok(Arc::new(forest))
     }
 
-    /// Continuously processes the changelog stream and updates the in-memory map.
+    /// Continuously processes the changelog stream and updates the in-memory
+    /// map.
     async fn process_changelog_stream(
         &self,
         stream: impl Stream<Item = Result<ChangelogEntryWithID, MetadataError>> + '_,
@@ -284,16 +307,11 @@ impl ForestImpl {
             }
         }
 
-        Err(ForestError::Internal(
-            "Changelog stream ended unexpectedly".to_string(),
-        ))
+        Err(ForestError::Internal("Changelog stream ended unexpectedly".to_string()))
     }
 
     /// Process a single changelog entry and update the live runs map.
-    async fn process_changelog_entry(
-        &self,
-        entry: ChangelogEntryWithID,
-    ) -> Result<(), ForestError> {
+    async fn process_changelog_entry(&self, entry: ChangelogEntryWithID) -> Result<(), ForestError> {
         let seq_no = entry.id;
         match entry.changes {
             ChangelogEntry::RunsV1(v1) => self.process_runs_changelog_entry(seq_no, v1).await,
@@ -309,10 +327,7 @@ impl ForestImpl {
         let runs_added = entry.runs_added;
         let runs_removed = entry.runs_removed;
 
-        let new_runs = self
-            .metadata_store
-            .get_run_metadata_batch(runs_added)
-            .await?;
+        let new_runs = self.metadata_store.get_run_metadata_batch(runs_added).await?;
 
         let mut state = self.state.lock().unwrap();
         let new_state = Arc::make_mut(&mut state);
@@ -324,9 +339,7 @@ impl ForestImpl {
             for table_entries in table.tree.values_mut() {
                 table_entries.retain(|_, m| !runs_removed.contains(&m.id));
             }
-            table
-                .tree
-                .retain(|_, table_entries| !table_entries.is_empty());
+            table.tree.retain(|_, table_entries| !table_entries.is_empty());
         }
         new_state
             .trees
@@ -383,9 +396,7 @@ impl ForestImpl {
 
         match entry {
             TableChangelogEntryV1::TableCreated(_) => {
-                new_state
-                    .tables
-                    .insert(table_config.table_name.clone(), table_config);
+                new_state.tables.insert(table_config.table_name.clone(), table_config);
             },
             TableChangelogEntryV1::TableDropped(_) => {
                 new_state.tables.remove(&table_config.table_name.clone());

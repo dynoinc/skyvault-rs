@@ -1,12 +1,27 @@
-use futures::stream::{self, StreamExt, TryStreamExt};
+use futures::stream::{
+    self,
+    StreamExt,
+    TryStreamExt,
+};
 use tokio::sync::mpsc;
 
 use super::JobError;
-use crate::forest::ForestImpl;
-use crate::metadata::{MetadataStore, TableID};
-use crate::runs::{RunError, RunId, Stats, WriteOperation};
-use crate::storage::ObjectStore;
-use crate::{k_way, runs};
+use crate::{
+    forest::ForestImpl,
+    k_way,
+    metadata::{
+        MetadataStore,
+        TableID,
+    },
+    runs,
+    runs::{
+        RunError,
+        RunId,
+        Stats,
+        WriteOperation,
+    },
+    storage::ObjectStore,
+};
 
 pub async fn execute(
     metadata_store: MetadataStore,
@@ -72,36 +87,28 @@ pub async fn execute(
         let (table_prefix_len, new_table) = {
             // Parse key in format "table_id.key"
             let (table_id_str, _) = op.key().split_once('.').ok_or_else(|| {
-                JobError::InvalidInput(format!(
-                    "Key does not follow 'table_id.key' format: {}",
-                    op.key()
-                ))
+                JobError::InvalidInput(format!("Key does not follow 'table_id.key' format: {}", op.key()))
             })?;
 
-            let table_id = TableID::from(table_id_str.parse::<i64>().map_err(|e| {
-                JobError::InvalidInput(format!("Invalid table ID '{table_id_str}': {e}"))
-            })?);
+            let table_id = TableID::from(
+                table_id_str
+                    .parse::<i64>()
+                    .map_err(|e| JobError::InvalidInput(format!("Invalid table ID '{table_id_str}': {e}")))?,
+            );
 
             let table_prefix_len = format!("{table_id}.").len();
-            let new_table = match current_state
-                .as_ref()
-                .map(|(current_table_id, _, _)| current_table_id)
-                != Some(&table_id)
-            {
-                true => Some(table_id),
-                false => None,
-            };
+            let new_table =
+                match current_state.as_ref().map(|(current_table_id, ..)| current_table_id) != Some(&table_id) {
+                    true => Some(table_id),
+                    false => None,
+                };
 
             (table_prefix_len, new_table)
         };
 
         let op = match op {
-            WriteOperation::Put(mut key, value) => {
-                WriteOperation::Put(key.split_off(table_prefix_len), value)
-            },
-            WriteOperation::Delete(mut key) => {
-                WriteOperation::Delete(key.split_off(table_prefix_len))
-            },
+            WriteOperation::Put(mut key, value) => WriteOperation::Put(key.split_off(table_prefix_len), value),
+            WriteOperation::Delete(mut key) => WriteOperation::Delete(key.split_off(table_prefix_len)),
         };
 
         if let Some(new_table) = new_table {
@@ -125,25 +132,16 @@ pub async fn execute(
 
             // Create stream from receiver
             let rx_stream = stream::unfold(rx, |mut rx| {
-                Box::pin(async move {
-                    rx.recv()
-                        .await
-                        .map(|item: Result<WriteOperation, RunError>| (item, rx))
-                })
+                Box::pin(async move { rx.recv().await.map(|item: Result<WriteOperation, RunError>| (item, rx)) })
             })
-            .map(|item_result| {
-                item_result.map_err(|e| RunError::Format(format!("Channel receive error: {e}")))
-            }); // Handle channel error -> RunError::Format
+            .map(|item_result| item_result.map_err(|e| RunError::Format(format!("Channel receive error: {e}")))); // Handle channel error -> RunError::Format
 
             // Start task to build run for this table
             let object_store_clone = object_store.clone();
             let task = tokio::spawn(async move {
                 // Build run from stream
                 // build_runs returns a stream. For now, collect it and expect exactly one run.
-                let results: Vec<_> = runs::build_runs(rx_stream)
-                    .try_collect()
-                    .await
-                    .map_err(JobError::Run)?;
+                let results: Vec<_> = runs::build_runs(rx_stream).try_collect().await.map_err(JobError::Run)?;
 
                 if results.len() != 1 {
                     // This might indicate an issue with compaction logic or an unexpected large run
@@ -173,9 +171,7 @@ pub async fn execute(
         // Send operation to current table's channel
         if let Some((_, sender, _)) = &current_state {
             if sender.send(Ok(op)).await.is_err() {
-                return Err(JobError::Internal(
-                    "Failed to send operation to table channel".into(),
-                ));
+                return Err(JobError::Internal("Failed to send operation to table channel".into()));
             }
         }
     }

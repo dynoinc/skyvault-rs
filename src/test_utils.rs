@@ -1,15 +1,41 @@
-use std::process::{Command, Stdio};
-use std::sync::Arc;
+use std::{
+    process::{
+        Command,
+        Stdio,
+    },
+    sync::Arc,
+};
 
-use aws_config::{BehaviorVersion, Region, SdkConfig};
-use aws_sdk_s3::config::{Credentials, SharedCredentialsProvider};
-use testcontainers_modules::minio;
-use testcontainers_modules::postgres::Postgres;
-use testcontainers_modules::testcontainers::ContainerAsync;
-use testcontainers_modules::testcontainers::runners::AsyncRunner;
+use aws_config::{
+    BehaviorVersion,
+    Region,
+    SdkConfig,
+};
+use aws_sdk_s3::config::{
+    Credentials,
+    SharedCredentialsProvider,
+};
+use testcontainers_modules::{
+    minio,
+    postgres::Postgres,
+    testcontainers::{
+        ContainerAsync,
+        runners::AsyncRunner,
+    },
+};
 
-use crate::metadata::{MetadataError, MetadataStore, PostgresMetadataStore};
-use crate::storage::{ObjectStore, S3ObjectStore, StorageError};
+use crate::{
+    metadata::{
+        MetadataError,
+        MetadataStore,
+        PostgresMetadataStore,
+    },
+    storage::{
+        ObjectStore,
+        S3ObjectStore,
+        StorageError,
+    },
+};
 
 /// Returns `true` if Docker is available and responding, otherwise `false`.
 pub fn docker_is_available() -> bool {
@@ -34,17 +60,15 @@ macro_rules! requires_docker {
 }
 
 /// Sets up a test PostgreSQL instance in a container for testing.
-/// Returns the metadata store connected to the test DB and the container handle.
+/// Returns the metadata store connected to the test DB and the container
+/// handle.
 pub async fn setup_test_db() -> Result<(MetadataStore, ContainerAsync<Postgres>), MetadataError> {
     let container = Postgres::default()
         .start()
         .await
         .expect("Failed to start PostgreSQL container");
 
-    let port = container
-        .get_host_port_ipv4(5432)
-        .await
-        .expect("Failed to get port");
+    let port = container.get_host_port_ipv4(5432).await.expect("Failed to get port");
 
     // Create PostgreSQL connection string
     let postgres_url = format!("postgres://postgres:postgres@localhost:{}/postgres", port);
@@ -57,9 +81,9 @@ pub async fn setup_test_db() -> Result<(MetadataStore, ContainerAsync<Postgres>)
 }
 
 /// Sets up a test MinIO instance in a container for testing S3ObjectStore.
-/// Returns the object store connected to the test MinIO and the container handle.
-pub async fn setup_test_object_store()
--> Result<(ObjectStore, ContainerAsync<minio::MinIO>), StorageError> {
+/// Returns the object store connected to the test MinIO and the container
+/// handle.
+pub async fn setup_test_object_store() -> Result<(ObjectStore, ContainerAsync<minio::MinIO>), StorageError> {
     let container = minio::MinIO::default()
         .start()
         .await

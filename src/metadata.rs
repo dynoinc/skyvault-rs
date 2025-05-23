@@ -1,21 +1,33 @@
-use std::collections::HashMap;
-use std::fmt::{self, Display};
-use std::ops::Deref;
-use std::pin::Pin;
-use std::str::FromStr;
-use std::sync::Arc;
-use std::time::Duration;
+use std::{
+    collections::HashMap,
+    fmt::{
+        self,
+        Display,
+    },
+    ops::Deref,
+    pin::Pin,
+    str::FromStr,
+    sync::Arc,
+    time::Duration,
+};
 
 use async_stream::stream;
 use futures::Stream;
-use sqlx::PgPool;
-use sqlx::migrate::Migrator;
-use sqlx::postgres::PgPoolOptions;
-use sqlx::types::JsonValue;
+use sqlx::{
+    PgPool,
+    migrate::Migrator,
+    postgres::PgPoolOptions,
+    types::JsonValue,
+};
 use thiserror::Error;
 
-use crate::proto;
-use crate::runs::{RunId, Stats};
+use crate::{
+    proto,
+    runs::{
+        RunId,
+        Stats,
+    },
+};
 
 #[derive(Error, Debug)]
 pub enum MetadataError {
@@ -44,9 +56,7 @@ pub enum MetadataError {
     TableIDNotFound(TableID),
 }
 
-#[derive(
-    serde::Serialize, serde::Deserialize, Debug, Eq, PartialEq, Clone, Copy, sqlx::Type, Hash,
-)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Eq, PartialEq, Clone, Copy, sqlx::Type, Hash)]
 #[sqlx(transparent)]
 pub struct JobID(i64);
 
@@ -64,6 +74,7 @@ impl From<JobID> for i64 {
 
 impl FromStr for JobID {
     type Err = std::num::ParseIntError;
+
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(JobID(s.parse()?))
     }
@@ -76,18 +87,7 @@ impl Display for JobID {
 }
 
 #[derive(
-    serde::Serialize,
-    serde::Deserialize,
-    Debug,
-    Default,
-    Ord,
-    PartialOrd,
-    Eq,
-    PartialEq,
-    Clone,
-    Copy,
-    Hash,
-    sqlx::Type,
+    serde::Serialize, serde::Deserialize, Debug, Default, Ord, PartialOrd, Eq, PartialEq, Clone, Copy, Hash, sqlx::Type,
 )]
 #[sqlx(transparent)]
 pub struct SeqNo(i64);
@@ -116,9 +116,7 @@ impl Display for SeqNo {
     }
 }
 
-#[derive(
-    serde::Serialize, serde::Deserialize, Debug, Clone, Copy, Ord, PartialOrd, Eq, PartialEq, Hash,
-)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, Ord, PartialOrd, Eq, PartialEq, Hash)]
 pub struct Level(u64);
 
 impl Level {
@@ -304,14 +302,10 @@ impl From<TableChangelogEntryV1> for proto::TableChangelogEntryV1 {
         proto::TableChangelogEntryV1 {
             entry: match entry {
                 TableChangelogEntryV1::TableCreated(table_id) => Some(
-                    proto::table_changelog_entry_v1::Entry::TableCreated(proto::TableCreated {
-                        table_id: table_id.0,
-                    }),
+                    proto::table_changelog_entry_v1::Entry::TableCreated(proto::TableCreated { table_id: table_id.0 }),
                 ),
                 TableChangelogEntryV1::TableDropped(table_id) => Some(
-                    proto::table_changelog_entry_v1::Entry::TableDropped(proto::TableDropped {
-                        table_id: table_id.0,
-                    }),
+                    proto::table_changelog_entry_v1::Entry::TableDropped(proto::TableDropped { table_id: table_id.0 }),
                 ),
             },
         }
@@ -326,7 +320,8 @@ pub enum ChangelogEntry {
 
 impl From<JsonValue> for ChangelogEntry {
     fn from(val: JsonValue) -> Self {
-        // panics on malformed JSON; switch to `from_value(val).unwrap()` or handle the Result
+        // panics on malformed JSON; switch to `from_value(val).unwrap()` or handle the
+        // Result
         serde_json::from_value(val).expect("invalid ChangelogEntry JSON")
     }
 }
@@ -342,9 +337,9 @@ impl From<ChangelogEntryWithID> for proto::ChangelogEntryWithId {
         proto::ChangelogEntryWithId {
             id: entry_with_id.id.0,
             entry: match entry_with_id.changes {
-                ChangelogEntry::RunsV1(v1) => Some(
-                    proto::changelog_entry_with_id::Entry::RunsChangelogEntryV1(v1.into()),
-                ),
+                ChangelogEntry::RunsV1(v1) => {
+                    Some(proto::changelog_entry_with_id::Entry::RunsChangelogEntryV1(v1.into()))
+                },
                 ChangelogEntry::TablesV1(v1) => {
                     Some(proto::changelog_entry_with_id::Entry::TableChangelogEntryV1(v1.into()))
                 },
@@ -421,31 +416,19 @@ impl From<&TableConfig> for proto::TableConfig {
     }
 }
 
-type ChangelogStream =
-    Pin<Box<dyn Stream<Item = Result<ChangelogEntryWithID, MetadataError>> + Send + 'static>>;
+type ChangelogStream = Pin<Box<dyn Stream<Item = Result<ChangelogEntryWithID, MetadataError>> + Send + 'static>>;
 
 #[async_trait::async_trait]
 #[cfg_attr(test, mockall::automock)]
 pub trait MetadataStoreTrait: Send + Sync + 'static {
     // SNAPSHOTS
     async fn get_latest_snapshot_id(&self) -> Result<Option<(SnapshotID, SeqNo)>, MetadataError>;
-    async fn get_latest_snapshot(
-        &self,
-    ) -> Result<(Option<SnapshotID>, Vec<ChangelogEntryWithID>), MetadataError>;
-    async fn persist_snapshot(
-        &self,
-        snapshot_id: SnapshotID,
-        seq_no: SeqNo,
-    ) -> Result<(), MetadataError>;
+    async fn get_latest_snapshot(&self) -> Result<(Option<SnapshotID>, Vec<ChangelogEntryWithID>), MetadataError>;
+    async fn persist_snapshot(&self, snapshot_id: SnapshotID, seq_no: SeqNo) -> Result<(), MetadataError>;
 
     // CHANGELOG
-    async fn stream_changelog(
-        &self,
-    ) -> Result<(Option<SnapshotID>, ChangelogStream), MetadataError>;
-    async fn get_changelog(
-        &self,
-        from_seq_no: SeqNo,
-    ) -> Result<Vec<ChangelogEntryWithID>, MetadataError>;
+    async fn stream_changelog(&self) -> Result<(Option<SnapshotID>, ChangelogStream), MetadataError>;
+    async fn get_changelog(&self, from_seq_no: SeqNo) -> Result<Vec<ChangelogEntryWithID>, MetadataError>;
 
     // WAL & COMPACTIONS
     async fn append_wal(&self, run_ids: Vec<(RunId, Stats)>) -> Result<SeqNo, MetadataError>;
@@ -461,10 +444,7 @@ pub trait MetadataStoreTrait: Send + Sync + 'static {
         compacted: Vec<RunId>,
         new_runs: Vec<RunMetadata>,
     ) -> Result<SeqNo, MetadataError>;
-    async fn get_run_metadata_batch(
-        &self,
-        run_ids: Vec<RunId>,
-    ) -> Result<HashMap<RunId, RunMetadata>, MetadataError>;
+    async fn get_run_metadata_batch(&self, run_ids: Vec<RunId>) -> Result<HashMap<RunId, RunMetadata>, MetadataError>;
 
     // JOBS
     async fn schedule_job(&self, job_params: JobParams) -> Result<JobID, MetadataError>;
@@ -492,21 +472,16 @@ static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 
 impl PostgresMetadataStore {
     pub async fn new(metadata_url: String) -> Result<Self, MetadataError> {
-        let pg_pool = PgPoolOptions::new()
-            .max_connections(5)
-            .connect(&metadata_url)
-            .await?;
+        let pg_pool = PgPoolOptions::new().max_connections(5).connect(&metadata_url).await?;
 
         MIGRATOR.run(&pg_pool).await?;
 
         Ok(Self { pg_pool })
     }
 
-    /// Attempts to perform the append_wal operation within a single transaction.
-    async fn append_wal_attempt(
-        &self,
-        run_ids_with_stats: &[(RunId, Stats)],
-    ) -> Result<SeqNo, MetadataError> {
+    /// Attempts to perform the append_wal operation within a single
+    /// transaction.
+    async fn append_wal_attempt(&self, run_ids_with_stats: &[(RunId, Stats)]) -> Result<SeqNo, MetadataError> {
         let mut transaction = self.pg_pool.begin().await?;
 
         let first_seq_no: i64 = sqlx::query_scalar("SELECT nextval('changelog_id_seq')")
@@ -522,15 +497,11 @@ impl PostgresMetadataStore {
                 .await?;
         }
 
-        let changelog_changes =
-            serde_json::to_value(ChangelogEntry::RunsV1(RunsChangelogEntryV1 {
-                runs_added: run_ids_with_stats
-                    .iter()
-                    .map(|(id, _)| id.clone())
-                    .collect(),
-                runs_removed: vec![],
-            }))
-            .map_err(|e| sqlx::Error::Configuration(e.into()))?; // Convert serde error appropriately if needed
+        let changelog_changes = serde_json::to_value(ChangelogEntry::RunsV1(RunsChangelogEntryV1 {
+            runs_added: run_ids_with_stats.iter().map(|(id, _)| id.clone()).collect(),
+            runs_removed: vec![],
+        }))
+        .map_err(|e| sqlx::Error::Configuration(e.into()))?; // Convert serde error appropriately if needed
 
         sqlx::query!(
             r#"
@@ -543,10 +514,7 @@ impl PostgresMetadataStore {
         .execute(&mut *transaction) // Deref the mutable reference
         .await?;
 
-        let run_ids: Vec<String> = run_ids_with_stats
-            .iter()
-            .map(|(id, _)| id.to_string())
-            .collect();
+        let run_ids: Vec<String> = run_ids_with_stats.iter().map(|(id, _)| id.to_string()).collect();
 
         let stats_values: Vec<serde_json::Value> = run_ids_with_stats
             .iter()
@@ -606,7 +574,8 @@ impl PostgresMetadataStore {
         }
     }
 
-    /// Attempts to perform the append_wal_compaction operation within a single transaction.
+    /// Attempts to perform the append_wal_compaction operation within a single
+    /// transaction.
     async fn append_wal_compaction_attempt(
         &self,
         job_id: JobID,
@@ -641,7 +610,8 @@ impl PostgresMetadataStore {
 
         // --- Reserve Sequence Block for Changelog and potential new runs ---
         let n_new_runs = new_table_runs.len();
-        // Reserve N IDs if creating runs, otherwise reserve 1 ID for the changelog entry itself.
+        // Reserve N IDs if creating runs, otherwise reserve 1 ID for the changelog
+        // entry itself.
         let num_ids_to_reserve = std::cmp::max(1, n_new_runs);
 
         let first_seq_no: i64 = sqlx::query_scalar("SELECT nextval('changelog_id_seq')")
@@ -658,12 +628,11 @@ impl PostgresMetadataStore {
         // If num_ids_to_reserve == 1, nextval already advanced it correctly.
 
         // --- Insert Changelog Entry ---
-        let changelog_changes =
-            serde_json::to_value(ChangelogEntry::RunsV1(RunsChangelogEntryV1 {
-                runs_added: new_table_runs.iter().map(|(id, _, _)| id.clone()).collect(),
-                runs_removed: compacted.to_vec(), // Clone if needed or take ownership
-            }))
-            .map_err(MetadataError::JsonSerdeError)?; // Map serde error
+        let changelog_changes = serde_json::to_value(ChangelogEntry::RunsV1(RunsChangelogEntryV1 {
+            runs_added: new_table_runs.iter().map(|(id, ..)| id.clone()).collect(),
+            runs_removed: compacted.to_vec(), // Clone if needed or take ownership
+        }))
+        .map_err(MetadataError::JsonSerdeError)?; // Map serde error
 
         sqlx::query!(
             r#"
@@ -685,9 +654,7 @@ impl PostgresMetadataStore {
         .map_err(|e| {
             if matches!(e, sqlx::Error::RowNotFound) {
                 // Directly return the specific MetadataError
-                MetadataError::InvalidJobState(format!(
-                    "Job {job_id} update failed or not in pending state."
-                ))
+                MetadataError::InvalidJobState(format!("Job {job_id} update failed or not in pending state."))
             } else {
                 MetadataError::DatabaseError(e) // Propagate other DB errors
             }
@@ -695,10 +662,7 @@ impl PostgresMetadataStore {
 
         // --- Insert New Runs (if any) ---
         if n_new_runs > 0 {
-            let ids: Vec<String> = new_table_runs
-                .iter()
-                .map(|(id, _, _)| id.to_string())
-                .collect();
+            let ids: Vec<String> = new_table_runs.iter().map(|(id, ..)| id.to_string()).collect();
 
             // Create unique BelongsTo::TableBuffer values using the reserved sequence block
             let belongs_to_values: Vec<serde_json::Value> = new_table_runs
@@ -787,19 +751,15 @@ impl PostgresMetadataStore {
 
         let changelog_seq_no = SeqNo::from(changelog_record.id);
 
-        PostgresMetadataStore::mark_job_completed(
-            transaction,
-            job_id,
-            serde_json::to_value(changelog_seq_no)?,
-        )
-        .await
-        .map_err(|e| {
-            if matches!(e, sqlx::Error::RowNotFound) {
-                MetadataError::InvalidJobState(format!("Job {job_id} is not in pending state"))
-            } else {
-                MetadataError::DatabaseError(e)
-            }
-        })?;
+        PostgresMetadataStore::mark_job_completed(transaction, job_id, serde_json::to_value(changelog_seq_no)?)
+            .await
+            .map_err(|e| {
+                if matches!(e, sqlx::Error::RowNotFound) {
+                    MetadataError::InvalidJobState(format!("Job {job_id} is not in pending state"))
+                } else {
+                    MetadataError::DatabaseError(e)
+                }
+            })?;
 
         if !new_runs.is_empty() {
             let ids: Vec<String> = new_runs.iter().map(|m| m.id.to_string()).collect();
@@ -832,7 +792,8 @@ impl PostgresMetadataStore {
 }
 
 /// Helper function to check if a database error is retryable.
-/// Currently only considers serialization failures (error code 40001) as retryable.
+/// Currently only considers serialization failures (error code 40001) as
+/// retryable.
 fn is_retryable_error(error: &MetadataError) -> bool {
     matches!(error, MetadataError::DatabaseError(sqlx::Error::Database(db_err)) if db_err.code().is_some_and(|code| code == "40001"))
 }
@@ -840,38 +801,26 @@ fn is_retryable_error(error: &MetadataError) -> bool {
 #[async_trait::async_trait]
 impl MetadataStoreTrait for PostgresMetadataStore {
     async fn get_latest_snapshot_id(&self) -> Result<Option<(SnapshotID, SeqNo)>, MetadataError> {
-        let latest_persisted_snapshot =
-            sqlx::query!("SELECT id, seq_no FROM snapshots ORDER BY seq_no DESC LIMIT 1")
-                .fetch_optional(&self.pg_pool)
-                .await?;
+        let latest_persisted_snapshot = sqlx::query!("SELECT id, seq_no FROM snapshots ORDER BY seq_no DESC LIMIT 1")
+            .fetch_optional(&self.pg_pool)
+            .await?;
 
         Ok(latest_persisted_snapshot.map(|e| (SnapshotID::from(e.id), SeqNo::from(e.seq_no))))
     }
 
     /// Fetches all existing changelog entries and returns them as a vector.
-    async fn get_latest_snapshot(
-        &self,
-    ) -> Result<(Option<SnapshotID>, Vec<ChangelogEntryWithID>), MetadataError> {
-        let latest_persisted_snapshot =
-            sqlx::query!("SELECT id, seq_no FROM snapshots ORDER BY seq_no DESC LIMIT 1")
-                .fetch_optional(&self.pg_pool)
-                .await?;
+    async fn get_latest_snapshot(&self) -> Result<(Option<SnapshotID>, Vec<ChangelogEntryWithID>), MetadataError> {
+        let latest_persisted_snapshot = sqlx::query!("SELECT id, seq_no FROM snapshots ORDER BY seq_no DESC LIMIT 1")
+            .fetch_optional(&self.pg_pool)
+            .await?;
 
-        let snapshot =
-            latest_persisted_snapshot.map(|e| (SnapshotID::from(e.id), SeqNo::from(e.seq_no)));
-        let last_seq_no = snapshot
-            .clone()
-            .map(|(_, seq_no)| seq_no)
-            .unwrap_or(SeqNo::zero());
+        let snapshot = latest_persisted_snapshot.map(|e| (SnapshotID::from(e.id), SeqNo::from(e.seq_no)));
+        let last_seq_no = snapshot.clone().map(|(_, seq_no)| seq_no).unwrap_or(SeqNo::zero());
         let changelog = self.get_changelog(last_seq_no).await?;
         Ok((snapshot.map(|(id, _)| id), changelog))
     }
 
-    async fn persist_snapshot(
-        &self,
-        snapshot_id: SnapshotID,
-        seq_no: SeqNo,
-    ) -> Result<(), MetadataError> {
+    async fn persist_snapshot(&self, snapshot_id: SnapshotID, seq_no: SeqNo) -> Result<(), MetadataError> {
         sqlx::query!(
             "INSERT INTO snapshots (id, seq_no) VALUES ($1, $2)",
             snapshot_id.0,
@@ -882,24 +831,18 @@ impl MetadataStoreTrait for PostgresMetadataStore {
         Ok(())
     }
 
-    /// Returns a snapshot of existing changelog entries and a stream of new entries.
-    /// The stream continuously polls for new entries after reaching the end of the snapshot.
-    async fn stream_changelog(
-        &self,
-    ) -> Result<(Option<SnapshotID>, ChangelogStream), MetadataError> {
-        let latest_persisted_snapshot =
-            sqlx::query!("SELECT id, seq_no FROM snapshots ORDER BY seq_no DESC LIMIT 1")
-                .fetch_optional(&self.pg_pool)
-                .await?;
+    /// Returns a snapshot of existing changelog entries and a stream of new
+    /// entries. The stream continuously polls for new entries after
+    /// reaching the end of the snapshot.
+    async fn stream_changelog(&self) -> Result<(Option<SnapshotID>, ChangelogStream), MetadataError> {
+        let latest_persisted_snapshot = sqlx::query!("SELECT id, seq_no FROM snapshots ORDER BY seq_no DESC LIMIT 1")
+            .fetch_optional(&self.pg_pool)
+            .await?;
 
-        let snapshot =
-            latest_persisted_snapshot.map(|e| (SnapshotID::from(e.id), SeqNo::from(e.seq_no)));
+        let snapshot = latest_persisted_snapshot.map(|e| (SnapshotID::from(e.id), SeqNo::from(e.seq_no)));
 
         let pg_pool = self.pg_pool.clone();
-        let mut last_id = snapshot
-            .clone()
-            .map(|(_, seq_no)| seq_no)
-            .unwrap_or(SeqNo::zero());
+        let mut last_id = snapshot.clone().map(|(_, seq_no)| seq_no).unwrap_or(SeqNo::zero());
         let stream = stream! {
             loop {
                 let new_entries = sqlx::query_as!(
@@ -922,10 +865,7 @@ impl MetadataStoreTrait for PostgresMetadataStore {
         Ok((snapshot.map(|(id, _)| id), Box::pin(stream)))
     }
 
-    async fn get_changelog(
-        &self,
-        from_seq_no: SeqNo,
-    ) -> Result<Vec<ChangelogEntryWithID>, MetadataError> {
+    async fn get_changelog(&self, from_seq_no: SeqNo) -> Result<Vec<ChangelogEntryWithID>, MetadataError> {
         let entries = sqlx::query_as!(
             ChangelogEntryWithID,
             "SELECT * FROM changelog WHERE id > $1 ORDER BY id ASC",
@@ -937,10 +877,7 @@ impl MetadataStoreTrait for PostgresMetadataStore {
         Ok(entries)
     }
 
-    async fn append_wal(
-        &self,
-        run_ids_with_stats: Vec<(RunId, Stats)>,
-    ) -> Result<SeqNo, MetadataError> {
+    async fn append_wal(&self, run_ids_with_stats: Vec<(RunId, Stats)>) -> Result<SeqNo, MetadataError> {
         loop {
             match self.append_wal_attempt(&run_ids_with_stats).await {
                 Ok(seq_no) => return Ok(seq_no), // Success! Exit function.
@@ -1015,10 +952,7 @@ impl MetadataStoreTrait for PostgresMetadataStore {
         }
     }
 
-    async fn get_run_metadata_batch(
-        &self,
-        run_ids: Vec<RunId>,
-    ) -> Result<HashMap<RunId, RunMetadata>, MetadataError> {
+    async fn get_run_metadata_batch(&self, run_ids: Vec<RunId>) -> Result<HashMap<RunId, RunMetadata>, MetadataError> {
         let run_ids_strings: Vec<String> = run_ids.iter().map(|id| id.to_string()).collect();
         let rows = sqlx::query!(
             r#"
@@ -1033,10 +967,9 @@ impl MetadataStoreTrait for PostgresMetadataStore {
         let run_metadatas = rows
             .into_iter()
             .map(|row| {
-                let belongs_to: BelongsTo = serde_json::from_value(row.belongs_to)
-                    .map_err(MetadataError::JsonSerdeError)?;
-                let stats: Stats =
-                    serde_json::from_value(row.stats).map_err(MetadataError::JsonSerdeError)?;
+                let belongs_to: BelongsTo =
+                    serde_json::from_value(row.belongs_to).map_err(MetadataError::JsonSerdeError)?;
+                let stats: Stats = serde_json::from_value(row.stats).map_err(MetadataError::JsonSerdeError)?;
 
                 Ok(RunMetadata {
                     id: RunId(row.id),
@@ -1046,10 +979,7 @@ impl MetadataStoreTrait for PostgresMetadataStore {
             })
             .collect::<Result<Vec<RunMetadata>, MetadataError>>()?;
 
-        Ok(run_metadatas
-            .into_iter()
-            .map(|m| (m.id.clone(), m))
-            .collect())
+        Ok(run_metadatas.into_iter().map(|m| (m.id.clone(), m)).collect())
     }
 
     async fn schedule_job(&self, job_params: JobParams) -> Result<JobID, MetadataError> {
@@ -1103,8 +1033,7 @@ impl MetadataStoreTrait for PostgresMetadataStore {
         let status = match row.status.as_str() {
             "pending" => JobStatus::Pending,
             "completed" => {
-                let seq_no: SeqNo =
-                    serde_json::from_value(row.output).map_err(MetadataError::JsonSerdeError)?;
+                let seq_no: SeqNo = serde_json::from_value(row.output).map_err(MetadataError::JsonSerdeError)?;
                 JobStatus::Completed(seq_no)
             },
             "failed" => JobStatus::Failed,
@@ -1129,8 +1058,7 @@ impl MetadataStoreTrait for PostgresMetadataStore {
         .await?
         .into_iter()
         .map(|row| {
-            let job_params: JobParams =
-                serde_json::from_value(row.job).map_err(MetadataError::JsonSerdeError)?;
+            let job_params: JobParams = serde_json::from_value(row.job).map_err(MetadataError::JsonSerdeError)?;
             Ok((JobID::from(row.id), job_params))
         })
         .collect::<Result<Vec<(JobID, JobParams)>, MetadataError>>()?;
@@ -1143,8 +1071,7 @@ impl MetadataStoreTrait for PostgresMetadataStore {
             .fetch_one(&self.pg_pool)
             .await?;
 
-        let params: JobParams =
-            serde_json::from_value(row.job).map_err(MetadataError::JsonSerdeError)?;
+        let params: JobParams = serde_json::from_value(row.job).map_err(MetadataError::JsonSerdeError)?;
 
         Ok(params)
     }
@@ -1179,9 +1106,8 @@ impl MetadataStoreTrait for PostgresMetadataStore {
         match result {
             Ok(id) => {
                 let table_id = TableID::from(id);
-                let changelog_changes = serde_json::to_value(ChangelogEntry::TablesV1(
-                    TableChangelogEntryV1::TableCreated(table_id),
-                ))?;
+                let changelog_changes =
+                    serde_json::to_value(ChangelogEntry::TablesV1(TableChangelogEntryV1::TableCreated(table_id)))?;
 
                 let seq_no = sqlx::query_scalar!(
                     r#"
@@ -1315,8 +1241,10 @@ impl MetadataStoreTrait for PostgresMetadataStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::requires_docker;
-    use crate::test_utils::setup_test_db;
+    use crate::{
+        requires_docker,
+        test_utils::setup_test_db,
+    };
 
     #[tokio::test]
     async fn test_tables() {
@@ -1324,14 +1252,9 @@ mod tests {
         // Setup test database
         let (metadata_store, _container) = setup_test_db().await.unwrap();
 
-        let result = metadata_store
-            .get_table(TableName::from("test_table"))
-            .await;
+        let result = metadata_store.get_table(TableName::from("test_table")).await;
         assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            MetadataError::TableNotFound(_)
-        ));
+        assert!(matches!(result.unwrap_err(), MetadataError::TableNotFound(_)));
 
         // Create a table
         metadata_store
@@ -1352,10 +1275,7 @@ mod tests {
 
         // Verify that the second creation returns an error
         assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            MetadataError::TableAlreadyExists(_)
-        ));
+        assert!(matches!(result.unwrap_err(), MetadataError::TableAlreadyExists(_)));
     }
 
     #[tokio::test]
@@ -1365,10 +1285,7 @@ mod tests {
         let (metadata_store, _container) = setup_test_db().await.unwrap();
 
         // Schedule a WAL compaction job
-        metadata_store
-            .schedule_job(JobParams::WALCompaction)
-            .await
-            .unwrap();
+        metadata_store.schedule_job(JobParams::WALCompaction).await.unwrap();
 
         // Get pending jobs
         let pending_jobs = metadata_store.get_pending_jobs().await.unwrap();
@@ -1385,16 +1302,13 @@ mod tests {
             JobParams::TableBufferCompaction(_) => {
                 panic!("Expected WALCompaction job, got TableBufferCompaction");
             },
-            JobParams::TableTreeCompaction(_, _) => {
+            JobParams::TableTreeCompaction(..) => {
                 panic!("Expected WALCompaction job, got TableTreeCompaction");
             },
         }
 
         // Schedule another job - should not create a duplicate
-        metadata_store
-            .schedule_job(JobParams::WALCompaction)
-            .await
-            .unwrap();
+        metadata_store.schedule_job(JobParams::WALCompaction).await.unwrap();
 
         // Verify we still have only one job
         let pending_jobs_after_second_schedule = metadata_store.get_pending_jobs().await.unwrap();

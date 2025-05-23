@@ -7,8 +7,7 @@ use tonic_health::ServingStatus;
 pub mod proto {
     tonic::include_proto!("skyvault.v1");
 
-    pub const FILE_DESCRIPTOR_SET: &[u8] =
-        tonic::include_file_descriptor_set!("skyvault_descriptor");
+    pub const FILE_DESCRIPTOR_SET: &[u8] = tonic::include_file_descriptor_set!("skyvault_descriptor");
 }
 
 mod cache_service;
@@ -122,22 +121,14 @@ impl Builder {
             .add_service(reflection_service);
 
         if self.enable_writer {
-            let writer = writer_service::MyWriter::new(
-                self.metadata.clone(),
-                self.storage.clone(),
-                self.dynamic_config.clone(),
-            )
-            .await?;
+            let writer =
+                writer_service::MyWriter::new(self.metadata.clone(), self.storage.clone(), self.dynamic_config.clone())
+                    .await?;
             health_reporter
-                .set_service_status(
-                    proto::writer_service_server::SERVICE_NAME,
-                    ServingStatus::Serving,
-                )
+                .set_service_status(proto::writer_service_server::SERVICE_NAME, ServingStatus::Serving)
                 .await;
 
-            builder = builder.add_service(proto::writer_service_server::WriterServiceServer::new(
-                writer,
-            ));
+            builder = builder.add_service(proto::writer_service_server::WriterServiceServer::new(writer));
         }
 
         if self.enable_reader {
@@ -150,25 +141,16 @@ impl Builder {
             )
             .await?;
             health_reporter
-                .set_service_status(
-                    proto::reader_service_server::SERVICE_NAME,
-                    ServingStatus::Serving,
-                )
+                .set_service_status(proto::reader_service_server::SERVICE_NAME, ServingStatus::Serving)
                 .await;
 
             let cache = cache_service::MyCache::new(self.storage.clone()).await?;
             health_reporter
-                .set_service_status(
-                    proto::cache_service_server::SERVICE_NAME,
-                    ServingStatus::Serving,
-                )
+                .set_service_status(proto::cache_service_server::SERVICE_NAME, ServingStatus::Serving)
                 .await;
 
-            builder = builder.add_service(proto::reader_service_server::ReaderServiceServer::new(
-                reader,
-            ));
-            builder =
-                builder.add_service(proto::cache_service_server::CacheServiceServer::new(cache));
+            builder = builder.add_service(proto::reader_service_server::ReaderServiceServer::new(reader));
+            builder = builder.add_service(proto::cache_service_server::CacheServiceServer::new(cache));
         }
 
         if self.enable_orchestrator {
@@ -181,23 +163,19 @@ impl Builder {
             )
             .await?;
             health_reporter
-                .set_service_status(
-                    proto::orchestrator_service_server::SERVICE_NAME,
-                    ServingStatus::Serving,
-                )
+                .set_service_status(proto::orchestrator_service_server::SERVICE_NAME, ServingStatus::Serving)
                 .await;
 
-            builder = builder.add_service(
-                proto::orchestrator_service_server::OrchestratorServiceServer::new(orchestrator),
-            );
+            builder = builder.add_service(proto::orchestrator_service_server::OrchestratorServiceServer::new(
+                orchestrator,
+            ));
         }
 
         builder
             .add_service(health_service)
             .serve_with_shutdown(self.grpc_addr, async {
-                let mut terminate =
-                    tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-                        .expect("Failed to install SIGTERM handler");
+                let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                    .expect("Failed to install SIGTERM handler");
 
                 tokio::select! {
                     _ = tokio::signal::ctrl_c() => {

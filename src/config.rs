@@ -1,4 +1,7 @@
-use aws_sdk_s3::config::{Credentials, SharedCredentialsProvider};
+use aws_sdk_s3::config::{
+    Credentials,
+    SharedCredentialsProvider,
+};
 use clap::Parser;
 use kube::Client;
 
@@ -19,16 +22,11 @@ pub struct PostgresConfig {
 }
 
 impl PostgresConfig {
-    pub async fn to_url(
-        &self,
-        k8s_client: Client,
-        namespace: &str,
-    ) -> Result<String, anyhow::Error> {
+    pub async fn to_url(&self, k8s_client: Client, namespace: &str) -> Result<String, anyhow::Error> {
         const PASSWORD_SECRET_NAME: &str = "skyvault-postgres-password";
         const PASSWORD_KEY: &str = "POSTGRES_PASSWORD";
 
-        let password =
-            k8s::read_secret(k8s_client, namespace, PASSWORD_SECRET_NAME, PASSWORD_KEY).await?;
+        let password = k8s::read_secret(k8s_client, namespace, PASSWORD_SECRET_NAME, PASSWORD_KEY).await?;
         Ok(format!(
             "postgres://{}:{}@{}:{}/{}?sslmode={}",
             self.user, password, self.host, self.port, self.db_name, self.sslmode
@@ -52,20 +50,9 @@ impl S3Config {
         const AWS_ACCESS_KEY_ID_KEY: &str = "AWS_ACCESS_KEY_ID";
         const AWS_SECRET_ACCESS_KEY_KEY: &str = "AWS_SECRET_ACCESS_KEY";
 
-        let access_key = k8s::read_secret(
-            k8s_client.clone(),
-            namespace,
-            AWS_SECRET_NAME,
-            AWS_ACCESS_KEY_ID_KEY,
-        )
-        .await?;
-        let secret_key = k8s::read_secret(
-            k8s_client,
-            namespace,
-            AWS_SECRET_NAME,
-            AWS_SECRET_ACCESS_KEY_KEY,
-        )
-        .await?;
+        let access_key =
+            k8s::read_secret(k8s_client.clone(), namespace, AWS_SECRET_NAME, AWS_ACCESS_KEY_ID_KEY).await?;
+        let secret_key = k8s::read_secret(k8s_client, namespace, AWS_SECRET_NAME, AWS_SECRET_ACCESS_KEY_KEY).await?;
         let credentials = Credentials::new(access_key, secret_key, None, None, "k8s");
 
         let aws_config = aws_config::defaults(aws_config::BehaviorVersion::latest())

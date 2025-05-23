@@ -12,8 +12,8 @@ check:
 
     helm lint charts/skyvault
 
-    cd skycli && uv run ruff format .
-    cd skycli && uv run ruff check .
+    uv run ruff format skycli --exclude=skycli/skyvault/
+    uv run ruff check skycli --exclude=skycli/skyvault/
 
 build:
     cargo sqlx prepare

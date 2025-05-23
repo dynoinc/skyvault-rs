@@ -1,7 +1,14 @@
-use anyhow::{Context, Result as AnyhowResult, anyhow};
+use anyhow::{
+    Context,
+    Result as AnyhowResult,
+    anyhow,
+};
 use http::Request;
 use k8s_openapi::api::core::v1::Secret;
-use kube::{Api, Client};
+use kube::{
+    Api,
+    Client,
+};
 use tokio::fs;
 
 pub async fn get_namespace() -> std::result::Result<String, std::io::Error> {
@@ -20,12 +27,7 @@ pub async fn create_k8s_client() -> std::result::Result<Client, kube::Error> {
     Ok(client)
 }
 
-pub async fn read_secret(
-    client: Client,
-    namespace: &str,
-    secret_name: &str,
-    key: &str,
-) -> AnyhowResult<String> {
+pub async fn read_secret(client: Client, namespace: &str, secret_name: &str, key: &str) -> AnyhowResult<String> {
     let api: Api<Secret> = Api::namespaced(client, namespace);
     match api.get(secret_name).await {
         Ok(secret) => {
@@ -46,9 +48,8 @@ pub async fn read_secret(
                 )
             })?;
 
-            String::from_utf8(value_bytes.0.clone()).with_context(|| {
-                format!("Failed to decode key '{key}' from secret '{secret_name}'")
-            })
+            String::from_utf8(value_bytes.0.clone())
+                .with_context(|| format!("Failed to decode key '{key}' from secret '{secret_name}'"))
         },
         Err(e) => Err(anyhow!(
             "Failed to get secret '{}' in namespace '{}': {}",

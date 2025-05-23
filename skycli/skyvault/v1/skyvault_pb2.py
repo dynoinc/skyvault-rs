@@ -4,15 +4,18 @@
 # source: skyvault/v1/skyvault.proto
 # Protobuf Python Version: 6.31.0
 """Generated protocol buffer code."""
-
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import descriptor_pool as _descriptor_pool
 from google.protobuf import runtime_version as _runtime_version
 from google.protobuf import symbol_database as _symbol_database
 from google.protobuf.internal import builder as _builder
-
 _runtime_version.ValidateProtobufRuntimeVersion(
-    _runtime_version.Domain.PUBLIC, 6, 31, 0, "", "skyvault/v1/skyvault.proto"
+    _runtime_version.Domain.PUBLIC,
+    6,
+    31,
+    0,
+    '',
+    'skyvault/v1/skyvault.proto'
 )
 # @@protoc_insertion_point(imports)
 
@@ -22,125 +25,121 @@ _sym_db = _symbol_database.Default()
 from google.protobuf import empty_pb2 as google_dot_protobuf_dot_empty__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(
-    b'\n\x1askyvault/v1/skyvault.proto\x12\x0bskyvault.v1\x1a\x1bgoogle/protobuf/empty.proto"P\n\x11WriteBatchRequest\x12;\n\x06tables\x18\x01 \x03(\x0b\x32#.skyvault.v1.TableWriteBatchRequestR\x06tables"j\n\x16TableWriteBatchRequest\x12\x1d\n\ntable_name\x18\x01 \x01(\tR\ttableName\x12\x31\n\x05items\x18\x02 \x03(\x0b\x32\x1b.skyvault.v1.WriteBatchItemR\x05items"G\n\x0eWriteBatchItem\x12\x10\n\x03key\x18\x01 \x01(\tR\x03key\x12\x16\n\x05value\x18\x02 \x01(\x0cH\x00R\x05valueB\x0b\n\toperation"+\n\x12WriteBatchResponse\x12\x15\n\x06seq_no\x18\x01 \x01(\x03R\x05seqNo"@\n\x11GetFromRunRequest\x12\x17\n\x07run_ids\x18\x01 \x03(\tR\x06runIds\x12\x12\n\x04keys\x18\x02 \x03(\tR\x04keys"G\n\x12GetFromRunResponse\x12\x31\n\x05items\x18\x01 \x03(\x0b\x32\x1b.skyvault.v1.GetFromRunItemR\x05items"x\n\x0eGetFromRunItem\x12\x10\n\x03key\x18\x01 \x01(\tR\x03key\x12\x16\n\x05value\x18\x02 \x01(\x0cH\x00R\x05value\x12\x32\n\x07\x64\x65leted\x18\x03 \x01(\x0b\x32\x16.google.protobuf.EmptyH\x00R\x07\x64\x65letedB\x08\n\x06result"~\n\x12ScanFromRunRequest\x12\x17\n\x07run_ids\x18\x01 \x03(\tR\x06runIds\x12.\n\x13\x65xclusive_start_key\x18\x02 \x01(\tR\x11\x65xclusiveStartKey\x12\x1f\n\x0bmax_results\x18\x03 \x01(\x04R\nmaxResults"H\n\x13ScanFromRunResponse\x12\x31\n\x05items\x18\x01 \x03(\x0b\x32\x1b.skyvault.v1.GetFromRunItemR\x05items"c\n\x0fGetBatchRequest\x12\x15\n\x06seq_no\x18\x01 \x01(\x03R\x05seqNo\x12\x39\n\x06tables\x18\x02 \x03(\x0b\x32!.skyvault.v1.TableGetBatchRequestR\x06tables"I\n\x14TableGetBatchRequest\x12\x1d\n\ntable_name\x18\x01 \x01(\tR\ttableName\x12\x12\n\x04keys\x18\x02 \x03(\tR\x04keys"N\n\x10GetBatchResponse\x12:\n\x06tables\x18\x01 \x03(\x0b\x32".skyvault.v1.TableGetBatchResponseR\x06tables"g\n\x15TableGetBatchResponse\x12\x1d\n\ntable_name\x18\x01 \x01(\tR\ttableName\x12/\n\x05items\x18\x02 \x03(\x0b\x32\x19.skyvault.v1.GetBatchItemR\x05items"6\n\x0cGetBatchItem\x12\x10\n\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n\x05value\x18\x02 \x01(\x0cR\x05value"}\n\x0bScanRequest\x12\x1d\n\ntable_name\x18\x01 \x01(\tR\ttableName\x12.\n\x13\x65xclusive_start_key\x18\x02 \x01(\tR\x11\x65xclusiveStartKey\x12\x1f\n\x0bmax_results\x18\x03 \x01(\x04R\nmaxResults";\n\x0cScanResponse\x12+\n\x05items\x18\x01 \x03(\x0b\x32\x15.skyvault.v1.ScanItemR\x05items"2\n\x08ScanItem\x12\x10\n\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n\x05value\x18\x02 \x01(\x0cR\x05value"F\n\x13TableTreeCompaction\x12\x19\n\x08table_id\x18\x01 \x01(\x03R\x07tableId\x12\x14\n\x05level\x18\x02 \x01(\x04R\x05level"\xd5\x01\n\x11KickOffJobRequest\x12\'\n\x0ewal_compaction\x18\x01 \x01(\x08H\x00R\rwalCompaction\x12\x38\n\x17table_buffer_compaction\x18\x02 \x01(\x03H\x00R\x15tableBufferCompaction\x12V\n\x15table_tree_compaction\x18\x03 \x01(\x0b\x32 .skyvault.v1.TableTreeCompactionH\x00R\x13tableTreeCompactionB\x05\n\x03job"+\n\x12KickOffJobResponse\x12\x15\n\x06job_id\x18\x01 \x01(\x03R\x05jobId",\n\x13GetJobStatusRequest\x12\x15\n\x06job_id\x18\x01 \x01(\x03R\x05jobId"o\n\x14GetJobStatusResponse\x12\x1a\n\x07pending\x18\x01 \x01(\x08H\x00R\x07pending\x12\x17\n\x06seq_no\x18\x02 \x01(\x03H\x00R\x05seqNo\x12\x18\n\x06\x66\x61iled\x18\x03 \x01(\x08H\x00R\x06\x66\x61iledB\x08\n\x06status"\x15\n\x13\x44umpSnapshotRequest"I\n\x14\x44umpSnapshotResponse\x12\x31\n\x08snapshot\x18\x01 \x01(\x0b\x32\x15.skyvault.v1.SnapshotR\x08snapshot"\x8b\x02\n\x08Snapshot\x12\x15\n\x06seq_no\x18\x01 \x01(\x03R\x05seqNo\x12\x39\n\x06tables\x18\x02 \x03(\x0b\x32!.skyvault.v1.Snapshot.TablesEntryR\x06tables\x12*\n\x03wal\x18\x03 \x03(\x0b\x32\x18.skyvault.v1.RunMetadataR\x03wal\x12,\n\x05trees\x18\x04 \x03(\x0b\x32\x16.skyvault.v1.TableTreeR\x05trees\x1aS\n\x0bTablesEntry\x12\x10\n\x03key\x18\x01 \x01(\tR\x03key\x12.\n\x05value\x18\x02 \x01(\x0b\x32\x18.skyvault.v1.TableConfigR\x05value:\x02\x38\x01"\x89\x01\n\tTableTree\x12\x19\n\x08table_id\x18\x01 \x01(\x03R\x07tableId\x12\x30\n\x06\x62uffer\x18\x02 \x03(\x0b\x32\x18.skyvault.v1.RunMetadataR\x06\x62uffer\x12/\n\x06levels\x18\x03 \x03(\x0b\x32\x17.skyvault.v1.TableLevelR\x06levels"P\n\nTableLevel\x12\x14\n\x05level\x18\x01 \x01(\x04R\x05level\x12,\n\x04runs\x18\x02 \x03(\x0b\x32\x18.skyvault.v1.RunMetadataR\x04runs"6\n\x14\x44umpChangelogRequest\x12\x1e\n\x0b\x66rom_seq_no\x18\x01 \x01(\x03R\tfromSeqNo"T\n\x15\x44umpChangelogResponse\x12;\n\x07\x65ntries\x18\x01 \x03(\x0b\x32!.skyvault.v1.ChangelogEntryWithIDR\x07\x65ntries"\xea\x01\n\x14\x43hangelogEntryWithID\x12\x0e\n\x02id\x18\x01 \x01(\x03R\x02id\x12Z\n\x17runs_changelog_entry_v1\x18\x02 \x01(\x0b\x32!.skyvault.v1.RunsChangelogEntryV1H\x00R\x14runsChangelogEntryV1\x12]\n\x18table_changelog_entry_v1\x18\x03 \x01(\x0b\x32".skyvault.v1.TableChangelogEntryV1H\x00R\x15tableChangelogEntryV1B\x07\n\x05\x65ntry"X\n\x14RunsChangelogEntryV1\x12\x1d\n\nruns_added\x18\x01 \x03(\tR\trunsAdded\x12!\n\x0cruns_removed\x18\x02 \x03(\tR\x0brunsRemoved"\xa4\x01\n\x15TableChangelogEntryV1\x12@\n\rtable_created\x18\x01 \x01(\x0b\x32\x19.skyvault.v1.TableCreatedH\x00R\x0ctableCreated\x12@\n\rtable_dropped\x18\x02 \x01(\x0b\x32\x19.skyvault.v1.TableDroppedH\x00R\x0ctableDroppedB\x07\n\x05\x65ntry")\n\x0cTableCreated\x12\x19\n\x08table_id\x18\x01 \x01(\x03R\x07tableId")\n\x0cTableDropped\x12\x19\n\x08table_id\x18\x01 \x01(\x03R\x07tableId"\x85\x02\n\x0bRunMetadata\x12\x0e\n\x02id\x18\x01 \x01(\tR\x02id\x12\x1e\n\nwal_seq_no\x18\x02 \x01(\x03H\x00R\x08walSeqNo\x12=\n\x0ctable_buffer\x18\x03 \x01(\x0b\x32\x18.skyvault.v1.TableBufferH\x00R\x0btableBuffer\x12<\n\ntable_tree\x18\x04 \x01(\x0b\x32\x1b.skyvault.v1.TableTreeLevelH\x00R\ttableTree\x12\x32\n\x08stats_v1\x18\xe9\x07 \x01(\x0b\x32\x14.skyvault.v1.StatsV1H\x01R\x07statsV1B\x0c\n\nbelongs_toB\x07\n\x05stats"?\n\x0bTableBuffer\x12\x19\n\x08table_id\x18\x01 \x01(\x03R\x07tableId\x12\x15\n\x06seq_no\x18\x02 \x01(\x03R\x05seqNo"A\n\x0eTableTreeLevel\x12\x19\n\x08table_id\x18\x01 \x01(\x03R\x07tableId\x12\x14\n\x05level\x18\x02 \x01(\x04R\x05level"\x9a\x01\n\x07StatsV1\x12\x17\n\x07min_key\x18\x01 \x01(\tR\x06minKey\x12\x17\n\x07max_key\x18\x02 \x01(\tR\x06maxKey\x12\x1d\n\nsize_bytes\x18\x03 \x01(\x04R\tsizeBytes\x12\x1b\n\tput_count\x18\x04 \x01(\x04R\x08putCount\x12!\n\x0c\x64\x65lete_count\x18\x05 \x01(\x04R\x0b\x64\x65leteCount"\x18\n\x16PersistSnapshotRequest"Q\n\x17PersistSnapshotResponse\x12\x1f\n\x0bsnapshot_id\x18\x01 \x01(\tR\nsnapshotId\x12\x15\n\x06seq_no\x18\x02 \x01(\x03R\x05seqNo"F\n\x12\x43reateTableRequest\x12\x30\n\x06\x63onfig\x18\x01 \x01(\x0b\x32\x18.skyvault.v1.TableConfigR\x06\x63onfig",\n\x13\x43reateTableResponse\x12\x15\n\x06seq_no\x18\x01 \x01(\x03R\x05seqNo"\x13\n\x11ListTablesRequest"F\n\x12ListTablesResponse\x12\x30\n\x06tables\x18\x01 \x03(\x0b\x32\x18.skyvault.v1.TableConfigR\x06tables"1\n\x10\x44ropTableRequest\x12\x1d\n\ntable_name\x18\x01 \x01(\tR\ttableName"\x13\n\x11\x44ropTableResponse"0\n\x0fGetTableRequest\x12\x1d\n\ntable_name\x18\x01 \x01(\tR\ttableName"B\n\x10GetTableResponse\x12.\n\x05table\x18\x01 \x01(\x0b\x32\x18.skyvault.v1.TableConfigR\x05table"Y\n\x0bTableConfig\x12\x1e\n\x08table_id\x18\x01 \x01(\x03H\x00R\x07tableId\x88\x01\x01\x12\x1d\n\ntable_name\x18\x02 \x01(\tR\ttableNameB\x0b\n\t_table_id2^\n\rWriterService\x12M\n\nWriteBatch\x12\x1e.skyvault.v1.WriteBatchRequest\x1a\x1f.skyvault.v1.WriteBatchResponse2\xaf\x01\n\x0c\x43\x61\x63heService\x12M\n\nGetFromRun\x12\x1e.skyvault.v1.GetFromRunRequest\x1a\x1f.skyvault.v1.GetFromRunResponse\x12P\n\x0bScanFromRun\x12\x1f.skyvault.v1.ScanFromRunRequest\x1a .skyvault.v1.ScanFromRunResponse2\x95\x01\n\rReaderService\x12G\n\x08GetBatch\x12\x1c.skyvault.v1.GetBatchRequest\x1a\x1d.skyvault.v1.GetBatchResponse\x12;\n\x04Scan\x12\x18.skyvault.v1.ScanRequest\x1a\x19.skyvault.v1.ScanResponse2\xfa\x05\n\x13OrchestratorService\x12S\n\x0c\x44umpSnapshot\x12 .skyvault.v1.DumpSnapshotRequest\x1a!.skyvault.v1.DumpSnapshotResponse\x12V\n\rDumpChangelog\x12!.skyvault.v1.DumpChangelogRequest\x1a".skyvault.v1.DumpChangelogResponse\x12M\n\nKickOffJob\x12\x1e.skyvault.v1.KickOffJobRequest\x1a\x1f.skyvault.v1.KickOffJobResponse\x12S\n\x0cGetJobStatus\x12 .skyvault.v1.GetJobStatusRequest\x1a!.skyvault.v1.GetJobStatusResponse\x12P\n\x0b\x43reateTable\x12\x1f.skyvault.v1.CreateTableRequest\x1a .skyvault.v1.CreateTableResponse\x12M\n\nListTables\x12\x1e.skyvault.v1.ListTablesRequest\x1a\x1f.skyvault.v1.ListTablesResponse\x12J\n\tDropTable\x12\x1d.skyvault.v1.DropTableRequest\x1a\x1e.skyvault.v1.DropTableResponse\x12G\n\x08GetTable\x12\x1c.skyvault.v1.GetTableRequest\x1a\x1d.skyvault.v1.GetTableResponse\x12\\\n\x0fPersistSnapshot\x12#.skyvault.v1.PersistSnapshotRequest\x1a$.skyvault.v1.PersistSnapshotResponseb\x06proto3'
-)
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1askyvault/v1/skyvault.proto\x12\x0bskyvault.v1\x1a\x1bgoogle/protobuf/empty.proto\"P\n\x11WriteBatchRequest\x12;\n\x06tables\x18\x01 \x03(\x0b\x32#.skyvault.v1.TableWriteBatchRequestR\x06tables\"j\n\x16TableWriteBatchRequest\x12\x1d\n\ntable_name\x18\x01 \x01(\tR\ttableName\x12\x31\n\x05items\x18\x02 \x03(\x0b\x32\x1b.skyvault.v1.WriteBatchItemR\x05items\"G\n\x0eWriteBatchItem\x12\x10\n\x03key\x18\x01 \x01(\tR\x03key\x12\x16\n\x05value\x18\x02 \x01(\x0cH\x00R\x05valueB\x0b\n\toperation\"+\n\x12WriteBatchResponse\x12\x15\n\x06seq_no\x18\x01 \x01(\x03R\x05seqNo\"@\n\x11GetFromRunRequest\x12\x17\n\x07run_ids\x18\x01 \x03(\tR\x06runIds\x12\x12\n\x04keys\x18\x02 \x03(\tR\x04keys\"G\n\x12GetFromRunResponse\x12\x31\n\x05items\x18\x01 \x03(\x0b\x32\x1b.skyvault.v1.GetFromRunItemR\x05items\"x\n\x0eGetFromRunItem\x12\x10\n\x03key\x18\x01 \x01(\tR\x03key\x12\x16\n\x05value\x18\x02 \x01(\x0cH\x00R\x05value\x12\x32\n\x07\x64\x65leted\x18\x03 \x01(\x0b\x32\x16.google.protobuf.EmptyH\x00R\x07\x64\x65letedB\x08\n\x06result\"~\n\x12ScanFromRunRequest\x12\x17\n\x07run_ids\x18\x01 \x03(\tR\x06runIds\x12.\n\x13\x65xclusive_start_key\x18\x02 \x01(\tR\x11\x65xclusiveStartKey\x12\x1f\n\x0bmax_results\x18\x03 \x01(\x04R\nmaxResults\"H\n\x13ScanFromRunResponse\x12\x31\n\x05items\x18\x01 \x03(\x0b\x32\x1b.skyvault.v1.GetFromRunItemR\x05items\"c\n\x0fGetBatchRequest\x12\x15\n\x06seq_no\x18\x01 \x01(\x03R\x05seqNo\x12\x39\n\x06tables\x18\x02 \x03(\x0b\x32!.skyvault.v1.TableGetBatchRequestR\x06tables\"I\n\x14TableGetBatchRequest\x12\x1d\n\ntable_name\x18\x01 \x01(\tR\ttableName\x12\x12\n\x04keys\x18\x02 \x03(\tR\x04keys\"N\n\x10GetBatchResponse\x12:\n\x06tables\x18\x01 \x03(\x0b\x32\".skyvault.v1.TableGetBatchResponseR\x06tables\"g\n\x15TableGetBatchResponse\x12\x1d\n\ntable_name\x18\x01 \x01(\tR\ttableName\x12/\n\x05items\x18\x02 \x03(\x0b\x32\x19.skyvault.v1.GetBatchItemR\x05items\"6\n\x0cGetBatchItem\x12\x10\n\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n\x05value\x18\x02 \x01(\x0cR\x05value\"}\n\x0bScanRequest\x12\x1d\n\ntable_name\x18\x01 \x01(\tR\ttableName\x12.\n\x13\x65xclusive_start_key\x18\x02 \x01(\tR\x11\x65xclusiveStartKey\x12\x1f\n\x0bmax_results\x18\x03 \x01(\x04R\nmaxResults\";\n\x0cScanResponse\x12+\n\x05items\x18\x01 \x03(\x0b\x32\x15.skyvault.v1.ScanItemR\x05items\"2\n\x08ScanItem\x12\x10\n\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n\x05value\x18\x02 \x01(\x0cR\x05value\"F\n\x13TableTreeCompaction\x12\x19\n\x08table_id\x18\x01 \x01(\x03R\x07tableId\x12\x14\n\x05level\x18\x02 \x01(\x04R\x05level\"\xd5\x01\n\x11KickOffJobRequest\x12\'\n\x0ewal_compaction\x18\x01 \x01(\x08H\x00R\rwalCompaction\x12\x38\n\x17table_buffer_compaction\x18\x02 \x01(\x03H\x00R\x15tableBufferCompaction\x12V\n\x15table_tree_compaction\x18\x03 \x01(\x0b\x32 .skyvault.v1.TableTreeCompactionH\x00R\x13tableTreeCompactionB\x05\n\x03job\"+\n\x12KickOffJobResponse\x12\x15\n\x06job_id\x18\x01 \x01(\x03R\x05jobId\",\n\x13GetJobStatusRequest\x12\x15\n\x06job_id\x18\x01 \x01(\x03R\x05jobId\"o\n\x14GetJobStatusResponse\x12\x1a\n\x07pending\x18\x01 \x01(\x08H\x00R\x07pending\x12\x17\n\x06seq_no\x18\x02 \x01(\x03H\x00R\x05seqNo\x12\x18\n\x06\x66\x61iled\x18\x03 \x01(\x08H\x00R\x06\x66\x61iledB\x08\n\x06status\"\x15\n\x13\x44umpSnapshotRequest\"I\n\x14\x44umpSnapshotResponse\x12\x31\n\x08snapshot\x18\x01 \x01(\x0b\x32\x15.skyvault.v1.SnapshotR\x08snapshot\"\x8b\x02\n\x08Snapshot\x12\x15\n\x06seq_no\x18\x01 \x01(\x03R\x05seqNo\x12\x39\n\x06tables\x18\x02 \x03(\x0b\x32!.skyvault.v1.Snapshot.TablesEntryR\x06tables\x12*\n\x03wal\x18\x03 \x03(\x0b\x32\x18.skyvault.v1.RunMetadataR\x03wal\x12,\n\x05trees\x18\x04 \x03(\x0b\x32\x16.skyvault.v1.TableTreeR\x05trees\x1aS\n\x0bTablesEntry\x12\x10\n\x03key\x18\x01 \x01(\tR\x03key\x12.\n\x05value\x18\x02 \x01(\x0b\x32\x18.skyvault.v1.TableConfigR\x05value:\x02\x38\x01\"\x89\x01\n\tTableTree\x12\x19\n\x08table_id\x18\x01 \x01(\x03R\x07tableId\x12\x30\n\x06\x62uffer\x18\x02 \x03(\x0b\x32\x18.skyvault.v1.RunMetadataR\x06\x62uffer\x12/\n\x06levels\x18\x03 \x03(\x0b\x32\x17.skyvault.v1.TableLevelR\x06levels\"P\n\nTableLevel\x12\x14\n\x05level\x18\x01 \x01(\x04R\x05level\x12,\n\x04runs\x18\x02 \x03(\x0b\x32\x18.skyvault.v1.RunMetadataR\x04runs\"6\n\x14\x44umpChangelogRequest\x12\x1e\n\x0b\x66rom_seq_no\x18\x01 \x01(\x03R\tfromSeqNo\"T\n\x15\x44umpChangelogResponse\x12;\n\x07\x65ntries\x18\x01 \x03(\x0b\x32!.skyvault.v1.ChangelogEntryWithIDR\x07\x65ntries\"\xea\x01\n\x14\x43hangelogEntryWithID\x12\x0e\n\x02id\x18\x01 \x01(\x03R\x02id\x12Z\n\x17runs_changelog_entry_v1\x18\x02 \x01(\x0b\x32!.skyvault.v1.RunsChangelogEntryV1H\x00R\x14runsChangelogEntryV1\x12]\n\x18table_changelog_entry_v1\x18\x03 \x01(\x0b\x32\".skyvault.v1.TableChangelogEntryV1H\x00R\x15tableChangelogEntryV1B\x07\n\x05\x65ntry\"X\n\x14RunsChangelogEntryV1\x12\x1d\n\nruns_added\x18\x01 \x03(\tR\trunsAdded\x12!\n\x0cruns_removed\x18\x02 \x03(\tR\x0brunsRemoved\"\xa4\x01\n\x15TableChangelogEntryV1\x12@\n\rtable_created\x18\x01 \x01(\x0b\x32\x19.skyvault.v1.TableCreatedH\x00R\x0ctableCreated\x12@\n\rtable_dropped\x18\x02 \x01(\x0b\x32\x19.skyvault.v1.TableDroppedH\x00R\x0ctableDroppedB\x07\n\x05\x65ntry\")\n\x0cTableCreated\x12\x19\n\x08table_id\x18\x01 \x01(\x03R\x07tableId\")\n\x0cTableDropped\x12\x19\n\x08table_id\x18\x01 \x01(\x03R\x07tableId\"\x85\x02\n\x0bRunMetadata\x12\x0e\n\x02id\x18\x01 \x01(\tR\x02id\x12\x1e\n\nwal_seq_no\x18\x02 \x01(\x03H\x00R\x08walSeqNo\x12=\n\x0ctable_buffer\x18\x03 \x01(\x0b\x32\x18.skyvault.v1.TableBufferH\x00R\x0btableBuffer\x12<\n\ntable_tree\x18\x04 \x01(\x0b\x32\x1b.skyvault.v1.TableTreeLevelH\x00R\ttableTree\x12\x32\n\x08stats_v1\x18\xe9\x07 \x01(\x0b\x32\x14.skyvault.v1.StatsV1H\x01R\x07statsV1B\x0c\n\nbelongs_toB\x07\n\x05stats\"?\n\x0bTableBuffer\x12\x19\n\x08table_id\x18\x01 \x01(\x03R\x07tableId\x12\x15\n\x06seq_no\x18\x02 \x01(\x03R\x05seqNo\"A\n\x0eTableTreeLevel\x12\x19\n\x08table_id\x18\x01 \x01(\x03R\x07tableId\x12\x14\n\x05level\x18\x02 \x01(\x04R\x05level\"\x9a\x01\n\x07StatsV1\x12\x17\n\x07min_key\x18\x01 \x01(\tR\x06minKey\x12\x17\n\x07max_key\x18\x02 \x01(\tR\x06maxKey\x12\x1d\n\nsize_bytes\x18\x03 \x01(\x04R\tsizeBytes\x12\x1b\n\tput_count\x18\x04 \x01(\x04R\x08putCount\x12!\n\x0c\x64\x65lete_count\x18\x05 \x01(\x04R\x0b\x64\x65leteCount\"\x18\n\x16PersistSnapshotRequest\"Q\n\x17PersistSnapshotResponse\x12\x1f\n\x0bsnapshot_id\x18\x01 \x01(\tR\nsnapshotId\x12\x15\n\x06seq_no\x18\x02 \x01(\x03R\x05seqNo\"F\n\x12\x43reateTableRequest\x12\x30\n\x06\x63onfig\x18\x01 \x01(\x0b\x32\x18.skyvault.v1.TableConfigR\x06\x63onfig\",\n\x13\x43reateTableResponse\x12\x15\n\x06seq_no\x18\x01 \x01(\x03R\x05seqNo\"\x13\n\x11ListTablesRequest\"F\n\x12ListTablesResponse\x12\x30\n\x06tables\x18\x01 \x03(\x0b\x32\x18.skyvault.v1.TableConfigR\x06tables\"1\n\x10\x44ropTableRequest\x12\x1d\n\ntable_name\x18\x01 \x01(\tR\ttableName\"\x13\n\x11\x44ropTableResponse\"0\n\x0fGetTableRequest\x12\x1d\n\ntable_name\x18\x01 \x01(\tR\ttableName\"B\n\x10GetTableResponse\x12.\n\x05table\x18\x01 \x01(\x0b\x32\x18.skyvault.v1.TableConfigR\x05table\"Y\n\x0bTableConfig\x12\x1e\n\x08table_id\x18\x01 \x01(\x03H\x00R\x07tableId\x88\x01\x01\x12\x1d\n\ntable_name\x18\x02 \x01(\tR\ttableNameB\x0b\n\t_table_id2^\n\rWriterService\x12M\n\nWriteBatch\x12\x1e.skyvault.v1.WriteBatchRequest\x1a\x1f.skyvault.v1.WriteBatchResponse2\xaf\x01\n\x0c\x43\x61\x63heService\x12M\n\nGetFromRun\x12\x1e.skyvault.v1.GetFromRunRequest\x1a\x1f.skyvault.v1.GetFromRunResponse\x12P\n\x0bScanFromRun\x12\x1f.skyvault.v1.ScanFromRunRequest\x1a .skyvault.v1.ScanFromRunResponse2\x95\x01\n\rReaderService\x12G\n\x08GetBatch\x12\x1c.skyvault.v1.GetBatchRequest\x1a\x1d.skyvault.v1.GetBatchResponse\x12;\n\x04Scan\x12\x18.skyvault.v1.ScanRequest\x1a\x19.skyvault.v1.ScanResponse2\xfa\x05\n\x13OrchestratorService\x12S\n\x0c\x44umpSnapshot\x12 .skyvault.v1.DumpSnapshotRequest\x1a!.skyvault.v1.DumpSnapshotResponse\x12V\n\rDumpChangelog\x12!.skyvault.v1.DumpChangelogRequest\x1a\".skyvault.v1.DumpChangelogResponse\x12M\n\nKickOffJob\x12\x1e.skyvault.v1.KickOffJobRequest\x1a\x1f.skyvault.v1.KickOffJobResponse\x12S\n\x0cGetJobStatus\x12 .skyvault.v1.GetJobStatusRequest\x1a!.skyvault.v1.GetJobStatusResponse\x12P\n\x0b\x43reateTable\x12\x1f.skyvault.v1.CreateTableRequest\x1a .skyvault.v1.CreateTableResponse\x12M\n\nListTables\x12\x1e.skyvault.v1.ListTablesRequest\x1a\x1f.skyvault.v1.ListTablesResponse\x12J\n\tDropTable\x12\x1d.skyvault.v1.DropTableRequest\x1a\x1e.skyvault.v1.DropTableResponse\x12G\n\x08GetTable\x12\x1c.skyvault.v1.GetTableRequest\x1a\x1d.skyvault.v1.GetTableResponse\x12\\\n\x0fPersistSnapshot\x12#.skyvault.v1.PersistSnapshotRequest\x1a$.skyvault.v1.PersistSnapshotResponseb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
-_builder.BuildTopDescriptorsAndMessages(
-    DESCRIPTOR, "skyvault.v1.skyvault_pb2", _globals
-)
+_builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'skyvault.v1.skyvault_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
-    DESCRIPTOR._loaded_options = None
-    _globals["_SNAPSHOT_TABLESENTRY"]._loaded_options = None
-    _globals["_SNAPSHOT_TABLESENTRY"]._serialized_options = b"8\001"
-    _globals["_WRITEBATCHREQUEST"]._serialized_start = 72
-    _globals["_WRITEBATCHREQUEST"]._serialized_end = 152
-    _globals["_TABLEWRITEBATCHREQUEST"]._serialized_start = 154
-    _globals["_TABLEWRITEBATCHREQUEST"]._serialized_end = 260
-    _globals["_WRITEBATCHITEM"]._serialized_start = 262
-    _globals["_WRITEBATCHITEM"]._serialized_end = 333
-    _globals["_WRITEBATCHRESPONSE"]._serialized_start = 335
-    _globals["_WRITEBATCHRESPONSE"]._serialized_end = 378
-    _globals["_GETFROMRUNREQUEST"]._serialized_start = 380
-    _globals["_GETFROMRUNREQUEST"]._serialized_end = 444
-    _globals["_GETFROMRUNRESPONSE"]._serialized_start = 446
-    _globals["_GETFROMRUNRESPONSE"]._serialized_end = 517
-    _globals["_GETFROMRUNITEM"]._serialized_start = 519
-    _globals["_GETFROMRUNITEM"]._serialized_end = 639
-    _globals["_SCANFROMRUNREQUEST"]._serialized_start = 641
-    _globals["_SCANFROMRUNREQUEST"]._serialized_end = 767
-    _globals["_SCANFROMRUNRESPONSE"]._serialized_start = 769
-    _globals["_SCANFROMRUNRESPONSE"]._serialized_end = 841
-    _globals["_GETBATCHREQUEST"]._serialized_start = 843
-    _globals["_GETBATCHREQUEST"]._serialized_end = 942
-    _globals["_TABLEGETBATCHREQUEST"]._serialized_start = 944
-    _globals["_TABLEGETBATCHREQUEST"]._serialized_end = 1017
-    _globals["_GETBATCHRESPONSE"]._serialized_start = 1019
-    _globals["_GETBATCHRESPONSE"]._serialized_end = 1097
-    _globals["_TABLEGETBATCHRESPONSE"]._serialized_start = 1099
-    _globals["_TABLEGETBATCHRESPONSE"]._serialized_end = 1202
-    _globals["_GETBATCHITEM"]._serialized_start = 1204
-    _globals["_GETBATCHITEM"]._serialized_end = 1258
-    _globals["_SCANREQUEST"]._serialized_start = 1260
-    _globals["_SCANREQUEST"]._serialized_end = 1385
-    _globals["_SCANRESPONSE"]._serialized_start = 1387
-    _globals["_SCANRESPONSE"]._serialized_end = 1446
-    _globals["_SCANITEM"]._serialized_start = 1448
-    _globals["_SCANITEM"]._serialized_end = 1498
-    _globals["_TABLETREECOMPACTION"]._serialized_start = 1500
-    _globals["_TABLETREECOMPACTION"]._serialized_end = 1570
-    _globals["_KICKOFFJOBREQUEST"]._serialized_start = 1573
-    _globals["_KICKOFFJOBREQUEST"]._serialized_end = 1786
-    _globals["_KICKOFFJOBRESPONSE"]._serialized_start = 1788
-    _globals["_KICKOFFJOBRESPONSE"]._serialized_end = 1831
-    _globals["_GETJOBSTATUSREQUEST"]._serialized_start = 1833
-    _globals["_GETJOBSTATUSREQUEST"]._serialized_end = 1877
-    _globals["_GETJOBSTATUSRESPONSE"]._serialized_start = 1879
-    _globals["_GETJOBSTATUSRESPONSE"]._serialized_end = 1990
-    _globals["_DUMPSNAPSHOTREQUEST"]._serialized_start = 1992
-    _globals["_DUMPSNAPSHOTREQUEST"]._serialized_end = 2013
-    _globals["_DUMPSNAPSHOTRESPONSE"]._serialized_start = 2015
-    _globals["_DUMPSNAPSHOTRESPONSE"]._serialized_end = 2088
-    _globals["_SNAPSHOT"]._serialized_start = 2091
-    _globals["_SNAPSHOT"]._serialized_end = 2358
-    _globals["_SNAPSHOT_TABLESENTRY"]._serialized_start = 2275
-    _globals["_SNAPSHOT_TABLESENTRY"]._serialized_end = 2358
-    _globals["_TABLETREE"]._serialized_start = 2361
-    _globals["_TABLETREE"]._serialized_end = 2498
-    _globals["_TABLELEVEL"]._serialized_start = 2500
-    _globals["_TABLELEVEL"]._serialized_end = 2580
-    _globals["_DUMPCHANGELOGREQUEST"]._serialized_start = 2582
-    _globals["_DUMPCHANGELOGREQUEST"]._serialized_end = 2636
-    _globals["_DUMPCHANGELOGRESPONSE"]._serialized_start = 2638
-    _globals["_DUMPCHANGELOGRESPONSE"]._serialized_end = 2722
-    _globals["_CHANGELOGENTRYWITHID"]._serialized_start = 2725
-    _globals["_CHANGELOGENTRYWITHID"]._serialized_end = 2959
-    _globals["_RUNSCHANGELOGENTRYV1"]._serialized_start = 2961
-    _globals["_RUNSCHANGELOGENTRYV1"]._serialized_end = 3049
-    _globals["_TABLECHANGELOGENTRYV1"]._serialized_start = 3052
-    _globals["_TABLECHANGELOGENTRYV1"]._serialized_end = 3216
-    _globals["_TABLECREATED"]._serialized_start = 3218
-    _globals["_TABLECREATED"]._serialized_end = 3259
-    _globals["_TABLEDROPPED"]._serialized_start = 3261
-    _globals["_TABLEDROPPED"]._serialized_end = 3302
-    _globals["_RUNMETADATA"]._serialized_start = 3305
-    _globals["_RUNMETADATA"]._serialized_end = 3566
-    _globals["_TABLEBUFFER"]._serialized_start = 3568
-    _globals["_TABLEBUFFER"]._serialized_end = 3631
-    _globals["_TABLETREELEVEL"]._serialized_start = 3633
-    _globals["_TABLETREELEVEL"]._serialized_end = 3698
-    _globals["_STATSV1"]._serialized_start = 3701
-    _globals["_STATSV1"]._serialized_end = 3855
-    _globals["_PERSISTSNAPSHOTREQUEST"]._serialized_start = 3857
-    _globals["_PERSISTSNAPSHOTREQUEST"]._serialized_end = 3881
-    _globals["_PERSISTSNAPSHOTRESPONSE"]._serialized_start = 3883
-    _globals["_PERSISTSNAPSHOTRESPONSE"]._serialized_end = 3964
-    _globals["_CREATETABLEREQUEST"]._serialized_start = 3966
-    _globals["_CREATETABLEREQUEST"]._serialized_end = 4036
-    _globals["_CREATETABLERESPONSE"]._serialized_start = 4038
-    _globals["_CREATETABLERESPONSE"]._serialized_end = 4082
-    _globals["_LISTTABLESREQUEST"]._serialized_start = 4084
-    _globals["_LISTTABLESREQUEST"]._serialized_end = 4103
-    _globals["_LISTTABLESRESPONSE"]._serialized_start = 4105
-    _globals["_LISTTABLESRESPONSE"]._serialized_end = 4175
-    _globals["_DROPTABLEREQUEST"]._serialized_start = 4177
-    _globals["_DROPTABLEREQUEST"]._serialized_end = 4226
-    _globals["_DROPTABLERESPONSE"]._serialized_start = 4228
-    _globals["_DROPTABLERESPONSE"]._serialized_end = 4247
-    _globals["_GETTABLEREQUEST"]._serialized_start = 4249
-    _globals["_GETTABLEREQUEST"]._serialized_end = 4297
-    _globals["_GETTABLERESPONSE"]._serialized_start = 4299
-    _globals["_GETTABLERESPONSE"]._serialized_end = 4365
-    _globals["_TABLECONFIG"]._serialized_start = 4367
-    _globals["_TABLECONFIG"]._serialized_end = 4456
-    _globals["_WRITERSERVICE"]._serialized_start = 4458
-    _globals["_WRITERSERVICE"]._serialized_end = 4552
-    _globals["_CACHESERVICE"]._serialized_start = 4555
-    _globals["_CACHESERVICE"]._serialized_end = 4730
-    _globals["_READERSERVICE"]._serialized_start = 4733
-    _globals["_READERSERVICE"]._serialized_end = 4882
-    _globals["_ORCHESTRATORSERVICE"]._serialized_start = 4885
-    _globals["_ORCHESTRATORSERVICE"]._serialized_end = 5647
+  DESCRIPTOR._loaded_options = None
+  _globals['_SNAPSHOT_TABLESENTRY']._loaded_options = None
+  _globals['_SNAPSHOT_TABLESENTRY']._serialized_options = b'8\001'
+  _globals['_WRITEBATCHREQUEST']._serialized_start=72
+  _globals['_WRITEBATCHREQUEST']._serialized_end=152
+  _globals['_TABLEWRITEBATCHREQUEST']._serialized_start=154
+  _globals['_TABLEWRITEBATCHREQUEST']._serialized_end=260
+  _globals['_WRITEBATCHITEM']._serialized_start=262
+  _globals['_WRITEBATCHITEM']._serialized_end=333
+  _globals['_WRITEBATCHRESPONSE']._serialized_start=335
+  _globals['_WRITEBATCHRESPONSE']._serialized_end=378
+  _globals['_GETFROMRUNREQUEST']._serialized_start=380
+  _globals['_GETFROMRUNREQUEST']._serialized_end=444
+  _globals['_GETFROMRUNRESPONSE']._serialized_start=446
+  _globals['_GETFROMRUNRESPONSE']._serialized_end=517
+  _globals['_GETFROMRUNITEM']._serialized_start=519
+  _globals['_GETFROMRUNITEM']._serialized_end=639
+  _globals['_SCANFROMRUNREQUEST']._serialized_start=641
+  _globals['_SCANFROMRUNREQUEST']._serialized_end=767
+  _globals['_SCANFROMRUNRESPONSE']._serialized_start=769
+  _globals['_SCANFROMRUNRESPONSE']._serialized_end=841
+  _globals['_GETBATCHREQUEST']._serialized_start=843
+  _globals['_GETBATCHREQUEST']._serialized_end=942
+  _globals['_TABLEGETBATCHREQUEST']._serialized_start=944
+  _globals['_TABLEGETBATCHREQUEST']._serialized_end=1017
+  _globals['_GETBATCHRESPONSE']._serialized_start=1019
+  _globals['_GETBATCHRESPONSE']._serialized_end=1097
+  _globals['_TABLEGETBATCHRESPONSE']._serialized_start=1099
+  _globals['_TABLEGETBATCHRESPONSE']._serialized_end=1202
+  _globals['_GETBATCHITEM']._serialized_start=1204
+  _globals['_GETBATCHITEM']._serialized_end=1258
+  _globals['_SCANREQUEST']._serialized_start=1260
+  _globals['_SCANREQUEST']._serialized_end=1385
+  _globals['_SCANRESPONSE']._serialized_start=1387
+  _globals['_SCANRESPONSE']._serialized_end=1446
+  _globals['_SCANITEM']._serialized_start=1448
+  _globals['_SCANITEM']._serialized_end=1498
+  _globals['_TABLETREECOMPACTION']._serialized_start=1500
+  _globals['_TABLETREECOMPACTION']._serialized_end=1570
+  _globals['_KICKOFFJOBREQUEST']._serialized_start=1573
+  _globals['_KICKOFFJOBREQUEST']._serialized_end=1786
+  _globals['_KICKOFFJOBRESPONSE']._serialized_start=1788
+  _globals['_KICKOFFJOBRESPONSE']._serialized_end=1831
+  _globals['_GETJOBSTATUSREQUEST']._serialized_start=1833
+  _globals['_GETJOBSTATUSREQUEST']._serialized_end=1877
+  _globals['_GETJOBSTATUSRESPONSE']._serialized_start=1879
+  _globals['_GETJOBSTATUSRESPONSE']._serialized_end=1990
+  _globals['_DUMPSNAPSHOTREQUEST']._serialized_start=1992
+  _globals['_DUMPSNAPSHOTREQUEST']._serialized_end=2013
+  _globals['_DUMPSNAPSHOTRESPONSE']._serialized_start=2015
+  _globals['_DUMPSNAPSHOTRESPONSE']._serialized_end=2088
+  _globals['_SNAPSHOT']._serialized_start=2091
+  _globals['_SNAPSHOT']._serialized_end=2358
+  _globals['_SNAPSHOT_TABLESENTRY']._serialized_start=2275
+  _globals['_SNAPSHOT_TABLESENTRY']._serialized_end=2358
+  _globals['_TABLETREE']._serialized_start=2361
+  _globals['_TABLETREE']._serialized_end=2498
+  _globals['_TABLELEVEL']._serialized_start=2500
+  _globals['_TABLELEVEL']._serialized_end=2580
+  _globals['_DUMPCHANGELOGREQUEST']._serialized_start=2582
+  _globals['_DUMPCHANGELOGREQUEST']._serialized_end=2636
+  _globals['_DUMPCHANGELOGRESPONSE']._serialized_start=2638
+  _globals['_DUMPCHANGELOGRESPONSE']._serialized_end=2722
+  _globals['_CHANGELOGENTRYWITHID']._serialized_start=2725
+  _globals['_CHANGELOGENTRYWITHID']._serialized_end=2959
+  _globals['_RUNSCHANGELOGENTRYV1']._serialized_start=2961
+  _globals['_RUNSCHANGELOGENTRYV1']._serialized_end=3049
+  _globals['_TABLECHANGELOGENTRYV1']._serialized_start=3052
+  _globals['_TABLECHANGELOGENTRYV1']._serialized_end=3216
+  _globals['_TABLECREATED']._serialized_start=3218
+  _globals['_TABLECREATED']._serialized_end=3259
+  _globals['_TABLEDROPPED']._serialized_start=3261
+  _globals['_TABLEDROPPED']._serialized_end=3302
+  _globals['_RUNMETADATA']._serialized_start=3305
+  _globals['_RUNMETADATA']._serialized_end=3566
+  _globals['_TABLEBUFFER']._serialized_start=3568
+  _globals['_TABLEBUFFER']._serialized_end=3631
+  _globals['_TABLETREELEVEL']._serialized_start=3633
+  _globals['_TABLETREELEVEL']._serialized_end=3698
+  _globals['_STATSV1']._serialized_start=3701
+  _globals['_STATSV1']._serialized_end=3855
+  _globals['_PERSISTSNAPSHOTREQUEST']._serialized_start=3857
+  _globals['_PERSISTSNAPSHOTREQUEST']._serialized_end=3881
+  _globals['_PERSISTSNAPSHOTRESPONSE']._serialized_start=3883
+  _globals['_PERSISTSNAPSHOTRESPONSE']._serialized_end=3964
+  _globals['_CREATETABLEREQUEST']._serialized_start=3966
+  _globals['_CREATETABLEREQUEST']._serialized_end=4036
+  _globals['_CREATETABLERESPONSE']._serialized_start=4038
+  _globals['_CREATETABLERESPONSE']._serialized_end=4082
+  _globals['_LISTTABLESREQUEST']._serialized_start=4084
+  _globals['_LISTTABLESREQUEST']._serialized_end=4103
+  _globals['_LISTTABLESRESPONSE']._serialized_start=4105
+  _globals['_LISTTABLESRESPONSE']._serialized_end=4175
+  _globals['_DROPTABLEREQUEST']._serialized_start=4177
+  _globals['_DROPTABLEREQUEST']._serialized_end=4226
+  _globals['_DROPTABLERESPONSE']._serialized_start=4228
+  _globals['_DROPTABLERESPONSE']._serialized_end=4247
+  _globals['_GETTABLEREQUEST']._serialized_start=4249
+  _globals['_GETTABLEREQUEST']._serialized_end=4297
+  _globals['_GETTABLERESPONSE']._serialized_start=4299
+  _globals['_GETTABLERESPONSE']._serialized_end=4365
+  _globals['_TABLECONFIG']._serialized_start=4367
+  _globals['_TABLECONFIG']._serialized_end=4456
+  _globals['_WRITERSERVICE']._serialized_start=4458
+  _globals['_WRITERSERVICE']._serialized_end=4552
+  _globals['_CACHESERVICE']._serialized_start=4555
+  _globals['_CACHESERVICE']._serialized_end=4730
+  _globals['_READERSERVICE']._serialized_start=4733
+  _globals['_READERSERVICE']._serialized_end=4882
+  _globals['_ORCHESTRATORSERVICE']._serialized_start=4885
+  _globals['_ORCHESTRATORSERVICE']._serialized_end=5647
 # @@protoc_insertion_point(module_scope)
