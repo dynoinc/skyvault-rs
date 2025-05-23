@@ -49,6 +49,9 @@ deployments:
     # Instance-specific environment variables
     env:
       RUST_LOG: "skyvault=debug"
+      SKYVAULT_ENABLE_WRITER: "true"
+      SKYVAULT_ENABLE_READER: "true"
+      SKYVAULT_ENABLE_ORCHESTRATOR: "true"
 
 # Service account configuration
 serviceAccount:

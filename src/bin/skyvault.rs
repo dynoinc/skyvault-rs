@@ -34,13 +34,13 @@ pub struct Config {
     #[clap(flatten)]
     pub s3: S3Config,
 
-    #[arg(long, env = "SKYVAULT_ENABLE_WRITER", default_value = "true")]
+    #[arg(long, env = "SKYVAULT_ENABLE_WRITER", default_value = "false")]
     pub enable_writer: bool,
 
-    #[arg(long, env = "SKYVAULT_ENABLE_READER", default_value = "true")]
+    #[arg(long, env = "SKYVAULT_ENABLE_READER", default_value = "false")]
     pub enable_reader: bool,
 
-    #[arg(long, env = "SKYVAULT_ENABLE_ORCHESTRATOR", default_value = "true")]
+    #[arg(long, env = "SKYVAULT_ENABLE_ORCHESTRATOR", default_value = "false")]
     pub enable_orchestrator: bool,
 
     #[arg(long, env = "SKYVAULT_METRICS_ADDR", value_parser = clap::value_parser!(SocketAddr), default_value = "0.0.0.0:9095")]
