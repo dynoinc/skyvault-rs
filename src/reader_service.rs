@@ -251,7 +251,7 @@ impl MyReader {
             .tables
             .get(&table_name)
             .and_then(|t| t.table_id)
-            .ok_or_else(|| Status::not_found("Table not found"))?;
+            .ok_or_else(|| Status::not_found(format!("Table not found: {table_name}")))?;
         let table_prefix_len = format!("{table_id}.").len();
 
         let mut responses = Vec::new();
@@ -380,7 +380,7 @@ impl MyReader {
             .tables
             .get(&table_name)
             .and_then(|t| t.table_id)
-            .ok_or_else(|| Status::not_found("Table not found"))?;
+            .ok_or_else(|| Status::not_found(format!("Table not found: {table_name}")))?;
         let table_prefix_len = format!("{table_id}.").len();
 
         let mut streams_to_merge = Vec::new();
@@ -635,7 +635,7 @@ mod tests {
 
     async fn create_test_forest(seq_no: SeqNo, tables: Vec<TableConfig>, runs: Vec<RunMetadata>) -> Forest {
         let tables = tables.into_iter().map(|t| (t.table_name.clone(), t)).collect();
-        let state = ForestState::from_raw(seq_no, tables, runs).await;
+        let state = ForestState::from_parts(seq_no, tables, runs).await;
 
         let mut mock_forest = MockForestTrait::new();
         mock_forest.expect_get_state().times(1).return_const(state.clone());

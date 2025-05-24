@@ -19,7 +19,6 @@ use skyvault::{
     observability,
     storage,
 };
-use tracing::info;
 
 #[derive(Debug, Parser)]
 #[command(name = "worker", about = "A worker for skyvault.")]
@@ -51,7 +50,7 @@ async fn main() -> Result<()> {
         .await
         .context("Failed to create Kubernetes client")?;
 
-    info!(config = ?config, version = version, job_id = ?config.job_id, namespace = %current_namespace, "Starting worker");
+    tracing::info!(config = ?config, version = version, job_id = ?config.job_id, namespace = %current_namespace, "Starting worker");
 
     // Initialize Dynamic Configuration
     let _dynamic_app_config = dynamic_config::initialize_dynamic_config(k8s_client.clone(), &current_namespace)
@@ -67,6 +66,6 @@ async fn main() -> Result<()> {
     let storage = Arc::new(storage::S3ObjectStore::new(s3_config, &config.s3.bucket_name).await?);
 
     jobs::execute(metadata_store, storage, config.job_id).await?;
-    info!("Complete!");
+    tracing::info!("Complete!");
     Ok(())
 }

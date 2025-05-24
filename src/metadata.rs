@@ -49,10 +49,10 @@ pub enum MetadataError {
     #[error("Table already exists")]
     TableAlreadyExists(TableName),
 
-    #[error("Table not found")]
+    #[error("Table not found: {0}")]
     TableNotFound(TableName),
 
-    #[error("Table ID not found")]
+    #[error("Table ID not found: {0}")]
     TableIDNotFound(TableID),
 }
 
@@ -394,6 +394,7 @@ impl Display for TableID {
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct TableConfig {
+    #[serde(skip)]
     pub table_id: Option<TableID>,
     pub table_name: TableName,
 }
@@ -1179,7 +1180,7 @@ impl MetadataStoreTrait for PostgresMetadataStore {
     async fn get_table(&self, table_name: TableName) -> Result<TableConfig, MetadataError> {
         let row = sqlx::query!(
             r#"
-            SELECT id, name, config FROM tables WHERE name = $1 AND deleted_at IS NULL
+            SELECT id, config FROM tables WHERE name = $1 AND deleted_at IS NULL
             "#,
             table_name.to_string()
         )
@@ -1200,7 +1201,7 @@ impl MetadataStoreTrait for PostgresMetadataStore {
     async fn get_table_by_id(&self, table_id: TableID) -> Result<TableConfig, MetadataError> {
         let row = sqlx::query!(
             r#"
-            SELECT id, name, config FROM tables WHERE id = $1 AND deleted_at IS NULL
+            SELECT id, config FROM tables WHERE id = $1 AND deleted_at IS NULL
             "#,
             table_id.0
         )

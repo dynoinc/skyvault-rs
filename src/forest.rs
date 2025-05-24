@@ -170,7 +170,7 @@ impl From<proto::Snapshot> for Snapshot {
 }
 
 impl Snapshot {
-    pub async fn from_raw<I>(
+    pub async fn from_parts<I>(
         seq_no: metadata::SeqNo,
         tables: HashMap<metadata::TableName, TableConfig>,
         runs: I,
@@ -236,7 +236,10 @@ pub struct ForestImpl {
 }
 
 impl ForestImpl {
-    pub async fn latest(metadata_store: MetadataStore, object_store: ObjectStore) -> Result<Forest, ForestError> {
+    pub async fn latest(
+        metadata_store: MetadataStore,
+        object_store: ObjectStore,
+    ) -> Result<Arc<Snapshot>, ForestError> {
         let (snapshot_id, entries) = metadata_store.get_latest_snapshot().await?;
         let snapshot = match snapshot_id {
             Some(snapshot_id) => {
@@ -255,7 +258,7 @@ impl ForestImpl {
             forest.process_changelog_entry(entry).await?;
         }
 
-        Ok(Arc::new(forest))
+        Ok(forest.get_state())
     }
 
     /// Creates a new Forest instance and starts the changelog stream processor.
@@ -278,7 +281,7 @@ impl ForestImpl {
         let processor = forest.clone();
         tokio::spawn(async move {
             if let Err(e) = processor.process_changelog_stream(stream).await {
-                error!(error = %e, "Changelog processor terminated");
+                panic!("Changelog processor terminated: {e}");
             }
         });
 
@@ -296,15 +299,7 @@ impl ForestImpl {
 
         while let Some(result) = stream.next().await {
             debug!("Received changelog entry: {:?}", result);
-            match result {
-                Ok(entry) => {
-                    self.process_changelog_entry(entry).await?;
-                },
-                Err(e) => {
-                    error!(error = %e, "Error reading from changelog");
-                    // Continue processing despite errors
-                },
-            }
+            self.process_changelog_entry(result?).await?;
         }
 
         Err(ForestError::Internal("Changelog stream ended unexpectedly".to_string()))
@@ -396,9 +391,11 @@ impl ForestImpl {
 
         match entry {
             TableChangelogEntryV1::TableCreated(_) => {
+                tracing::debug!("Table created: {:?}", table_config);
                 new_state.tables.insert(table_config.table_name.clone(), table_config);
             },
             TableChangelogEntryV1::TableDropped(_) => {
+                tracing::debug!("Table removed: {:?}", table_config);
                 new_state.tables.remove(&table_config.table_name.clone());
             },
         }

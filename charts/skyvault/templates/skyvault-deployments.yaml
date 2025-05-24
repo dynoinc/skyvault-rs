@@ -7,21 +7,18 @@ metadata:
   name: skyvault-{{ $deployment.instanceName }}
   labels:
     {{- include "skyvault.labels" $ | nindent 4 }}
-    app.kubernetes.io/component: skyvault
-    app.kubernetes.io/instance-id: {{ $deployment.instanceName }}
+    app.kubernetes.io/component: skyvault-{{ $deployment.instanceName }}
 spec:
   replicas: {{ $deployment.replicaCount }}
   selector:
     matchLabels:
       {{- include "skyvault.selectorLabels" $ | nindent 6 }}
-      app.kubernetes.io/component: skyvault
-      app.kubernetes.io/instance-id: {{ $deployment.instanceName }}
+      app.kubernetes.io/component: skyvault-{{ $deployment.instanceName }}
   template:
     metadata:
       labels:
         {{- include "skyvault.selectorLabels" $ | nindent 8 }}
-        app.kubernetes.io/component: skyvault
-        app.kubernetes.io/instance-id: {{ $deployment.instanceName }}
+        app.kubernetes.io/component: skyvault-{{ $deployment.instanceName }}
     spec:
       serviceAccountName: skyvault-serviceaccount
       containers:
@@ -59,8 +56,7 @@ metadata:
   name: skyvault-{{ $deployment.instanceName }}
   labels:
     {{- include "skyvault.labels" $ | nindent 4 }}
-    app.kubernetes.io/component: skyvault
-    app.kubernetes.io/instance-id: {{ $deployment.instanceName }}
+    app.kubernetes.io/component: skyvault-{{ $deployment.instanceName }}
 spec:
   type: {{ $deployment.service.type }}
   ports:
@@ -73,7 +69,6 @@ spec:
       {{- end }}
   selector:
     {{- include "skyvault.selectorLabels" $ | nindent 4 }}
-    app.kubernetes.io/component: skyvault
-    app.kubernetes.io/instance-id: {{ $deployment.instanceName }}
+    app.kubernetes.io/component: skyvault-{{ $deployment.instanceName }}
 {{- end }}
 {{- end }} 

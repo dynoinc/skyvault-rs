@@ -94,6 +94,7 @@ def perform_write(stub, table_name, key, value_bytes):
         except grpc.RpcError as e:
             if e.code() != grpc.StatusCode.NOT_FOUND:
                 raise
+            print(f"Write failed: {e}")
             time.sleep(1)
 
     raise grpc.RpcError("Write failed after retries")

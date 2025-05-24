@@ -34,8 +34,7 @@ pub async fn execute(
     object_store: ObjectStore,
     table_id: metadata::TableID,
 ) -> Result<(Vec<RunId>, Vec<RunMetadata>), JobError> {
-    let forest = ForestImpl::latest(metadata_store.clone(), object_store.clone()).await?;
-    let state = forest.get_state();
+    let state = ForestImpl::latest(metadata_store.clone(), object_store.clone()).await?;
 
     let table = match state.trees.get(&table_id) {
         Some(table) if table.buffer.is_empty() => return Ok((vec![], vec![])),

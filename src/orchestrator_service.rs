@@ -270,7 +270,7 @@ impl MyOrchestrator {
     }
 
     async fn watch_jobs(&self, namespace: String) {
-        let label_selector = "app=orchestrator";
+        let label_selector = "batch.skyvault.io/created-by=orchestrator";
 
         // Create a job watcher that will reconnect on failures
         loop {
@@ -390,8 +390,8 @@ impl MyOrchestrator {
             metadata: ObjectMeta {
                 name: Some(job_name.clone()),
                 labels: Some(std::collections::BTreeMap::from([
-                    ("app".to_string(), "orchestrator".to_string()),
-                    ("job.kubernetes.io/type".to_string(), job_type.to_string()),
+                    ("batch.skyvault.io/created-by".to_string(), "orchestrator".to_string()),
+                    ("batch.skyvault.io/type".to_string(), job_type.to_string()),
                 ])),
                 ..ObjectMeta::default()
             },
@@ -399,8 +399,8 @@ impl MyOrchestrator {
                 template: k8s_openapi::api::core::v1::PodTemplateSpec {
                     metadata: Some(ObjectMeta {
                         labels: Some(std::collections::BTreeMap::from([
-                            ("app".to_string(), "orchestrator".to_string()),
-                            ("job.kubernetes.io/type".to_string(), job_type.to_string()),
+                            ("batch.skyvault.io/created-by".to_string(), "orchestrator".to_string()),
+                            ("batch.skyvault.io/type".to_string(), job_type.to_string()),
                         ])),
                         ..ObjectMeta::default()
                     }),
@@ -457,7 +457,7 @@ impl MyOrchestrator {
                                 },
                                 k8s_openapi::api::core::v1::EnvVar {
                                     name: "RUST_LOG".to_string(),
-                                    value: std::env::var("RUST_LOG").ok(),
+                                    value: std::env::var("RUST_LOG").ok().map(|s| s.replace("skyvault", "worker")),
                                     value_from: None,
                                 },
                             ]),
@@ -596,6 +596,10 @@ impl proto::orchestrator_service_server::OrchestratorService for MyOrchestrator 
             None => return Err(Status::invalid_argument("Table config is required")),
         };
 
+        if config.table_name.is_empty() {
+            return Err(Status::invalid_argument("Table name cannot be empty"));
+        }
+
         let seq_no = match self.metadata.create_table(config).await {
             Ok(seq_no) => seq_no,
             Err(MetadataError::TableAlreadyExists(_)) => {
@@ -627,16 +631,13 @@ impl proto::orchestrator_service_server::OrchestratorService for MyOrchestrator 
         let request = request.into_inner();
         let table_name = TableName::from(request.table_name);
 
-        let config = match self.metadata.get_table(table_name).await {
-            Ok(config) => config,
-            Err(MetadataError::TableNotFound(_)) => {
-                return Err(Status::not_found("Table not found"));
-            },
-            Err(e) => return Err(Status::internal(e.to_string())),
-        };
-
+        let state = self.forest.get_state();
+        let config = state
+            .tables
+            .get(&table_name)
+            .ok_or_else(|| Status::not_found(format!("Table not found: {table_name}")))?;
         Ok(Response::new(proto::GetTableResponse {
-            table: Some((&config).into()),
+            table: Some(config.into()),
         }))
     }
 
@@ -644,13 +645,9 @@ impl proto::orchestrator_service_server::OrchestratorService for MyOrchestrator 
         &self,
         _request: Request<proto::ListTablesRequest>,
     ) -> Result<Response<proto::ListTablesResponse>, Status> {
-        let tables = match self.metadata.list_tables().await {
-            Ok(tables) => tables,
-            Err(e) => return Err(Status::internal(e.to_string())),
-        };
+        let state = self.forest.get_state();
+        let tables = state.tables.values().map(|t| t.into()).collect::<Vec<_>>();
 
-        Ok(Response::new(proto::ListTablesResponse {
-            tables: tables.into_iter().map(|t| (&t).into()).collect(),
-        }))
+        Ok(Response::new(proto::ListTablesResponse { tables }))
     }
 }

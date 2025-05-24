@@ -44,8 +44,8 @@ pub async fn execute(
         return Ok((vec![], vec![]));
     }
 
-    let forest = ForestImpl::latest(metadata_store.clone(), object_store.clone()).await?;
-    let mut state = Arc::unwrap_or_clone(forest.get_state());
+    let state = ForestImpl::latest(metadata_store.clone(), object_store.clone()).await?;
+    let mut state = Arc::unwrap_or_clone(state);
 
     // Pick first run at level and all the runs that overlap with it in the next
     // level unless it's the max level

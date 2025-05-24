@@ -38,11 +38,3 @@ Selector labels
 app.kubernetes.io/name: {{ include "skyvault.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
-
-{{/*
-Get deployment instance selector labels
-*/}}
-{{- define "skyvault.instanceSelectorLabels" -}}
-{{- include "skyvault.selectorLabels" . }}
-app.kubernetes.io/instance-id: {{ .instanceName }}
-{{- end }} 

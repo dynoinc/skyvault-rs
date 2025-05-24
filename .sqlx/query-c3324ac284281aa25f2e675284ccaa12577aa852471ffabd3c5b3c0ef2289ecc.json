@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            SELECT id, name, config FROM tables WHERE id = $1 AND deleted_at IS NULL\n            ",
+  "query": "\n            SELECT id, config FROM tables WHERE name = $1 AND deleted_at IS NULL\n            ",
   "describe": {
     "columns": [
       {
@@ -10,25 +10,19 @@
       },
       {
         "ordinal": 1,
-        "name": "name",
-        "type_info": "Text"
-      },
-      {
-        "ordinal": 2,
         "name": "config",
         "type_info": "Jsonb"
       }
     ],
     "parameters": {
       "Left": [
-        "Int8"
+        "Text"
       ]
     },
     "nullable": [
       false,
-      false,
       false
     ]
   },
-  "hash": "bb5f2dc242a5facfabf1fc8b98a0439538ea6fa38bea7e32dcba525c514e2a0b"
+  "hash": "c3324ac284281aa25f2e675284ccaa12577aa852471ffabd3c5b3c0ef2289ecc"
 }

@@ -64,7 +64,7 @@ impl MyWriter {
         dynamic_config: SharedAppConfig,
     ) -> Result<Self, WriterServiceError> {
         let (tx, rx) = tokio::sync::mpsc::channel(100);
-        let forest = ForestImpl::latest(metadata.clone(), storage.clone()).await?;
+        let forest = ForestImpl::watch(metadata.clone(), storage.clone()).await?;
 
         let task_config = dynamic_config.clone();
         tokio::spawn(async move {
@@ -195,16 +195,17 @@ impl proto::writer_service_server::WriterService for MyWriter {
 
         let mut ops: Vec<WriteOperation> = Vec::new();
         for mut table in req.into_inner().tables.drain(..) {
-            if table.table_name.is_empty() {
-                return Err(Status::invalid_argument("Table name cannot be empty"));
-            }
-
+            let table_name = TableName::from(table.table_name.clone());
+            tracing::info!(
+                "table_name: {table_name}, known tables: {:?}",
+                forest_state.tables.keys().collect::<Vec<_>>()
+            );
+            let table_id = forest_state
+                .tables
+                .get(&table_name)
+                .and_then(|t| t.table_id)
+                .ok_or_else(|| Status::not_found(format!("Table not found: {table_name}")))?;
             for item in table.items.drain(..) {
-                let table_id = forest_state
-                    .tables
-                    .get(&TableName::from(table.table_name.clone()))
-                    .and_then(|t| t.table_id)
-                    .ok_or_else(|| Status::not_found("Table not found"))?;
                 let key = format!("{}.{}", table_id, item.key);
                 match item.operation {
                     Some(proto::write_batch_item::Operation::Value(value)) => {
@@ -242,6 +243,12 @@ mod tests {
             },
         },
         time::Duration,
+    };
+
+    use futures::StreamExt;
+    use tokio_retry::{
+        RetryIf,
+        strategy::ExponentialBackoff,
     };
 
     use super::*;
@@ -285,18 +292,27 @@ mod tests {
 
         let writer = MyWriter::new(metadata, storage, dynamic_config).await.unwrap();
 
-        let response = writer
-            .write_batch(Request::new(proto::WriteBatchRequest {
-                tables: vec![proto::TableWriteBatchRequest {
-                    table_name: table_name.to_string(),
-                    items: vec![proto::WriteBatchItem {
-                        key: "test".to_string(),
-                        operation: Some(proto::write_batch_item::Operation::Value(vec![1, 2, 3])),
-                    }],
-                }],
-            }))
-            .await
-            .unwrap();
+        let retry_strategy = ExponentialBackoff::from_millis(1000).take(3);
+
+        let response = RetryIf::spawn(
+            retry_strategy,
+            || async {
+                writer
+                    .write_batch(Request::new(proto::WriteBatchRequest {
+                        tables: vec![proto::TableWriteBatchRequest {
+                            table_name: table_name.to_string(),
+                            items: vec![proto::WriteBatchItem {
+                                key: "test".to_string(),
+                                operation: Some(proto::write_batch_item::Operation::Value(vec![1, 2, 3])),
+                            }],
+                        }],
+                    }))
+                    .await
+            },
+            |e: &Status| e.code() == tonic::Code::NotFound,
+        )
+        .await
+        .unwrap();
 
         let seq_no = response.into_inner().seq_no;
         assert_eq!(seq_no, 2); // 1 is used by create_table
@@ -306,23 +322,24 @@ mod tests {
     async fn test_concurrent_batch_upload_limit() {
         let test_table_name = "test_table";
         let mut mock_meta = MockMetadataStoreTrait::new();
-        mock_meta.expect_get_latest_snapshot().times(1).returning(|| {
-            Box::pin(async {
-                Ok((
-                    None,
-                    vec![ChangelogEntryWithID {
-                        id: SeqNo::from(1),
-                        changes: ChangelogEntry::TablesV1(TableChangelogEntryV1::TableCreated(TableID::from(1))),
-                    }],
-                ))
-            })
-        });
         mock_meta.expect_get_table_by_id().times(1).returning(|_id| {
             Box::pin(async {
                 Ok(TableConfig {
                     table_id: Some(TableID::from(1)),
                     table_name: TableName::from(test_table_name.to_string()),
                 })
+            })
+        });
+        mock_meta.expect_stream_changelog().times(1).returning(|| {
+            Box::pin(async {
+                Ok((
+                    None,
+                    futures::stream::iter(vec![Ok(ChangelogEntryWithID {
+                        id: SeqNo::from(1),
+                        changes: ChangelogEntry::TablesV1(TableChangelogEntryV1::TableCreated(TableID::from(1))),
+                    })])
+                    .boxed(),
+                ))
             })
         });
         mock_meta

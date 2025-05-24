@@ -20,7 +20,7 @@ build:
     docker build -t localhost/skyvault:dev .
     docker save --output ./target/myapp.tar localhost/skyvault:dev
     minikube image load ./target/myapp.tar
-    kubectl delete pod -l app.kubernetes.io/component=skyvault
+    kubectl delete pod -l app.kubernetes.io/component=skyvault-dev
 
 deploy:
     helm upgrade --install dev ./charts/skyvault --set deployments.dev.enabled=true

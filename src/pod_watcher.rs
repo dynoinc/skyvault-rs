@@ -20,14 +20,14 @@ pub enum PodWatcherError {
     #[error("Failed to read namespace from ServiceAccount secret: {0}")]
     NamespaceReadError(#[from] std::io::Error),
 
-    #[error("Pod missing app.kubernetes.io/instance-id label")]
-    MissingInstanceIdLabel,
+    #[error("Pod missing app.kubernetes.io/component label")]
+    MissingComponentLabel,
 
     #[error("Watcher error: {0}")]
     WatcherError(#[from] kube::runtime::watcher::Error),
 }
 
-/// Watches Kubernetes pods with a specific instance-id label and provides a
+/// Watches Kubernetes pods with a specific instance label and provides a
 /// stream of pod changes.
 ///
 /// Returns a tuple containing:
@@ -44,15 +44,15 @@ pub async fn watch(
     let pods_api: Api<Pod> = Api::namespaced(client.clone(), &namespace);
     let me = pods_api.get(&pod_name).await?;
 
-    // Get the instance-id label
+    // Get the instance label
     let labels = me.metadata.labels.unwrap_or_default();
-    let instance_id = labels
-        .get("app.kubernetes.io/instance-id")
-        .ok_or(PodWatcherError::MissingInstanceIdLabel)?
+    let component = labels
+        .get("app.kubernetes.io/component")
+        .ok_or(PodWatcherError::MissingComponentLabel)?
         .clone();
 
-    // Create label selector for pods with matching instance-id
-    let label_selector = format!("app.kubernetes.io/instance-id={instance_id}");
+    // Create label selector for pods with matching instance
+    let label_selector = format!("app.kubernetes.io/component={component}");
     let raw_stream = watcher(
         pods_api,
         watcher::Config::default().labels(&label_selector).streaming_lists(),
