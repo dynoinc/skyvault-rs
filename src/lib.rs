@@ -10,6 +10,7 @@ pub mod proto {
     pub const FILE_DESCRIPTOR_SET: &[u8] = tonic::include_file_descriptor_set!("skyvault_descriptor");
 }
 
+pub mod cache;
 mod cache_service;
 pub mod config;
 mod consistent_hashring;
