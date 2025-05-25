@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use futures::{
     future,
     stream::{
@@ -9,6 +7,7 @@ use futures::{
         TryStreamExt,
     },
 };
+use rand::seq::IteratorRandom;
 
 use super::JobError;
 use crate::{
@@ -45,11 +44,9 @@ pub async fn execute(
     }
 
     let state = ForestImpl::latest(metadata_store.clone(), object_store.clone()).await?;
-    let mut state = Arc::unwrap_or_clone(state);
 
-    // Pick first run at level and all the runs that overlap with it in the next
-    // level unless it's the max level
-    let table = match state.trees.get_mut(&table_id) {
+    // Pick a random run at level and all the runs that overlap with it in the next level.
+    let table = match state.trees.get(&table_id) {
         Some(table) => table,
         None => {
             // Table might have been dropped
@@ -57,8 +54,13 @@ pub async fn execute(
         },
     };
 
-    let level_run_metadata = match table.tree.get_mut(&level).and_then(|runs| runs.pop_first()) {
-        Some((_, run_metadata)) => run_metadata,
+    let level_run_metadata = match table.tree.get(&level).and_then(|runs| {
+        let mut rng = rand::rng();
+        runs.iter()
+            .choose(&mut rng)
+            .map(|(_, v)| v.clone())
+    }) {
+        Some(run_metadata) => run_metadata,
         None => {
             // No runs at this level to compact
             return Ok((vec![], vec![]));
@@ -69,11 +71,9 @@ pub async fn execute(
         Stats::StatsV1(StatsV1 { min_key, max_key, .. }) => min_key..=max_key,
     };
 
-    // Note: We clone the RunMetadata here. The original tree state remains
-    // untouched until the metadata update.
     let next_level_overlapping_runs: Vec<metadata::RunMetadata> = table
         .tree
-        .get(&level.next()) // Use immutable borrow here
+        .get(&level.next())
         .map(|m| {
             m.values()
                 .filter(|run| {
@@ -87,14 +87,12 @@ pub async fn execute(
                     // Also check if run's range contains the key_range entirely
                         || (min_key <= key_range.start() && max_key >= key_range.end())
                 })
-                .cloned() // Clone the metadata to avoid borrowing issues
+                .cloned()
                 .collect::<Vec<_>>()
         })
-        .unwrap_or_default(); // If level.next() doesn't exist or has no runs, default to empty Vec
+        .unwrap_or_default();
 
     let next_level_run_ids: Vec<_> = next_level_overlapping_runs.iter().map(|m| m.id.clone()).collect();
-
-    // --- Stream Creation ---
 
     let level_run_id = level_run_metadata.id.clone();
     let object_store_clone = object_store.clone();
@@ -122,7 +120,7 @@ pub async fn execute(
     let level_run_stream = level_run_stream_fut.await;
 
     let object_store_clone = object_store.clone();
-    let next_level_runs_stream = stream::iter(next_level_run_ids.clone()) // Use cloned IDs
+    let next_level_runs_stream = stream::iter(next_level_run_ids.clone())
         .then(move |run_id| {
             let store = object_store_clone.clone();
             async move {
@@ -145,9 +143,7 @@ pub async fn execute(
                 Box::pin(runs::read_run_stream(adapted_stream))
             }
         })
-        .flatten(); // Flatten the stream of streams into a single stream
-
-    // --- Merging and Building ---
+        .flatten();
 
     // Give level_run higher priority (1) than next_level_runs (0)
     // k_way::merge sorts by seq_no first, then by key, then by operation type.
@@ -188,13 +184,8 @@ pub async fn execute(
         });
     }
 
-    // It's possible to compact away everything if all keys are tombstones
-    // In this case, new_runs might be empty, which is valid.
-
-    // --- Metadata Update ---
-
-    let mut compacted_run_ids = vec![level_run_metadata.id]; // Start with the run from 'level'
-    compacted_run_ids.extend(next_level_overlapping_runs.into_iter().map(|m| m.id)); // Add runs from 'level.next()'
+    let mut compacted_run_ids = vec![level_run_metadata.id];
+    compacted_run_ids.extend(next_level_overlapping_runs.into_iter().map(|m| m.id));
 
     Ok((compacted_run_ids, new_runs))
 }

@@ -148,13 +148,8 @@ impl proto::cache_service_server::CacheService for MyCache {
         while let Some(result) = merged_stream.next().await {
             let write_op = result.map_err(|e| Status::internal(format!("Merge stream error: {e}")))?;
 
-            count += if matches!(write_op, WriteOperation::Put(_, _)) {
-                1
-            } else {
-                0
-            };
+            count += matches!(write_op, WriteOperation::Put(_, _)) as u64;
             response.items.push(write_op.into());
-
             if count >= max_results {
                 break;
             }
