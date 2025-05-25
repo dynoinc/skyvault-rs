@@ -4,7 +4,6 @@ use std::{
         OpenOptions,
     },
     io::Write,
-    num::NonZeroUsize,
     path::PathBuf,
     pin::Pin,
     sync::Arc,
@@ -20,10 +19,13 @@ use anyhow::{
 };
 use bytes::Bytes;
 use futures_util::Stream;
-use lru::LruCache;
 use memmap2::{
     Mmap,
     MmapOptions,
+};
+use schnellru::{
+    Limiter,
+    LruMap,
 };
 use tokio::{
     fs,
@@ -41,44 +43,68 @@ use tracing::{
 pub struct CacheConfig {
     /// Directory where cache files are stored
     pub cache_dir: PathBuf,
-    /// Maximum number of entries in the cache
-    pub max_entries: usize,
+    /// Optional maximum size in bytes (if None, calculated from available disk
+    /// space)
+    pub max_size_bytes: Option<usize>,
+    /// Percentage of available disk space to use for cache (default: 80%)
+    pub disk_usage_percentage: f64,
 }
 
-/// A memory-mapped view of a cache entry
+impl CacheConfig {
+    /// Create a new cache configuration with automatic disk space calculation
+    pub fn new(cache_dir: PathBuf) -> Self {
+        Self {
+            cache_dir,
+            max_size_bytes: None,
+            disk_usage_percentage: 80.0,
+        }
+    }
+
+    /// Create a new cache configuration with a fixed maximum size
+    pub fn with_max_size(cache_dir: PathBuf, max_size_bytes: usize) -> Self {
+        Self {
+            cache_dir,
+            max_size_bytes: Some(max_size_bytes),
+            disk_usage_percentage: 80.0,
+        }
+    }
+}
+
+/// A memory-mapped view of cached data
+#[derive(Debug)]
 pub struct MmapView {
     _file: File,
     mmap: Mmap,
 }
 
 impl MmapView {
-    /// Get a byte slice view of the cached data
+    /// Get the data as a byte slice
     pub fn as_bytes(&self) -> &[u8] {
         &self.mmap
     }
 
-    /// Get the length of the cached data
+    /// Get the length of the data
     pub fn len(&self) -> usize {
         self.mmap.len()
     }
 
-    /// Check if the cached data is empty
+    /// Check if the data is empty
     pub fn is_empty(&self) -> bool {
         self.mmap.is_empty()
     }
 
-    /// Convert to Bytes without copying
+    /// Convert to owned bytes
     pub fn to_bytes(&self) -> Bytes {
         Bytes::copy_from_slice(&self.mmap)
     }
 
-    /// Create a stream of bytes from the mmap view
+    /// Convert to a stream of bytes
     pub fn into_stream(self, chunk_size: usize) -> MmapStream {
         MmapStream::new(self, chunk_size)
     }
 }
 
-/// A stream that yields chunks of bytes from a memory-mapped file
+/// A stream that yields chunks of data from a memory-mapped file
 pub struct MmapStream {
     mmap_view: MmapView,
     position: usize,
@@ -100,44 +126,113 @@ impl Stream for MmapStream {
 
     fn poll_next(mut self: Pin<&mut Self>, _cx: &mut TaskContext<'_>) -> Poll<Option<Self::Item>> {
         let this = &mut *self;
-        let data_len = this.mmap_view.len();
+        let data = this.mmap_view.as_bytes();
 
-        if this.position >= data_len {
+        if this.position >= data.len() {
             return Poll::Ready(None);
         }
 
-        let end = std::cmp::min(this.position + this.chunk_size, data_len);
-        let chunk = &this.mmap_view.as_bytes()[this.position..end];
+        let end = std::cmp::min(this.position + this.chunk_size, data.len());
+        let chunk = &data[this.position..end];
         this.position = end;
 
         Poll::Ready(Some(Ok(Bytes::copy_from_slice(chunk))))
     }
 }
 
-/// Entry metadata for tracking cache usage
+/// Cache entry metadata
 #[derive(Debug, Clone)]
 struct CacheEntry {
     file_path: PathBuf,
     size: u64,
 }
 
-/// Cache state protected by a single lock
+/// Custom limiter that limits cache by total size in bytes
 #[derive(Debug)]
-struct CacheState {
-    /// LRU cache for tracking entry usage order
-    lru: LruCache<String, CacheEntry>,
-    /// Current total size of all cached files
-    total_size: u64,
+struct BySizeBytes {
+    max_size: usize,
+    current_size: usize,
+}
+
+impl BySizeBytes {
+    fn new(max_size: usize) -> Self {
+        Self {
+            max_size,
+            current_size: 0,
+        }
+    }
+}
+
+impl Limiter<String, CacheEntry> for BySizeBytes {
+    type KeyToInsert<'a> = String;
+    type LinkType = u32;
+
+    fn is_over_the_limit(&self, _length: usize) -> bool {
+        self.current_size > self.max_size
+    }
+
+    fn on_insert(
+        &mut self,
+        _length: usize,
+        _key: Self::KeyToInsert<'_>,
+        value: CacheEntry,
+    ) -> Option<(String, CacheEntry)> {
+        self.current_size += value.size as usize;
+        None
+    }
+
+    fn on_replace(
+        &mut self,
+        _length: usize,
+        _key: &mut String,
+        _new_key: Self::KeyToInsert<'_>,
+        new_value: &mut CacheEntry,
+        old_value: &mut CacheEntry,
+    ) -> bool {
+        self.current_size = self.current_size.saturating_sub(old_value.size as usize);
+        self.current_size += new_value.size as usize;
+        false
+    }
+
+    fn on_removed(&mut self, _key: &mut String, value: &mut CacheEntry) {
+        self.current_size = self.current_size.saturating_sub(value.size as usize);
+    }
+
+    fn on_cleared(&mut self) {
+        self.current_size = 0;
+    }
+
+    fn on_grow(&mut self, _new_memory_usage: usize) -> bool {
+        true
+    }
 }
 
 /// A disk-backed cache with LRU eviction and mmap support
 pub struct DiskCache {
     config: CacheConfig,
     /// Cache state protected by a single lock
-    state: Arc<RwLock<CacheState>>,
+    state: Arc<RwLock<LruMap<String, CacheEntry, BySizeBytes>>>,
+    /// Actual maximum size in bytes (calculated or configured)
+    max_size_bytes: usize,
 }
 
 impl DiskCache {
+    /// Calculate maximum size based on available disk space
+    fn calculate_max_size(config: &CacheConfig) -> Result<usize> {
+        let available_bytes = fs2::available_space(&config.cache_dir)
+            .with_context(|| format!("Failed to get available space for {:?}", config.cache_dir))?;
+
+        let usable_bytes = (available_bytes as f64 * config.disk_usage_percentage / 100.0) as u64;
+        let max_size = usable_bytes.max(1) as usize;
+
+        info!(
+            "Calculated max_size: {} bytes (available: {} bytes, usable: {} bytes)",
+            max_size, available_bytes, usable_bytes
+        );
+
+        Ok(max_size)
+    }
+
     /// Create a new disk cache with the given configuration
     pub async fn new(config: CacheConfig) -> Result<Self> {
         // Ensure cache directory exists
@@ -148,15 +243,19 @@ impl DiskCache {
             )
         })?;
 
-        let max_entries =
-            NonZeroUsize::new(config.max_entries).with_context(|| "max_entries must be greater than 0")?;
+        let max_size_bytes = match config.max_size_bytes {
+            Some(size) => size,
+            None => Self::calculate_max_size(&config)?,
+        };
 
-        let state = Arc::new(RwLock::new(CacheState {
-            lru: LruCache::new(max_entries),
-            total_size: 0,
-        }));
+        let limiter = BySizeBytes::new(max_size_bytes);
+        let state = Arc::new(RwLock::new(LruMap::new(limiter)));
 
-        let cache = Self { config, state };
+        let cache = Self {
+            config,
+            state,
+            max_size_bytes,
+        };
 
         // Load existing cache entries on startup
         cache.load_existing_entries().await?;
@@ -164,37 +263,28 @@ impl DiskCache {
         Ok(cache)
     }
 
-    /// Load existing cache entries from disk on startup
+    /// Load existing cache entries from disk
     async fn load_existing_entries(&self) -> Result<()> {
-        info!("Loading existing cache entries from {:?}", self.config.cache_dir);
-
-        let mut entries = fs::read_dir(&self.config.cache_dir).await.with_context(|| {
-            format!(
-                "Failed to read cache directory: {cache_dir:?}",
-                cache_dir = self.config.cache_dir
-            )
-        })?;
+        let mut entries = fs::read_dir(&self.config.cache_dir)
+            .await
+            .with_context(|| format!("Failed to read cache directory: {:?}", self.config.cache_dir))?;
 
         let mut loaded_entries = Vec::new();
 
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
-
             if path.is_file() {
                 if let Some(key) = path.file_name().and_then(|n| n.to_str()) {
                     let metadata = entry.metadata().await?;
                     let size = metadata.len();
+                    let modified = metadata.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
 
-                    loaded_entries.push((
-                        key.to_string(),
-                        CacheEntry {
-                            file_path: path.clone(),
-                            size,
-                        },
-                        metadata.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH),
-                    ));
+                    let cache_entry = CacheEntry {
+                        file_path: path.clone(),
+                        size,
+                    };
 
-                    debug!("Found cache entry: {} (size: {} bytes)", key, size);
+                    loaded_entries.push((key.to_string(), cache_entry, modified));
                 }
             }
         }
@@ -205,14 +295,37 @@ impl DiskCache {
         let mut state = self.state.write().await;
 
         for (key, entry, _) in loaded_entries {
-            state.total_size += entry.size;
-            state.lru.put(key, entry);
+            let was_inserted = state.insert(key, entry);
+            if was_inserted {
+                // Check if we need to evict entries due to size limits
+                while state.limiter().is_over_the_limit(state.len()) {
+                    if let Some((_evicted_key, evicted_entry)) = state.pop_oldest() {
+                        // Remove evicted file
+                        drop(state); // Release lock before file operation
+
+                        if let Err(e) = fs::remove_file(&evicted_entry.file_path).await {
+                            warn!(
+                                "Failed to remove evicted cache file {:?}: {}",
+                                evicted_entry.file_path, e
+                            );
+                        } else {
+                            debug!("Evicted cache entry during loading: {:?}", evicted_entry.file_path);
+                        }
+
+                        state = self.state.write().await;
+                    } else {
+                        break;
+                    }
+                }
+            }
         }
+
+        let current_size = state.limiter().current_size;
+        let entries_count = state.len();
 
         info!(
             "Loaded {} cache entries, total size: {} bytes",
-            state.lru.len(),
-            state.total_size
+            entries_count, current_size
         );
         Ok(())
     }
@@ -264,30 +377,27 @@ impl DiskCache {
         // Update cache state
         let mut state = self.state.write().await;
 
-        // If key already exists, remove old size (though data never changes, this
-        // handles overwrites)
-        if let Some(old_entry) = state.lru.peek(&key) {
-            state.total_size -= old_entry.size;
-        }
+        let was_inserted = state.insert(key.clone(), entry);
+        if was_inserted {
+            // Check if we need to evict entries due to size limits
+            while state.limiter().is_over_the_limit(state.len()) {
+                if let Some((_evicted_key, evicted_entry)) = state.pop_oldest() {
+                    // Remove evicted file
+                    let evicted_path = evicted_entry.file_path.clone();
+                    drop(state); // Release lock before file operation
 
-        // Add new entry and handle eviction
-        if let Some(evicted) = state.lru.put(key.clone(), entry) {
-            // Remove evicted file
-            state.total_size -= evicted.size;
-            drop(state); // Release lock before file operation
+                    if let Err(e) = fs::remove_file(&evicted_path).await {
+                        warn!("Failed to remove evicted cache file {:?}: {}", evicted_path, e);
+                    } else {
+                        debug!("Evicted cache entry: {:?}", evicted_path);
+                    }
 
-            if let Err(e) = fs::remove_file(&evicted.file_path).await {
-                warn!("Failed to remove evicted cache file {:?}: {}", evicted.file_path, e);
-            } else {
-                debug!("Evicted cache entry: {:?}", evicted.file_path);
+                    state = self.state.write().await;
+                } else {
+                    break;
+                }
             }
-        } else {
-            drop(state);
         }
-
-        // Update total size
-        let mut state = self.state.write().await;
-        state.total_size += size;
 
         debug!("Cached key '{}' with size {} bytes", key, size);
         Ok(())
@@ -320,31 +430,27 @@ impl DiskCache {
         // Update cache state
         let mut state = self.state.write().await;
 
-        // If key already exists, remove old size (though data never changes, this
-        // handles overwrites)
-        if let Some(old_entry) = state.lru.peek(&key) {
-            state.total_size -= old_entry.size;
-        }
+        let was_inserted = state.insert(key.clone(), entry);
+        if was_inserted {
+            // Check if we need to evict entries due to size limits
+            while state.limiter().is_over_the_limit(state.len()) {
+                if let Some((_evicted_key, evicted_entry)) = state.pop_oldest() {
+                    // Remove evicted file
+                    let evicted_path = evicted_entry.file_path.clone();
+                    drop(state); // Release lock before file operation
 
-        // Add new entry and handle eviction
-        if let Some(evicted) = state.lru.put(key.clone(), entry) {
-            // Remove evicted file
-            state.total_size -= evicted.size;
-            let evicted_path = evicted.file_path.clone();
-            drop(state); // Release lock before file operation
+                    if let Err(e) = fs::remove_file(&evicted_path).await {
+                        warn!("Failed to remove evicted cache file {:?}: {}", evicted_path, e);
+                    } else {
+                        debug!("Evicted cache entry: {:?}", evicted_path);
+                    }
 
-            if let Err(e) = fs::remove_file(&evicted_path).await {
-                warn!("Failed to remove evicted cache file {:?}: {}", evicted_path, e);
-            } else {
-                debug!("Evicted cache entry: {:?}", evicted_path);
+                    state = self.state.write().await;
+                } else {
+                    break;
+                }
             }
-        } else {
-            drop(state);
         }
-
-        // Update total size
-        let mut state = self.state.write().await;
-        state.total_size += size;
 
         debug!("Cached key '{}' with size {} bytes", key, size);
         Ok(())
@@ -354,7 +460,7 @@ impl DiskCache {
     pub async fn get_mmap(&self, key: &str) -> Result<Option<MmapView>> {
         let file_path = {
             let mut state = self.state.write().await;
-            if let Some(entry) = state.lru.get(key) {
+            if let Some(entry) = state.get(key) {
                 entry.file_path.clone()
             } else {
                 return Ok(None);
@@ -384,36 +490,34 @@ impl DiskCache {
     /// Check if a key exists in the cache
     pub async fn contains_key(&self, key: &str) -> bool {
         let state = self.state.read().await;
-        state.lru.contains(key)
+        state.peek(key).is_some()
     }
 
     /// Remove a key from the cache
     pub async fn remove(&self, key: &str) -> Result<bool> {
         let entry = {
             let mut state = self.state.write().await;
-            if let Some(entry) = state.lru.pop(key) {
-                state.total_size -= entry.size;
-                entry
-            } else {
-                return Ok(false);
-            }
+            state.remove(key)
         };
 
-        if let Err(e) = fs::remove_file(&entry.file_path).await {
-            warn!("Failed to remove cache file {:?}: {}", entry.file_path, e);
-        }
+        if let Some(entry) = entry {
+            if let Err(e) = fs::remove_file(&entry.file_path).await {
+                warn!("Failed to remove cache file {:?}: {}", entry.file_path, e);
+            }
 
-        debug!("Removed cache entry: {}", key);
-        Ok(true)
+            debug!("Removed cache entry: {}", key);
+            Ok(true)
+        } else {
+            Ok(false)
+        }
     }
 
     /// Clear all entries from the cache
     pub async fn clear(&self) -> Result<()> {
         let entries = {
             let mut state = self.state.write().await;
-            let entries: Vec<_> = state.lru.iter().map(|(_, entry)| entry.file_path.clone()).collect();
-            state.lru.clear();
-            state.total_size = 0;
+            let entries: Vec<_> = state.iter().map(|(_, entry)| entry.file_path.clone()).collect();
+            state.clear();
             entries
         };
 
@@ -431,34 +535,34 @@ impl DiskCache {
     /// Get the number of entries in the cache
     pub async fn len(&self) -> usize {
         let state = self.state.read().await;
-        state.lru.len()
+        state.len()
     }
 
     /// Check if the cache is empty
     pub async fn is_empty(&self) -> bool {
         let state = self.state.read().await;
-        state.lru.is_empty()
+        state.is_empty()
     }
 
     /// Get the current total size of cached data
-    pub async fn current_size(&self) -> u64 {
+    pub async fn current_size(&self) -> usize {
         let state = self.state.read().await;
-        state.total_size
+        state.limiter().current_size
     }
 
     /// Get all keys currently in the cache
     pub async fn keys(&self) -> Vec<String> {
         let state = self.state.read().await;
-        state.lru.iter().map(|(key, _)| key.clone()).collect()
+        state.iter().map(|(key, _)| key.clone()).collect()
     }
 
     /// Get cache statistics
     pub async fn stats(&self) -> CacheStats {
         let state = self.state.read().await;
         CacheStats {
-            entries: state.lru.len(),
-            max_entries: self.config.max_entries,
-            total_size: state.total_size,
+            entries: state.len(),
+            max_size_bytes: self.max_size_bytes,
+            current_size: state.limiter().current_size,
             cache_dir: self.config.cache_dir.clone(),
         }
     }
@@ -468,8 +572,8 @@ impl DiskCache {
 #[derive(Debug, Clone)]
 pub struct CacheStats {
     pub entries: usize,
-    pub max_entries: usize,
-    pub total_size: u64,
+    pub max_size_bytes: usize,
+    pub current_size: usize,
     pub cache_dir: PathBuf,
 }
 
@@ -484,10 +588,7 @@ mod tests {
 
     async fn create_test_cache() -> (DiskCache, TempDir) {
         let temp_dir = TempDir::new().unwrap();
-        let config = CacheConfig {
-            cache_dir: temp_dir.path().to_path_buf(),
-            max_entries: 3,
-        };
+        let config = CacheConfig::with_max_size(temp_dir.path().to_path_buf(), 1024); // 1KB limit
         let cache = DiskCache::new(config).await.unwrap();
         (cache, temp_dir)
     }
@@ -497,20 +598,22 @@ mod tests {
         let (cache, _temp_dir) = create_test_cache().await;
 
         let key = "test_key".to_string();
-        let data = b"test data";
+        let data = b"Hello, World!";
 
         cache.put(key.clone(), data).await.unwrap();
 
         let mmap_view = cache.get_mmap(&key).await.unwrap().unwrap();
         assert_eq!(mmap_view.as_bytes(), data);
+        assert_eq!(mmap_view.len(), data.len());
+        assert!(!mmap_view.is_empty());
     }
 
     #[tokio::test]
     async fn test_put_stream() {
         let (cache, _temp_dir) = create_test_cache().await;
 
-        let key = "test_key".to_string();
-        let data = b"test data from stream";
+        let key = "stream_key".to_string();
+        let data = b"Stream data test";
         let cursor = Cursor::new(data);
 
         cache.put_stream(key.clone(), cursor).await.unwrap();
@@ -523,12 +626,12 @@ mod tests {
     async fn test_get_stream() {
         let (cache, _temp_dir) = create_test_cache().await;
 
-        let key = "test_key".to_string();
-        let data = b"test data for streaming";
+        let key = "stream_test".to_string();
+        let data = b"This is test data for streaming";
 
         cache.put(key.clone(), data).await.unwrap();
 
-        let mut stream = cache.get_stream(&key, 5).await.unwrap().unwrap();
+        let mut stream = cache.get_stream(&key, 8).await.unwrap().unwrap();
         let mut result = Vec::new();
 
         while let Some(chunk) = stream.next().await {
@@ -539,31 +642,27 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_lru_eviction() {
+    async fn test_size_based_eviction() {
         let (cache, _temp_dir) = create_test_cache().await;
 
-        // Fill cache to capacity
-        cache.put("key1".to_string(), b"data1").await.unwrap();
-        cache.put("key2".to_string(), b"data2").await.unwrap();
-        cache.put("key3".to_string(), b"data3").await.unwrap();
+        // Add data that exceeds the 1KB limit
+        cache.put("key1".to_string(), &vec![0u8; 400]).await.unwrap(); // 400 bytes
+        cache.put("key2".to_string(), &vec![1u8; 400]).await.unwrap(); // 400 bytes
+        cache.put("key3".to_string(), &vec![2u8; 400]).await.unwrap(); // 400 bytes - should evict key1
 
-        assert_eq!(cache.len().await, 3);
+        // key1 should be evicted due to size limit
+        assert!(!cache.contains_key("key1").await);
+        assert!(cache.contains_key("key2").await);
+        assert!(cache.contains_key("key3").await);
 
-        // Add one more to trigger eviction
-        cache.put("key4".to_string(), b"data4").await.unwrap();
-
-        assert_eq!(cache.len().await, 3);
-        assert!(!cache.contains_key("key1").await); // Should be evicted
-        assert!(cache.contains_key("key4").await); // Should be present
+        let stats = cache.stats().await;
+        assert!(stats.current_size <= stats.max_size_bytes);
     }
 
     #[tokio::test]
     async fn test_cache_persistence() {
         let temp_dir = TempDir::new().unwrap();
-        let config = CacheConfig {
-            cache_dir: temp_dir.path().to_path_buf(),
-            max_entries: 5,
-        };
+        let config = CacheConfig::with_max_size(temp_dir.path().to_path_buf(), 2048);
 
         // Create cache and add some data
         {
@@ -580,5 +679,18 @@ mod tests {
             let mmap_view = cache.get_mmap("persistent_key").await.unwrap().unwrap();
             assert_eq!(mmap_view.as_bytes(), b"persistent_data");
         }
+    }
+
+    #[tokio::test]
+    async fn test_automatic_size_calculation() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = CacheConfig::new(temp_dir.path().to_path_buf());
+
+        let cache = DiskCache::new(config).await.unwrap();
+        let stats = cache.stats().await;
+
+        // Should have calculated a reasonable max size based on available disk space
+        assert!(stats.max_size_bytes > 0);
+        println!("Calculated max size: {} bytes", stats.max_size_bytes);
     }
 }
