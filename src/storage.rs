@@ -25,6 +25,7 @@ use aws_smithy_runtime_api::client::{
 };
 use bytes::Bytes;
 use thiserror::Error;
+use tokio::sync::broadcast;
 
 use crate::{
     metadata::SnapshotID,
@@ -195,6 +196,21 @@ impl ObjectStoreTrait for S3ObjectStore {
     }
 }
 
+#[derive(Error, Debug, Clone)]
+pub enum StorageCacheError {
+    #[error("Storage error: {0}")]
+    StorageError(#[from] Arc<StorageError>),
+
+    #[error("Storage cache byte stream error: {0}")]
+    StorageCacheByteStreamError(#[from] Arc<ByteStreamError>),
+
+    #[error("Storage cache error: {0}")]
+    StorageCacheBroadcastError(#[from] tokio::sync::broadcast::error::RecvError),
+}
+
+/// Type alias for the inflight request broadcast sender
+type InflightSender = broadcast::Sender<Result<Bytes, StorageCacheError>>;
+
 /// A simple cache for the object store that caches run data in memory
 pub struct StorageCache {
     /// The underlying storage system
@@ -202,6 +218,11 @@ pub struct StorageCache {
 
     /// In-memory cache of run data
     cache: Arc<RwLock<HashMap<RunId, Bytes>>>,
+
+    /// Map of inflight requests to prevent duplicate fetches
+    /// Each entry contains a broadcast sender that will notify all waiters when
+    /// the request completes (either success or failure)
+    inflight: Arc<RwLock<HashMap<RunId, InflightSender>>>,
 }
 
 impl StorageCache {
@@ -210,11 +231,12 @@ impl StorageCache {
         Self {
             storage,
             cache: Arc::new(RwLock::new(HashMap::new())),
+            inflight: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
     /// Get run data from cache or storage if not cached
-    pub async fn get_run(&self, run_id: RunId) -> Result<Bytes, StorageError> {
+    pub async fn get_run(&self, run_id: RunId) -> Result<Bytes, StorageCacheError> {
         // First check if the run is in the cache
         {
             let cache = self.cache.read().unwrap();
@@ -223,16 +245,53 @@ impl StorageCache {
             }
         }
 
-        // Not in cache, fetch from storage
-        let run_stream = self.storage.get_run(run_id.clone()).await?;
-        let run_data = bytes::Bytes::from(run_stream.collect().await?.to_vec());
+        // Check if there's already an inflight request for this run
+        let receiver_opt = {
+            let mut inflight = self.inflight.write().unwrap();
 
-        // Update cache
-        {
-            let mut cache = self.cache.write().unwrap();
-            cache.insert(run_id, run_data.clone());
+            if let Some(sender) = inflight.get(&run_id) {
+                // There's already an inflight request, subscribe to it
+                Some(sender.subscribe())
+            } else {
+                // No inflight request, create a new broadcast channel
+                let (sender, _receiver) = broadcast::channel(1);
+                inflight.insert(run_id.clone(), sender);
+                None
+            }
+        };
+
+        // If we have a receiver, wait for the inflight request to complete
+        if let Some(mut receiver) = receiver_opt {
+            return receiver.recv().await?;
         }
 
-        Ok(run_data)
+        // We're the first request for this run, fetch from storage
+        let result: Result<Bytes, StorageCacheError> = async {
+            let run_stream = self
+                .storage
+                .get_run(run_id.clone())
+                .await
+                .map_err(|err| StorageCacheError::StorageError(Arc::new(err)))?;
+            let collected = run_stream
+                .collect()
+                .await
+                .map_err(|err| StorageCacheError::StorageCacheByteStreamError(Arc::new(err)))?;
+            Ok(bytes::Bytes::from(collected.to_vec()))
+        }
+        .await;
+
+        if let Ok(data) = result.as_ref() {
+            let mut cache = self.cache.write().unwrap();
+            cache.insert(run_id.clone(), data.clone());
+        }
+
+        // Notify all waiters and remove from inflight map
+        {
+            let mut inflight = self.inflight.write().unwrap();
+            let sender = inflight.remove(&run_id).expect("Sender should exist");
+            let _ = sender.send(result.clone());
+        }
+
+        result
     }
 }

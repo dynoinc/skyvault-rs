@@ -45,7 +45,8 @@ pub async fn execute(
 
     let state = ForestImpl::latest(metadata_store.clone(), object_store.clone()).await?;
 
-    // Pick a random run at level and all the runs that overlap with it in the next level.
+    // Pick a random run at level and all the runs that overlap with it in the next
+    // level.
     let table = match state.trees.get(&table_id) {
         Some(table) => table,
         None => {
@@ -56,9 +57,7 @@ pub async fn execute(
 
     let level_run_metadata = match table.tree.get(&level).and_then(|runs| {
         let mut rng = rand::rng();
-        runs.iter()
-            .choose(&mut rng)
-            .map(|(_, v)| v.clone())
+        runs.iter().choose(&mut rng).map(|(_, v)| v.clone())
     }) {
         Some(run_metadata) => run_metadata,
         None => {
@@ -78,9 +77,7 @@ pub async fn execute(
             m.values()
                 .filter(|run| {
                     let (min_key, max_key) = match &run.stats {
-                        Stats::StatsV1(StatsV1 {
-                            min_key, max_key, ..
-                        }) => (min_key, max_key),
+                        Stats::StatsV1(StatsV1 { min_key, max_key, .. }) => (min_key, max_key),
                     };
                     // Check for overlap
                     key_range.contains(min_key) || key_range.contains(max_key)
