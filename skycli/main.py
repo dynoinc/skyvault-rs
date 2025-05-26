@@ -1,42 +1,10 @@
-import subprocess
-import re
-import grpc
 import fire
 
 from google.protobuf import descriptor_pool, message_factory
 from google.protobuf.json_format import ParseDict
 
+from minikube import setup_connection
 from skyvault.v1 import skyvault_pb2_grpc
-
-
-def setup_connection(url: str) -> grpc.Channel:
-    if url:
-        channel = grpc.insecure_channel(url)
-        grpc.channel_ready_future(channel).result(timeout=10)
-        return channel
-
-    command = [
-        "minikube",
-        "service",
-        "skyvault-dev",
-        "--url",
-        "--format={{.IP}}:{{.Port}}",
-    ]
-    tunnel_process = subprocess.Popen(
-        command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
-    )
-
-    # Blocking wait for URL from stdout
-    line = tunnel_process.stdout.readline().strip()
-    match = re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}:\d+$", line)
-    if match:
-        service_url = line
-    else:
-        raise RuntimeError("Unable to open tunnel")
-
-    channel = grpc.insecure_channel(service_url)
-    grpc.channel_ready_future(channel).result(timeout=10)
-    return channel
 
 
 SERVICE_CONFIG = {
@@ -46,10 +14,7 @@ SERVICE_CONFIG = {
 }
 
 
-def build_service(stub_cls, address: str):
-    channel = setup_connection(address)
-    stub = stub_cls(channel)
-
+def build_service(service_name: str, stub_cls):
     pool = descriptor_pool.Default()
     svc_name = stub_cls.__name__.replace("Stub", "")
     full_svc_name = f"skyvault.v1.{svc_name}"
@@ -61,6 +26,8 @@ def build_service(stub_cls, address: str):
 
         def make_rpc(method_desc):
             def rpc(request: dict = None, **kwargs):
+                channel = setup_connection(f"skyvault-{service_name}")
+                stub = stub_cls(channel)
                 msg = message_factory.GetMessageClass(method_desc.input_type)()
                 if request:
                     ParseDict(request, msg)
@@ -68,6 +35,7 @@ def build_service(stub_cls, address: str):
                     setattr(msg, k, v)
                 resp = getattr(stub, method_desc.name)(msg)
                 print(resp)
+                channel.close()
 
             rpc.__doc__ = f"{method_desc.name} → {method_desc.output_type.full_name}"
             return rpc
@@ -78,7 +46,7 @@ def build_service(stub_cls, address: str):
 
 
 def create_cli():
-    return {name: build_service(stub, "") for name, stub in SERVICE_CONFIG.items()}
+    return {name: build_service(name, stub) for name, stub in SERVICE_CONFIG.items()}
 
 
 if __name__ == "__main__":

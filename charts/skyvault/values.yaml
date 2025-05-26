@@ -24,6 +24,7 @@ common:
 
     # Rust
     RUST_BACKTRACE: 1
+    RUST_LOG: "skyvault=info"
 
 # Dynamic Configuration
 dynamicConfig:
@@ -31,10 +32,10 @@ dynamicConfig:
   concurrentUploads: "2"
 
 deployments:
-  dev:
+  reader:
     enabled: false
-    instanceName: "dev"
-    replicaCount: 1
+    instanceName: "reader"
+    replicaCount: 4
     resources:
       limits:
         cpu: 500m
@@ -46,11 +47,62 @@ deployments:
       type: NodePort
       port: 50051
       nodePort: 30051
+    cache:
+      # Volume type: "tmpfs", "pvc", or "none"
+      volumeType: none
+      tmpfs:
+        # Size limit for tmpfs (e.g., "1Gi", "512Mi")
+        sizeLimit: 1Gi
+      # Configuration for PVC volume
+      pvc:
+        # Storage class for PVC (leave empty for default)
+        storageClass: standard
+        # Size of PVC (e.g., "10Gi", "5Gi")
+        size: 10Gi
+        # Access mode for PVC
+        accessMode: ReadWriteOnce
     # Instance-specific environment variables
     env:
-      RUST_LOG: "skyvault=debug"
-      SKYVAULT_ENABLE_WRITER: "true"
       SKYVAULT_ENABLE_READER: "true"
+
+  writer:
+    enabled: false
+    instanceName: "writer"
+    replicaCount: 2
+    resources:
+      limits:
+        cpu: 1000m
+        memory: 1Gi
+      requests:
+        cpu: 500m
+        memory: 512Mi
+    service:
+      type: NodePort
+      port: 50051
+      nodePort: 30052
+    cache:
+      volumeType: none
+    env:
+      SKYVAULT_ENABLE_WRITER: "true"
+
+  orchestrator:
+    enabled: false
+    instanceName: "orchestrator"
+    replicaCount: 1
+    resources:
+      limits:
+        cpu: 500m
+        memory: 512Mi
+      requests:
+        cpu: 200m
+        memory: 256Mi
+    service:
+      type: NodePort
+      port: 50051
+      nodePort: 30053
+    cache:
+      volumeType: none
+    env:
       SKYVAULT_ENABLE_ORCHESTRATOR: "true"
 
 # Service account configuration

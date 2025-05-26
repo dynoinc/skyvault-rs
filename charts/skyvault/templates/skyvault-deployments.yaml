@@ -1,8 +1,14 @@
 {{- range $key, $deployment := .Values.deployments }}
 {{- if $deployment.enabled }}
+{{- $readerEnabled := eq ((get ($deployment.env | default dict) "SKYVAULT_ENABLE_READER" | default "false") | toString) "true" }}
+{{- $useStatefulSet := and (eq (get ($deployment.cache | default dict) "volumeType" | default "none") "pvc") $readerEnabled }}
 ---
 apiVersion: apps/v1
+{{- if $useStatefulSet }}
+kind: StatefulSet
+{{- else }}
 kind: Deployment
+{{- end }}
 metadata:
   name: skyvault-{{ $deployment.instanceName }}
   labels:
@@ -10,6 +16,9 @@ metadata:
     app.kubernetes.io/component: skyvault-{{ $deployment.instanceName }}
 spec:
   replicas: {{ $deployment.replicaCount }}
+  {{- if $useStatefulSet }}
+  serviceName: skyvault-{{ $deployment.instanceName }}
+  {{- end }}
   selector:
     matchLabels:
       {{- include "skyvault.selectorLabels" $ | nindent 6 }}
@@ -48,6 +57,40 @@ spec:
             
             - name: SKYVAULT_IMAGE_ID
               value: "{{ $.Values.common.image.id }}"
+          {{- if and $readerEnabled (ne $deployment.cache.volumeType "none") }}
+          volumeMounts:
+            - name: cache-volume
+              mountPath: /tmp/skyvault-cache
+          {{- end }}
+      {{- if and $readerEnabled (ne $deployment.cache.volumeType "none") (not $useStatefulSet) }}
+      volumes:
+        - name: cache-volume
+          {{- if eq $deployment.cache.volumeType "tmpfs" }}
+          emptyDir:
+            medium: Memory
+            sizeLimit: {{ $deployment.cache.tmpfs.sizeLimit }}
+          {{- else if eq $deployment.cache.volumeType "pvc" }}
+          persistentVolumeClaim:
+            claimName: skyvault-cache-pvc-{{ $deployment.instanceName }}
+          {{- end }}
+      {{- end }}
+  {{- if $useStatefulSet }}
+  volumeClaimTemplates:
+    - metadata:
+        name: cache-volume
+        labels:
+          {{- include "skyvault.labels" $ | nindent 10 }}
+          app.kubernetes.io/component: skyvault-{{ $deployment.instanceName }}
+      spec:
+        accessModes:
+          - {{ $deployment.cache.pvc.accessMode }}
+        resources:
+          requests:
+            storage: {{ $deployment.cache.pvc.size }}
+        {{- if $deployment.cache.pvc.storageClass }}
+        storageClassName: {{ $deployment.cache.pvc.storageClass }}
+        {{- end }}
+  {{- end }}
 ---
 # Service for each Skyvault instance
 apiVersion: v1

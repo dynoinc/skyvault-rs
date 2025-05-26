@@ -1,66 +1,47 @@
 import grpc
-import subprocess
-import re
 import time
 import sys
 import pytest
 
 from skyvault.v1 import skyvault_pb2
 from skyvault.v1 import skyvault_pb2_grpc
+from minikube import setup_connection
 
 #
 # Fixtures
 #
+import concurrent.futures
 
-
-@pytest.fixture(scope="session")
-def service_connection():
-    """Creates and manages a connection to the skyvault service via minikube."""
-    # Start minikube service tunnel
-    command = [
-        "minikube",
-        "service",
-        "skyvault-dev",
-        "--url",
-        "--format={{.IP}}:{{.Port}}",
-    ]
-    print(f"Starting minikube tunnel: {' '.join(command)}")
-    tunnel_process = subprocess.Popen(
-        command, stdout=subprocess.PIPE, stderr=sys.stderr, text=True
-    )
-
-    # Blocking wait for URL from stdout
-    line = tunnel_process.stdout.readline().strip()
-    match = re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}:\d+$", line)
-    if match:
-        service_url = line
-        print(f"Service URL: {service_url}")
-    else:
-        pytest.fail(f"Failed to get service URL. Got: {line}")
-
-    # Connect to the service
-    channel = grpc.insecure_channel(service_url)
+def create_connection(service_name):
+    """Creates and manages a connection to a skyvault service via minikube."""
     try:
-        grpc.channel_ready_future(channel).result(timeout=10)
+        channel = setup_connection(f"skyvault-{service_name}")
+        print(f"Successfully connected to skyvault-{service_name} service")
+        return channel
+    except RuntimeError as e:
+        pytest.fail(f"Failed to connect to {service_name} gRPC service: {e}")
     except grpc.FutureTimeoutError:
-        pytest.fail("Failed to connect to gRPC service")
-
-    yield channel
-
+        pytest.fail(f"Failed to connect to {service_name} gRPC service: timeout")
 
 @pytest.fixture(scope="session")
-def stubs(service_connection):
+def connections():
+    services = ["writer", "reader", "orchestrator"]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(services)) as executor:
+        future_to_service = {executor.submit(create_connection, service): service for service in services}
+        connections = {}
+        for future in concurrent.futures.as_completed(future_to_service):
+            service = future_to_service[future]
+            connections[service] = future.result()
+    return connections
+
+@pytest.fixture(scope="session")
+def stubs(connections):
     """Creates gRPC stubs for different services."""
-    writer_stub = skyvault_pb2_grpc.WriterServiceStub(service_connection)
-    reader_stub = skyvault_pb2_grpc.ReaderServiceStub(service_connection)
-    orchestrator_stub = skyvault_pb2_grpc.OrchestratorServiceStub(service_connection)
-
     return {
-        "writer": writer_stub,
-        "reader": reader_stub,
-        "orchestrator": orchestrator_stub,
+        "writer": skyvault_pb2_grpc.WriterServiceStub(connections["writer"]),
+        "reader": skyvault_pb2_grpc.ReaderServiceStub(connections["reader"]),
+        "orchestrator": skyvault_pb2_grpc.OrchestratorServiceStub(connections["orchestrator"]),
     }
-
 
 #
 # Helper functions

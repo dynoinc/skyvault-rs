@@ -20,10 +20,16 @@ build:
     docker build -t localhost/skyvault:dev .
     docker save --output ./target/myapp.tar localhost/skyvault:dev
     minikube image load ./target/myapp.tar
-    kubectl delete pod -l app.kubernetes.io/component=skyvault-dev
+
+    kubectl delete pod -l app.kubernetes.io/component=skyvault-reader
+    kubectl delete pod -l app.kubernetes.io/component=skyvault-writer
+    kubectl delete pod -l app.kubernetes.io/component=skyvault-orchestrator
 
 deploy:
-    helm upgrade --install dev ./charts/skyvault --set deployments.dev.enabled=true
+    helm upgrade --install dev ./charts/skyvault \
+        --set deployments.reader.enabled=true \
+        --set deployments.writer.enabled=true \
+        --set deployments.orchestrator.enabled=true \
 
 pgshell:
     kubectl exec -it $(kubectl get pods -l app.kubernetes.io/component=postgres -o jsonpath="{.items[0].metadata.name}") -- psql -U postgres -d skyvault
