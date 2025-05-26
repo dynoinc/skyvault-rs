@@ -5,12 +5,7 @@ use std::{
     },
     io::Write,
     path::PathBuf,
-    pin::Pin,
     sync::Arc,
-    task::{
-        Context as TaskContext,
-        Poll,
-    },
 };
 
 use anyhow::{
@@ -18,7 +13,6 @@ use anyhow::{
     Result,
 };
 use bytes::Bytes;
-use futures_util::Stream;
 use memmap2::{
     Mmap,
     MmapOptions,
@@ -97,47 +91,6 @@ impl MmapView {
     pub fn to_bytes(&self) -> Bytes {
         Bytes::copy_from_slice(&self.mmap)
     }
-
-    /// Convert to a stream of bytes
-    pub fn into_stream(self, chunk_size: usize) -> MmapStream {
-        MmapStream::new(self, chunk_size)
-    }
-}
-
-/// A stream that yields chunks of data from a memory-mapped file
-pub struct MmapStream {
-    mmap_view: MmapView,
-    position: usize,
-    chunk_size: usize,
-}
-
-impl MmapStream {
-    fn new(mmap_view: MmapView, chunk_size: usize) -> Self {
-        Self {
-            mmap_view,
-            position: 0,
-            chunk_size,
-        }
-    }
-}
-
-impl Stream for MmapStream {
-    type Item = Result<Bytes>;
-
-    fn poll_next(mut self: Pin<&mut Self>, _cx: &mut TaskContext<'_>) -> Poll<Option<Self::Item>> {
-        let this = &mut *self;
-        let data = this.mmap_view.as_bytes();
-
-        if this.position >= data.len() {
-            return Poll::Ready(None);
-        }
-
-        let end = std::cmp::min(this.position + this.chunk_size, data.len());
-        let chunk = &data[this.position..end];
-        this.position = end;
-
-        Poll::Ready(Some(Ok(Bytes::copy_from_slice(chunk))))
-    }
 }
 
 /// Cache entry metadata
@@ -174,11 +127,11 @@ impl Limiter<String, CacheEntry> for BySizeBytes {
     fn on_insert(
         &mut self,
         _length: usize,
-        _key: Self::KeyToInsert<'_>,
+        key: Self::KeyToInsert<'_>,
         value: CacheEntry,
     ) -> Option<(String, CacheEntry)> {
         self.current_size += value.size as usize;
-        None
+        Some((key.to_string(), value))
     }
 
     fn on_replace(
@@ -191,7 +144,7 @@ impl Limiter<String, CacheEntry> for BySizeBytes {
     ) -> bool {
         self.current_size = self.current_size.saturating_sub(old_value.size as usize);
         self.current_size += new_value.size as usize;
-        false
+        true
     }
 
     fn on_removed(&mut self, _key: &mut String, value: &mut CacheEntry) {
@@ -295,29 +248,7 @@ impl DiskCache {
         let mut state = self.state.write().await;
 
         for (key, entry, _) in loaded_entries {
-            let was_inserted = state.insert(key, entry);
-            if was_inserted {
-                // Check if we need to evict entries due to size limits
-                while state.limiter().is_over_the_limit(state.len()) {
-                    if let Some((_evicted_key, evicted_entry)) = state.pop_oldest() {
-                        // Remove evicted file
-                        drop(state); // Release lock before file operation
-
-                        if let Err(e) = fs::remove_file(&evicted_entry.file_path).await {
-                            warn!(
-                                "Failed to remove evicted cache file {:?}: {}",
-                                evicted_entry.file_path, e
-                            );
-                        } else {
-                            debug!("Evicted cache entry during loading: {:?}", evicted_entry.file_path);
-                        }
-
-                        state = self.state.write().await;
-                    } else {
-                        break;
-                    }
-                }
-            }
+            state.insert(key, entry);
         }
 
         let current_size = state.limiter().current_size;
@@ -335,14 +266,32 @@ impl DiskCache {
         self.config.cache_dir.join(key)
     }
 
-    /// Put data into the cache from bytes
-    pub async fn put(&self, key: String, data: &[u8]) -> Result<()> {
-        self.put_impl(key, data).await
-    }
+    async fn insert_and_trim(&self, key: String, entry: CacheEntry) -> Result<()> {
+        let files_to_remove = {
+            let mut state = self.state.write().await;
+            state.insert(key.clone(), entry);
 
-    /// Put data into the cache from Bytes
-    pub async fn put_bytes(&self, key: String, data: Bytes) -> Result<()> {
-        self.put_impl(key, &data).await
+            let mut files_to_remove = Vec::new();
+            while state.limiter().is_over_the_limit(state.len()) {
+                if let Some((_evicted_key, evicted_entry)) = state.pop_oldest() {
+                    files_to_remove.push(evicted_entry.file_path.clone());
+                } else {
+                    break;
+                }
+            }
+
+            files_to_remove
+        };
+
+        for file_path in files_to_remove {
+            if let Err(e) = fs::remove_file(&file_path).await {
+                warn!("Failed to remove evicted cache file {:?}: {}", file_path, e);
+            } else {
+                debug!("Evicted cache entry: {:?}", file_path);
+            }
+        }
+        
+        Ok(())
     }
 
     /// Put data into the cache from an async reader (like ByteStream)
@@ -374,37 +323,12 @@ impl DiskCache {
             size,
         };
 
-        // Update cache state
-        let mut state = self.state.write().await;
-
-        let was_inserted = state.insert(key.clone(), entry);
-        if was_inserted {
-            // Check if we need to evict entries due to size limits
-            while state.limiter().is_over_the_limit(state.len()) {
-                if let Some((_evicted_key, evicted_entry)) = state.pop_oldest() {
-                    // Remove evicted file
-                    let evicted_path = evicted_entry.file_path.clone();
-                    drop(state); // Release lock before file operation
-
-                    if let Err(e) = fs::remove_file(&evicted_path).await {
-                        warn!("Failed to remove evicted cache file {:?}: {}", evicted_path, e);
-                    } else {
-                        debug!("Evicted cache entry: {:?}", evicted_path);
-                    }
-
-                    state = self.state.write().await;
-                } else {
-                    break;
-                }
-            }
-        }
-
+        self.insert_and_trim(key.clone(), entry).await?;
         debug!("Cached key '{}' with size {} bytes", key, size);
         Ok(())
     }
 
-    /// Internal implementation for putting data
-    async fn put_impl(&self, key: String, data: &[u8]) -> Result<()> {
+    pub async fn put(&self, key: String, data: &[u8]) -> Result<()> {
         let file_path = self.get_file_path(&key);
 
         // Write data to file
@@ -427,31 +351,7 @@ impl DiskCache {
             size,
         };
 
-        // Update cache state
-        let mut state = self.state.write().await;
-
-        let was_inserted = state.insert(key.clone(), entry);
-        if was_inserted {
-            // Check if we need to evict entries due to size limits
-            while state.limiter().is_over_the_limit(state.len()) {
-                if let Some((_evicted_key, evicted_entry)) = state.pop_oldest() {
-                    // Remove evicted file
-                    let evicted_path = evicted_entry.file_path.clone();
-                    drop(state); // Release lock before file operation
-
-                    if let Err(e) = fs::remove_file(&evicted_path).await {
-                        warn!("Failed to remove evicted cache file {:?}: {}", evicted_path, e);
-                    } else {
-                        debug!("Evicted cache entry: {:?}", evicted_path);
-                    }
-
-                    state = self.state.write().await;
-                } else {
-                    break;
-                }
-            }
-        }
-
+        self.insert_and_trim(key.clone(), entry).await?;
         debug!("Cached key '{}' with size {} bytes", key, size);
         Ok(())
     }
@@ -476,15 +376,6 @@ impl DiskCache {
         };
 
         Ok(Some(MmapView { _file: file, mmap }))
-    }
-
-    /// Get cached data as a stream of bytes
-    pub async fn get_stream(&self, key: &str, chunk_size: usize) -> Result<Option<MmapStream>> {
-        if let Some(mmap_view) = self.get_mmap(key).await? {
-            Ok(Some(mmap_view.into_stream(chunk_size)))
-        } else {
-            Ok(None)
-        }
     }
 
     /// Check if a key exists in the cache
@@ -581,7 +472,6 @@ pub struct CacheStats {
 mod tests {
     use std::io::Cursor;
 
-    use futures_util::StreamExt;
     use tempfile::TempDir;
 
     use super::*;
@@ -620,25 +510,6 @@ mod tests {
 
         let mmap_view = cache.get_mmap(&key).await.unwrap().unwrap();
         assert_eq!(mmap_view.as_bytes(), data);
-    }
-
-    #[tokio::test]
-    async fn test_get_stream() {
-        let (cache, _temp_dir) = create_test_cache().await;
-
-        let key = "stream_test".to_string();
-        let data = b"This is test data for streaming";
-
-        cache.put(key.clone(), data).await.unwrap();
-
-        let mut stream = cache.get_stream(&key, 8).await.unwrap().unwrap();
-        let mut result = Vec::new();
-
-        while let Some(chunk) = stream.next().await {
-            result.extend_from_slice(&chunk.unwrap());
-        }
-
-        assert_eq!(result, data);
     }
 
     #[tokio::test]
