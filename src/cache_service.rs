@@ -1,10 +1,14 @@
-use std::pin::Pin;
+use std::{
+    future,
+    pin::Pin,
+};
 
 use futures::{
     Stream,
     StreamExt,
     TryStreamExt,
     pin_mut,
+    stream,
 };
 use thiserror::Error;
 use tonic::{
@@ -14,11 +18,12 @@ use tonic::{
 };
 
 use crate::{
+    cache::CacheConfig,
     k_way,
     metadata,
     proto,
-    runs,
     runs::{
+        self,
         RunError,
         RunId,
         SearchResult,
@@ -33,7 +38,7 @@ use crate::{
 #[derive(Debug, Error)]
 pub enum CacheServiceError {
     #[error("Storage error: {0}")]
-    StorageError(#[from] storage::StorageError),
+    StorageError(#[from] storage::StorageCacheError),
 }
 
 pub struct MyCache {
@@ -41,8 +46,8 @@ pub struct MyCache {
 }
 
 impl MyCache {
-    pub async fn new(storage: storage::ObjectStore) -> Result<Self, CacheServiceError> {
-        let storage_cache = StorageCache::new(storage);
+    pub async fn new(storage: storage::ObjectStore, cache_config: CacheConfig) -> Result<Self, CacheServiceError> {
+        let storage_cache = StorageCache::new(storage, cache_config).await?;
         Ok(Self { storage_cache })
     }
 }
@@ -117,22 +122,12 @@ impl proto::cache_service_server::CacheService for MyCache {
                     return Err(Status::internal(format!("Error getting run {run_id_str}: {e}")));
                 },
             };
-            let stream = runs::read_run_stream(futures::stream::once(futures::future::ok(run_data)));
+            let op_iter = runs::read_run_iter(run_data);
 
+            let exclusive_start_key = exclusive_start_key.clone();
             let filtered_stream = {
-                let exclusive_start_key = exclusive_start_key.clone();
-                stream
-                    .try_filter_map(move |op| {
-                        let exclusive_start_key = exclusive_start_key.clone();
-                        async move {
-                            if op.key() > exclusive_start_key.as_str() {
-                                Ok(Some(op))
-                            } else {
-                                Ok(None)
-                            }
-                        }
-                    })
-                    .map_err(RunError::from)
+                stream::iter(op_iter)
+                    .try_filter(move |op| future::ready(op.key() > exclusive_start_key.as_str()))
                     .boxed()
             };
 
@@ -208,7 +203,7 @@ mod tests {
     async fn test_my_cache_new() {
         requires_docker!();
         let (object_store, _container) = setup_test_object_store().await.unwrap();
-        let cache = MyCache::new(object_store).await;
+        let cache = MyCache::new(object_store, CacheConfig::default()).await;
         assert!(cache.is_ok());
     }
 
@@ -216,7 +211,9 @@ mod tests {
     async fn test_get_from_run_simple() {
         requires_docker!();
         let (object_store, _container) = setup_test_object_store().await.unwrap();
-        let cache_service = MyCache::new(object_store.clone()).await.unwrap();
+        let cache_service = MyCache::new(object_store.clone(), CacheConfig::default())
+            .await
+            .unwrap();
 
         let run_id_str = "test_get_run_1".to_string();
         let run_id = RunId(run_id_str.clone());
@@ -271,7 +268,9 @@ mod tests {
     async fn test_scan_from_run_simple() {
         requires_docker!();
         let (object_store, _container) = setup_test_object_store().await.unwrap();
-        let cache_service = MyCache::new(object_store.clone()).await.unwrap();
+        let cache_service = MyCache::new(object_store.clone(), CacheConfig::default())
+            .await
+            .unwrap();
 
         let run_id_str = "test_scan_run_1".to_string();
         let run_id = RunId(run_id_str.clone());
@@ -344,7 +343,9 @@ mod tests {
     async fn test_scan_from_run_multiple_runs() {
         requires_docker!();
         let (object_store, _container) = setup_test_object_store().await.unwrap();
-        let cache_service = MyCache::new(object_store.clone()).await.unwrap();
+        let cache_service = MyCache::new(object_store.clone(), CacheConfig::default())
+            .await
+            .unwrap();
 
         let run_id_1_str = "scan_multi_run_1".to_string();
         let run_id_1 = RunId(run_id_1_str.clone());

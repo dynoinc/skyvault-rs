@@ -44,6 +44,16 @@ pub struct CacheConfig {
     pub disk_usage_percentage: f64,
 }
 
+impl Default for CacheConfig {
+    fn default() -> Self {
+        Self {
+            cache_dir: PathBuf::from("/tmp/skyvault-cache"),
+            max_size_bytes: None,
+            disk_usage_percentage: 80.0,
+        }
+    }
+}
+
 impl CacheConfig {
     /// Create a new cache configuration with automatic disk space calculation
     pub fn new(cache_dir: PathBuf) -> Self {
@@ -65,8 +75,13 @@ impl CacheConfig {
 }
 
 /// A memory-mapped view of cached data
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MmapView {
+    inner: Arc<MmapViewInner>,
+}
+
+#[derive(Debug)]
+struct MmapViewInner {
     _file: File,
     mmap: Mmap,
 }
@@ -74,22 +89,22 @@ pub struct MmapView {
 impl MmapView {
     /// Get the data as a byte slice
     pub fn as_bytes(&self) -> &[u8] {
-        &self.mmap
+        &self.inner.mmap
     }
 
     /// Get the length of the data
     pub fn len(&self) -> usize {
-        self.mmap.len()
+        self.inner.mmap.len()
     }
 
     /// Check if the data is empty
     pub fn is_empty(&self) -> bool {
-        self.mmap.is_empty()
+        self.inner.mmap.is_empty()
     }
 
     /// Convert to owned bytes
     pub fn to_bytes(&self) -> Bytes {
-        Bytes::copy_from_slice(&self.mmap)
+        Bytes::copy_from_slice(&self.inner.mmap)
     }
 }
 
@@ -290,7 +305,7 @@ impl DiskCache {
                 debug!("Evicted cache entry: {:?}", file_path);
             }
         }
-        
+
         Ok(())
     }
 
@@ -375,7 +390,9 @@ impl DiskCache {
                 .with_context(|| format!("Failed to mmap cache file: {file_path:?}"))?
         };
 
-        Ok(Some(MmapView { _file: file, mmap }))
+        Ok(Some(MmapView {
+            inner: Arc::new(MmapViewInner { _file: file, mmap }),
+        }))
     }
 
     /// Check if a key exists in the cache

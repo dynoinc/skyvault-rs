@@ -16,7 +16,10 @@ use futures::{
     StreamExt,
 };
 
-use crate::proto;
+use crate::{
+    cache::MmapView,
+    proto,
+};
 
 // Type aliases for clarity
 pub type Key = String;
@@ -28,6 +31,12 @@ pub struct RunId(pub String);
 impl<T: Into<String>> From<T> for RunId {
     fn from(value: T) -> Self {
         RunId(value.into())
+    }
+}
+
+impl AsRef<str> for RunId {
+    fn as_ref(&self) -> &str {
+        &self.0
     }
 }
 
@@ -79,6 +88,21 @@ pub enum SearchResult {
     Found(Value),
     Tombstone,
     NotFound,
+}
+
+#[derive(Clone)]
+pub enum RunView {
+    Mmap(MmapView),
+    Bytes(Bytes),
+}
+
+impl AsRef<[u8]> for RunView {
+    fn as_ref(&self) -> &[u8] {
+        match self {
+            RunView::Mmap(mmap) => mmap.as_bytes(),
+            RunView::Bytes(bytes) => bytes.as_ref(),
+        }
+    }
 }
 
 // Errors that can occur during run operations
@@ -398,6 +422,111 @@ pub fn search_run(run_data: &[u8], search_key: &str) -> SearchResult {
 
     // Reached end of run without finding the key
     SearchResult::NotFound
+}
+
+struct RunIterator {
+    view: RunView,
+    position: usize,
+    len: usize,
+}
+
+impl Iterator for RunIterator {
+    type Item = Result<WriteOperation, RunError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let bytes = self.view.as_ref();
+
+        // Return None if we've reached the end
+        if self.position >= self.len {
+            return None;
+        }
+
+        // Read marker byte
+        if self.position >= bytes.len() {
+            return Some(Err(RunError::Format("Unexpected end of data".into())));
+        }
+        let marker = bytes[self.position];
+        self.position += 1;
+
+        // Read key length
+        if self.position + 4 > bytes.len() {
+            return Some(Err(RunError::Format("Incomplete key length data".into())));
+        }
+        let key_len = u32::from_be_bytes([
+            bytes[self.position],
+            bytes[self.position + 1],
+            bytes[self.position + 2],
+            bytes[self.position + 3],
+        ]) as usize;
+        self.position += 4;
+
+        // Check for potential overflow or incomplete data
+        if self.position.checked_add(key_len).is_none() {
+            return Some(Err(RunError::Format("Key length overflow".into())));
+        }
+
+        if self.position + key_len > self.len {
+            return Some(Err(RunError::Format("Incomplete key data".into())));
+        }
+
+        let key = match std::str::from_utf8(&bytes[self.position..self.position + key_len]) {
+            Ok(k) => k.to_string(),
+            Err(_) => return Some(Err(RunError::Format("Invalid UTF-8 in key".into()))),
+        };
+        self.position += key_len;
+
+        match marker {
+            MARKER_PUT => {
+                // Read value length
+                if self.position + 4 > bytes.len() {
+                    return Some(Err(RunError::Format("Incomplete value length data".into())));
+                }
+                let value_len = u32::from_be_bytes([
+                    bytes[self.position],
+                    bytes[self.position + 1],
+                    bytes[self.position + 2],
+                    bytes[self.position + 3],
+                ]) as usize;
+                self.position += 4;
+
+                // Check for potential overflow or incomplete data
+                if self.position.checked_add(value_len).is_none() {
+                    return Some(Err(RunError::Format("Value length overflow".into())));
+                }
+
+                if self.position + value_len > self.len {
+                    return Some(Err(RunError::Format("Incomplete value data".into())));
+                }
+
+                let value = bytes[self.position..self.position + value_len].to_vec();
+                self.position += value_len;
+
+                Some(Ok(WriteOperation::Put(key, value)))
+            },
+            MARKER_DELETE => Some(Ok(WriteOperation::Delete(key))),
+            _ => Some(Err(RunError::Format(format!("Invalid marker byte: {marker}")))),
+        }
+    }
+}
+
+/// Reads a serialized run file and returns an iterator over write operations.
+///
+/// This function takes a byte slice representing a serialized run and returns
+/// an iterator that yields each write operation (Put or Delete) contained in
+/// the run.
+pub fn read_run_iter(view: RunView) -> Box<dyn Iterator<Item = Result<WriteOperation, RunError>> + Send> {
+    if view.as_ref().is_empty() {
+        return Box::new(std::iter::once(Err(RunError::EmptyInput)));
+    }
+
+    // Read version byte
+    let version = view.as_ref()[0];
+    if version != CURRENT_VERSION {
+        return Box::new(std::iter::once(Err(RunError::UnsupportedVersion(version))));
+    }
+
+    let len = view.as_ref().len();
+    Box::new(RunIterator { view, position: 1, len })
 }
 
 /// Reads a serialized run file and returns a stream of write operations.

@@ -28,8 +28,15 @@ use thiserror::Error;
 use tokio::sync::broadcast;
 
 use crate::{
+    cache::{
+        CacheConfig,
+        DiskCache,
+    },
     metadata::SnapshotID,
-    runs::RunId,
+    runs::{
+        RunId,
+        RunView,
+    },
 };
 
 #[derive(Error, Debug)]
@@ -206,6 +213,9 @@ pub enum StorageCacheError {
 
     #[error("Storage cache error: {0}")]
     StorageCacheBroadcastError(#[from] tokio::sync::broadcast::error::RecvError),
+
+    #[error("Storage disk cache error: {0}")]
+    StorageCacheMmapError(#[from] Arc<anyhow::Error>),
 }
 
 /// Type alias for the inflight request broadcast sender
@@ -216,8 +226,8 @@ pub struct StorageCache {
     /// The underlying storage system
     storage: ObjectStore,
 
-    /// In-memory cache of run data
-    cache: Arc<RwLock<HashMap<RunId, Bytes>>>,
+    /// The cache of run data
+    cache: DiskCache,
 
     /// Map of inflight requests to prevent duplicate fetches
     /// Each entry contains a broadcast sender that will notify all waiters when
@@ -227,21 +237,29 @@ pub struct StorageCache {
 
 impl StorageCache {
     /// Create a new StorageCache
-    pub fn new(storage: ObjectStore) -> Self {
-        Self {
+    pub async fn new(storage: ObjectStore, cache_config: CacheConfig) -> Result<Self, StorageCacheError> {
+        let cache = DiskCache::new(cache_config)
+            .await
+            .map_err(|err| StorageCacheError::StorageCacheMmapError(Arc::new(err)))?;
+
+        Ok(Self {
             storage,
-            cache: Arc::new(RwLock::new(HashMap::new())),
+            cache,
             inflight: Arc::new(RwLock::new(HashMap::new())),
-        }
+        })
     }
 
     /// Get run data from cache or storage if not cached
-    pub async fn get_run(&self, run_id: RunId) -> Result<Bytes, StorageCacheError> {
+    pub async fn get_run(&self, run_id: RunId) -> Result<RunView, StorageCacheError> {
         // First check if the run is in the cache
         {
-            let cache = self.cache.read().unwrap();
-            if let Some(run_data) = cache.get(&run_id) {
-                return Ok(run_data.clone());
+            let cache = self
+                .cache
+                .get_mmap(run_id.as_ref())
+                .await
+                .map_err(|err| StorageCacheError::StorageCacheMmapError(Arc::new(err)))?;
+            if let Some(run_data) = cache {
+                return Ok(RunView::Mmap(run_data));
             }
         }
 
@@ -262,11 +280,11 @@ impl StorageCache {
 
         // If we have a receiver, wait for the inflight request to complete
         if let Some(mut receiver) = receiver_opt {
-            return receiver.recv().await?;
+            return receiver.recv().await?.map(RunView::Bytes);
         }
 
         // We're the first request for this run, fetch from storage
-        let result: Result<Bytes, StorageCacheError> = async {
+        let result = async {
             let run_stream = self
                 .storage
                 .get_run(run_id.clone())
@@ -281,8 +299,10 @@ impl StorageCache {
         .await;
 
         if let Ok(data) = result.as_ref() {
-            let mut cache = self.cache.write().unwrap();
-            cache.insert(run_id.clone(), data.clone());
+            self.cache
+                .put(run_id.to_string(), data)
+                .await
+                .map_err(|err| StorageCacheError::StorageCacheMmapError(Arc::new(err)))?;
         }
 
         // Notify all waiters and remove from inflight map
@@ -292,6 +312,6 @@ impl StorageCache {
             let _ = sender.send(result.clone());
         }
 
-        result
+        result.map(RunView::Bytes)
     }
 }

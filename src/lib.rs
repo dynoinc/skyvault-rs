@@ -145,7 +145,7 @@ impl Builder {
                 .set_service_status(proto::reader_service_server::SERVICE_NAME, ServingStatus::Serving)
                 .await;
 
-            let cache = cache_service::MyCache::new(self.storage.clone()).await?;
+            let cache = cache_service::MyCache::new(self.storage.clone(), cache::CacheConfig::default()).await?;
             health_reporter
                 .set_service_status(proto::cache_service_server::SERVICE_NAME, ServingStatus::Serving)
                 .await;
