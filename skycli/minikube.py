@@ -1,5 +1,3 @@
-
-
 import re
 import subprocess
 import grpc
@@ -23,7 +21,9 @@ def setup_connection(service_name: str) -> grpc.Channel:
     if match:
         service_url = line
     else:
-        raise RuntimeError(f"Unable to get service URL for {service_name}. Got: '{line}'")
+        raise RuntimeError(
+            f"Unable to get service URL for {service_name}. Got: '{line}'"
+        )
 
     channel = grpc.insecure_channel(service_url)
     return channel

@@ -1,7 +1,7 @@
 import grpc
 import time
-import sys
 import pytest
+import concurrent.futures
 
 from skyvault.v1 import skyvault_pb2
 from skyvault.v1 import skyvault_pb2_grpc
@@ -10,7 +10,7 @@ from minikube import setup_connection
 #
 # Fixtures
 #
-import concurrent.futures
+
 
 def create_connection(service_name):
     """Creates and manages a connection to a skyvault service via minikube."""
@@ -23,16 +23,20 @@ def create_connection(service_name):
     except grpc.FutureTimeoutError:
         pytest.fail(f"Failed to connect to {service_name} gRPC service: timeout")
 
+
 @pytest.fixture(scope="session")
 def connections():
     services = ["writer", "reader", "orchestrator"]
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(services)) as executor:
-        future_to_service = {executor.submit(create_connection, service): service for service in services}
+        future_to_service = {
+            executor.submit(create_connection, service): service for service in services
+        }
         connections = {}
         for future in concurrent.futures.as_completed(future_to_service):
             service = future_to_service[future]
             connections[service] = future.result()
     return connections
+
 
 @pytest.fixture(scope="session")
 def stubs(connections):
@@ -40,8 +44,11 @@ def stubs(connections):
     return {
         "writer": skyvault_pb2_grpc.WriterServiceStub(connections["writer"]),
         "reader": skyvault_pb2_grpc.ReaderServiceStub(connections["reader"]),
-        "orchestrator": skyvault_pb2_grpc.OrchestratorServiceStub(connections["orchestrator"]),
+        "orchestrator": skyvault_pb2_grpc.OrchestratorServiceStub(
+            connections["orchestrator"]
+        ),
     }
+
 
 #
 # Helper functions
