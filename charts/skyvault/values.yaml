@@ -80,8 +80,6 @@ deployments:
       type: NodePort
       port: 50051
       nodePort: 30052
-    cache:
-      volumeType: none
     env:
       SKYVAULT_ENABLE_WRITER: "true"
 
@@ -100,8 +98,6 @@ deployments:
       type: NodePort
       port: 50051
       nodePort: 30053
-    cache:
-      volumeType: none
     env:
       SKYVAULT_ENABLE_ORCHESTRATOR: "true"
 
