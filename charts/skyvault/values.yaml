@@ -19,12 +19,12 @@ common:
     SKYVAULT_POSTGRES_DB: skyvault
     SKYVAULT_POSTGRES_HOST: skyvault-postgres
     SKYVAULT_POSTGRES_PORT: 5432
-    SKYVAULT_POSTGRES_SSLMODE: prefer 
+    SKYVAULT_POSTGRES_SSLMODE: allow
     SKYVAULT_POSTGRES_PASSWORD: postgres # used via secret
 
     # Rust
     RUST_BACKTRACE: 1
-    RUST_LOG: "skyvault=info"
+    RUST_LOG: "skyvault=debug"
 
 # Dynamic Configuration
 dynamicConfig:
