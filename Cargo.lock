@@ -4314,7 +4314,7 @@ checksum = "c1e9a774a6c28142ac54bb25d25562e6bcf957493a184f15ad4eebccb23e410a"
 
 [[package]]
 name = "skyvault"
-version = "0.0.10"
+version = "0.0.11"
 dependencies = [
  "anyhow",
  "async-stream",
