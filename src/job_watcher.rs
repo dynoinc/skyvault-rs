@@ -62,7 +62,7 @@ pub async fn watch(
         namespace, label_selector
     );
 
-    let watcher_config = watcher::Config::default().labels(label_selector).streaming_lists(); // Handles initial state and updates
+    let watcher_config = watcher::Config::default().labels(label_selector);
 
     let raw_watcher_stream = watcher::watcher(jobs_api, watcher_config);
 
@@ -77,11 +77,11 @@ pub async fn watch(
                         watcher::Event::InitApply(job) => (job, "InitApply"),
                         watcher::Event::Delete(job) => (job, "Delete"),
                         watcher::Event::Init => {
-                            debug!("Job watcher received Init event, usually handled by streaming_lists.");
+                            debug!("Job watcher received Init event, starting initial sync.");
                             continue;
                         }
                         watcher::Event::InitDone => {
-                            debug!("Job watcher received InitDone event, usually handled by streaming_lists.");
+                            debug!("Job watcher received InitDone event, initial sync completed.");
                             continue;
                         }
                     };

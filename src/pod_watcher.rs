@@ -10,7 +10,7 @@ use kube::{
     runtime::watcher,
 };
 use thiserror::Error;
-use tracing::warn;
+use tracing::{debug, warn};
 
 #[derive(Error, Debug)]
 pub enum PodWatcherError {
@@ -55,7 +55,7 @@ pub async fn watch(
     let label_selector = format!("app.kubernetes.io/component={component}");
     let raw_stream = watcher(
         pods_api,
-        watcher::Config::default().labels(&label_selector).streaming_lists(),
+        watcher::Config::default().labels(&label_selector),
     );
 
     let pod_stream = stream! {
@@ -75,7 +75,11 @@ pub async fn watch(
                                 yield Ok(PodChange::Removed(ip));
                             }
                         }
-                        _ => {
+                        watcher::Event::Init => {
+                            debug!("Pod watcher received Init event, starting initial sync.");
+                        }
+                        watcher::Event::InitDone => {
+                            debug!("Pod watcher received InitDone event, initial sync completed.");
                         }
                     }
                 }
