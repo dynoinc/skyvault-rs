@@ -26,3 +26,8 @@ __pycache__/
 .venv/
 venv/
 
+# Bazel
+bazel-bin
+bazel-out
+bazel-skyvault-rs
+bazel-testlogs
