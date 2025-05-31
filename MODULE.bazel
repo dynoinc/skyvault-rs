@@ -4,9 +4,9 @@ module(
 )
 
 # Core dependencies
-bazel_dep(name = "rules_proto", version = "6.0.0")
-bazel_dep(name = "rules_python", version = "0.31.0")
-bazel_dep(name = "protobuf", version = "26.0")
+bazel_dep(name = "rules_proto", version = "7.1.0")
+bazel_dep(name = "rules_python", version = "1.4.1")
+bazel_dep(name = "protobuf", version = "31.1", repo_name = "com_google_protobuf")
 
 # Python toolchain
 python = use_extension("@rules_python//python/extensions:python.bzl", "python")

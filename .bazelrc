@@ -1,1 +1,1 @@
-build --incompatible_use_python_toolchains=false --lockfile_mode=off --proto_compiler=@protobuf//:protoc
+build --incompatible_use_python_toolchains=false --lockfile_mode=off --proto_compiler=@com_google_protobuf//:protoc

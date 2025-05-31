@@ -5,6 +5,6 @@ proto_library(
     srcs = ["skyvault/v1/skyvault.proto"],
     visibility = ["//visibility:public"],
     deps = [
-        "@protobuf//:empty_proto",
+        "@com_google_protobuf//:empty_proto",
     ],
 )
