@@ -402,7 +402,11 @@ pub struct TableConfig {
 impl From<proto::TableConfig> for TableConfig {
     fn from(config: proto::TableConfig) -> Self {
         TableConfig {
-            table_id: config.table_id.map(TableID),
+            table_id: if config.table_id != 0 {
+                Some(TableID(config.table_id))
+            } else {
+                None
+            },
             table_name: TableName::from(config.table_name),
         }
     }
@@ -411,7 +415,7 @@ impl From<proto::TableConfig> for TableConfig {
 impl From<&TableConfig> for proto::TableConfig {
     fn from(config: &TableConfig) -> Self {
         proto::TableConfig {
-            table_id: config.table_id.map(|id| id.0),
+            table_id: config.table_id.map(|id| id.0).unwrap_or(0),
             table_name: config.table_name.to_string(),
         }
     }

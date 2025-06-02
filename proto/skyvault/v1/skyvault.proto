@@ -289,6 +289,6 @@ message GetTableResponse {
 }
 
 message TableConfig {
-  optional int64 table_id = 1; // assigned after table is created
+  int64 table_id = 1; // assigned after table is created
   string table_name = 2;
 }
