@@ -117,19 +117,30 @@ pub async fn watch(
                                 .map(|count| count > 0)
                                 .unwrap_or(false);
 
+                            // Check if job has truly failed by comparing failed attempts against backoffLimit
                             let failed = job.status.as_ref()
                                 .and_then(|s| s.failed)
-                                .map(|count| count > 0)
-                                .unwrap_or(false);
+                                .unwrap_or(0);
+
+                            // Get backoffLimit from job spec (default is 6 if not specified)
+                            let backoff_limit = job.spec.as_ref()
+                                .and_then(|spec| spec.backoff_limit)
+                                .unwrap_or(6);
+
+                            let job_truly_failed = failed > 0 && failed >= backoff_limit;
 
                             if completed {
                                 info!("Job {} (ID: {}) completed successfully", job_name, job_id);
                                 yield Ok(JobChange::Completed(job_id, job_name));
-                            } else if failed {
-                                info!("Job {} (ID: {}) failed", job_name, job_id);
+                            } else if job_truly_failed {
+                                info!("Job {} (ID: {}) failed after {} attempts (backoffLimit: {})", job_name, job_id, failed, backoff_limit);
                                 yield Ok(JobChange::Failed(job_id, job_name));
                             } else {
-                                info!("Tracking active/pending job: {} (ID: {})", job_name, job_id);
+                                if failed > 0 {
+                                    info!("Job {} (ID: {}) has {} failed attempts, but still has retries remaining (backoffLimit: {})", job_name, job_id, failed, backoff_limit);
+                                } else {
+                                    info!("Tracking active/pending job: {} (ID: {})", job_name, job_id);
+                                }
                                 yield Ok(JobChange::Added(job_id, job_name));
                             }
                         }

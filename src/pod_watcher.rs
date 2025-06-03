@@ -10,7 +10,10 @@ use kube::{
     runtime::watcher,
 };
 use thiserror::Error;
-use tracing::{debug, warn};
+use tracing::{
+    debug,
+    warn,
+};
 
 #[derive(Error, Debug)]
 pub enum PodWatcherError {
@@ -53,10 +56,7 @@ pub async fn watch(
 
     // Create label selector for pods with matching instance
     let label_selector = format!("app.kubernetes.io/component={component}");
-    let raw_stream = watcher(
-        pods_api,
-        watcher::Config::default().labels(&label_selector),
-    );
+    let raw_stream = watcher(pods_api, watcher::Config::default().labels(&label_selector));
 
     let pod_stream = stream! {
         pin_mut!(raw_stream);
