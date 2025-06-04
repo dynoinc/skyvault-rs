@@ -36,13 +36,22 @@ use crate::{
     },
 };
 
-#[derive(Debug, Parser, Clone, Default)]
+#[derive(Debug, Parser, Clone)]
 pub struct CacheConfig {
     #[arg(long, env = "SKYVAULT_CACHE_DIR", default_value = "/tmp/skyvault-cache")]
     pub dir: PathBuf,
 
     #[arg(long, env = "SKYVAULT_CACHE_DISK_USAGE_PERCENTAGE", default_value = "0.95")]
     pub disk_usage_percentage: f64,
+}
+
+impl Default for CacheConfig {
+    fn default() -> Self {
+        Self {
+            dir: PathBuf::from("/tmp/skyvault-cache"),
+            disk_usage_percentage: 0.95,
+        }
+    }
 }
 
 #[derive(Debug, Error)]
