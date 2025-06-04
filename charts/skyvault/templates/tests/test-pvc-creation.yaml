@@ -1,0 +1,134 @@
+---
+# Service account for the test
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: "{{ include "skyvault.fullname" . }}-test-sa"
+  labels:
+    {{- include "skyvault.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+---
+# Role for the test
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: "{{ include "skyvault.fullname" . }}-test-role"
+  labels:
+    {{- include "skyvault.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-weight": "0" 
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+rules:
+- apiGroups: [""]
+  resources: ["persistentvolumeclaims"]
+  verbs: ["get", "list"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "statefulsets"]
+  verbs: ["get", "list"]
+---
+# Role binding for the test
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: "{{ include "skyvault.fullname" . }}-test-rb"
+  labels:
+    {{- include "skyvault.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+subjects:
+- kind: ServiceAccount
+  name: "{{ include "skyvault.fullname" . }}-test-sa"
+  namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: Role
+  name: "{{ include "skyvault.fullname" . }}-test-role"
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "skyvault.fullname" . }}-test-pvc-creation"
+  labels:
+    {{- include "skyvault.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-weight": "1"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  serviceAccountName: "{{ include "skyvault.fullname" . }}-test-sa"
+  containers:
+  - name: pvc-test
+    image: bitnami/kubectl:latest
+    command: ["/bin/bash"]
+    args:
+      - -c
+      - |
+        set -e
+        echo "Testing PVC creation logic..."
+        
+        # Test 1: Check that PVCs exist for deployments with cache.volumeType=pvc and reader enabled
+        {{- range $key, $deployment := .Values.deployments }}
+        {{- if $deployment.enabled }}
+        {{- $readerEnabled := eq ((get ($deployment.env | default dict) "SKYVAULT_ENABLE_READER" | default "false") | toString) "true" }}
+        {{- $useStatefulSet := and (eq (get ($deployment.cache | default dict) "volumeType" | default "none") "pvc") $readerEnabled }}
+        {{- if and $readerEnabled (eq (get ($deployment.cache | default dict) "volumeType" | default "none") "pvc") }}
+        
+        echo "Checking that {{ $deployment.instanceName }} with PVC cache has StatefulSet with volumeClaimTemplates..."
+        kubectl get statefulset skyvault-{{ $deployment.instanceName }} -o jsonpath='{.spec.volumeClaimTemplates[0].metadata.name}' | grep -q "cache-volume"
+        if [ $? -eq 0 ]; then
+          echo "✓ StatefulSet skyvault-{{ $deployment.instanceName }} has volumeClaimTemplates"
+        else
+          echo "✗ StatefulSet skyvault-{{ $deployment.instanceName }} missing volumeClaimTemplates"
+          exit 1
+        fi
+        
+        # Check that PVCs are actually created by the StatefulSet
+        if kubectl get pvc -l app.kubernetes.io/component=skyvault-{{ $deployment.instanceName }} --no-headers | wc -l | grep -q -v "^0$"; then
+          echo "✓ PVCs exist for {{ $deployment.instanceName }}"
+        else
+          echo "✗ No PVCs found for {{ $deployment.instanceName }}"
+          exit 1
+        fi
+        
+        {{- else if $readerEnabled }}
+        
+        echo "Checking that {{ $deployment.instanceName }} with non-PVC cache ({{ get ($deployment.cache | default dict) "volumeType" | default "none" }}) has no PVCs..."
+        # Should be a Deployment, not StatefulSet
+        if kubectl get deployment skyvault-{{ $deployment.instanceName }} > /dev/null 2>&1; then
+          echo "✓ {{ $deployment.instanceName }} is a Deployment (not StatefulSet)"
+        else
+          echo "✗ {{ $deployment.instanceName }} should be a Deployment"
+          exit 1
+        fi
+        
+        # Should have no PVCs
+        if [ "$(kubectl get pvc -l app.kubernetes.io/component=skyvault-{{ $deployment.instanceName }} --no-headers 2>/dev/null | wc -l)" -eq "0" ]; then
+          echo "✓ No PVCs exist for {{ $deployment.instanceName }} (as expected)"
+        else
+          echo "✗ Unexpected PVCs found for {{ $deployment.instanceName }}"
+          exit 1
+        fi
+        
+        {{- else }}
+        
+        echo "Checking that {{ $deployment.instanceName }} without reader enabled has no PVCs..."
+        # Should have no PVCs regardless of cache type
+        if [ "$(kubectl get pvc -l app.kubernetes.io/component=skyvault-{{ $deployment.instanceName }} --no-headers 2>/dev/null | wc -l)" -eq "0" ]; then
+          echo "✓ No PVCs exist for {{ $deployment.instanceName }} (reader disabled)"
+        else
+          echo "✗ Unexpected PVCs found for {{ $deployment.instanceName }} (reader disabled)"
+          exit 1
+        fi
+        
+        {{- end }}
+        {{- end }}
+        {{- end }}
+        
+        echo "All PVC creation tests passed!" 
