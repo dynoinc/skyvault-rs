@@ -46,7 +46,7 @@ deployments:
   reader:
     enabled: false
     instanceName: "reader"
-    replicaCount: 4
+    replicaCount: 2
     resources:
       limits:
         cpu: 500m
@@ -60,11 +60,13 @@ deployments:
       nodePort: 30051
     env:
       SKYVAULT_SERVICE: "reader"
+      SKYVAULT_READER_CACHE_LABEL_SELECTOR: "app.kubernetes.io/component=skyvault-cache"
+      SKYVAULT_READER_CACHE_PORT: 50051
 
   cache:
     enabled: false
     instanceName: "cache"
-    replicaCount: 1
+    replicaCount: 4
     resources:
       limits:
         cpu: 500m
