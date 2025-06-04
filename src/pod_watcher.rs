@@ -39,23 +39,9 @@ pub enum PodWatcherError {
 pub async fn watch(
     client: kube::Client,
     namespace: String,
+    label_selector: String,
 ) -> Result<impl Stream<Item = Result<PodChange, PodWatcherError>>, PodWatcherError> {
-    // Get pod name from hostname
-    let pod_name = hostname::get()?.to_string_lossy().into_owned();
-
-    // Fetch our own pod
     let pods_api: Api<Pod> = Api::namespaced(client.clone(), &namespace);
-    let me = pods_api.get(&pod_name).await?;
-
-    // Get the instance label
-    let labels = me.metadata.labels.unwrap_or_default();
-    let component = labels
-        .get("app.kubernetes.io/component")
-        .ok_or(PodWatcherError::MissingComponentLabel)?
-        .clone();
-
-    // Create label selector for pods with matching instance
-    let label_selector = format!("app.kubernetes.io/component={component}");
     let raw_stream = watcher(pods_api, watcher::Config::default().labels(&label_selector));
 
     let pod_stream = stream! {

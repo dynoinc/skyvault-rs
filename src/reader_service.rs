@@ -6,6 +6,10 @@ use std::{
     },
 };
 
+use clap::{
+    Parser,
+    arg,
+};
 use futures::{
     FutureExt,
     StreamExt,
@@ -53,6 +57,26 @@ use crate::{
     storage::ObjectStore,
 };
 
+#[derive(Debug, Parser, Clone)]
+
+pub struct ReaderConfig {
+    #[arg(
+        long,
+        env = "SKYVAULT_READER_CACHE_LABEL_SELECTOR",
+        default_value = "app.kubernetes.io/component=skyvault-cache",
+        required_if_eq("service", "reader")
+    )]
+    pub cache_label_selector: String,
+
+    #[arg(
+        long,
+        env = "SKYVAULT_READER_CACHE_PORT",
+        default_value = "50051",
+        required_if_eq("service", "reader")
+    )]
+    pub cache_port: u16,
+}
+
 #[derive(Debug, Error)]
 pub enum ReaderServiceError {
     #[error("Pod watcher error: {0}")]
@@ -73,12 +97,16 @@ struct ConsistentHashCM {
 }
 
 impl ConsistentHashCM {
-    async fn new(k8s_client: kube::Client, namespace: String, port: u16) -> Result<Self, ReaderServiceError> {
-        let pods_stream = pod_watcher::watch(k8s_client, namespace).await?;
+    async fn new(
+        reader_config: ReaderConfig,
+        k8s_client: kube::Client,
+        namespace: String,
+    ) -> Result<Self, ReaderServiceError> {
+        let pods_stream = pod_watcher::watch(k8s_client, namespace, reader_config.cache_label_selector).await?;
 
         // Create ConnectionManager instance
         let connection_manager = ConsistentHashCM {
-            port,
+            port: reader_config.cache_port,
             connections: Arc::new(Mutex::new(HashMap::new())),
             consistent_hashring: Arc::new(Mutex::new(ConsistentHashRing::new(4))),
         };
@@ -218,12 +246,12 @@ impl MyReader {
     pub async fn new(
         metadata: MetadataStore,
         object_store: ObjectStore,
+        reader_config: ReaderConfig,
         k8s_client: kube::Client,
         namespace: String,
-        port: u16,
     ) -> Result<Self, ReaderServiceError> {
         let forest = ForestImpl::watch(metadata, object_store).await?;
-        let connection_manager = ConsistentHashCM::new(k8s_client, namespace, port).await?;
+        let connection_manager = ConsistentHashCM::new(reader_config, k8s_client, namespace).await?;
 
         Ok(Self {
             forest,
@@ -231,7 +259,6 @@ impl MyReader {
         })
     }
 
-    // Add a test constructor accepting mocks
     #[cfg(test)]
     pub fn new_for_test(forest: Forest, connection_manager: Arc<dyn ConnectionManager + Send + Sync>) -> Self {
         Self {
@@ -556,7 +583,6 @@ impl proto::reader_service_server::ReaderService for MyReader {
         }
 
         let responses = futures::future::join_all(tables.into_iter().map(|table_request| {
-            // Clone the Arc<MyReader> for the async block
             let self_clone = self.clone();
             let forest_state_clone = forest_state.clone();
             async move {
@@ -585,14 +611,12 @@ impl proto::reader_service_server::ReaderService for MyReader {
 
     async fn scan(&self, request: Request<proto::ScanRequest>) -> Result<Response<proto::ScanResponse>, Status> {
         let max_results_val = request.get_ref().max_results;
-        if max_results_val > 10_000 {
+        if !(1..=10_000).contains(&max_results_val) {
             return Err(Status::invalid_argument("max_results must be between 1 and 10000"));
         }
 
         let forest_state = self.forest.get_state();
         let request_inner = request.into_inner();
-
-        // Call table_scan directly as it's part of MyReader
         let response = self.table_scan(forest_state, request_inner).await?;
         Ok(Response::new(response))
     }

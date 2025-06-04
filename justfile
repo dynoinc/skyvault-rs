@@ -24,12 +24,14 @@ build:
     kubectl delete pod -l app.kubernetes.io/component=skyvault-reader
     kubectl delete pod -l app.kubernetes.io/component=skyvault-writer
     kubectl delete pod -l app.kubernetes.io/component=skyvault-orchestrator
+    kubectl delete pod -l app.kubernetes.io/component=skyvault-cache
 
 deploy:
     helm upgrade --install dev ./charts/skyvault \
         --set deployments.reader.enabled=true \
         --set deployments.writer.enabled=true \
         --set deployments.orchestrator.enabled=true \
+        --set deployments.cache.enabled=true
 
 pgshell:
     kubectl exec -it $(kubectl get pods -l app.kubernetes.io/component=postgres -o jsonpath="{.items[0].metadata.name}") -- psql -U postgres -d skyvault

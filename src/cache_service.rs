@@ -1,8 +1,10 @@
 use std::{
     future,
+    path::PathBuf,
     pin::Pin,
 };
 
+use clap::Parser;
 use futures::{
     Stream,
     StreamExt,
@@ -18,7 +20,6 @@ use tonic::{
 };
 
 use crate::{
-    cache::CacheConfig,
     k_way,
     metadata,
     proto,
@@ -35,6 +36,15 @@ use crate::{
     },
 };
 
+#[derive(Debug, Parser, Clone, Default)]
+pub struct CacheConfig {
+    #[arg(long, env = "SKYVAULT_CACHE_DIR", default_value = "/tmp/skyvault-cache")]
+    pub dir: PathBuf,
+
+    #[arg(long, env = "SKYVAULT_CACHE_DISK_USAGE_PERCENTAGE", default_value = "0.95")]
+    pub disk_usage_percentage: f64,
+}
+
 #[derive(Debug, Error)]
 pub enum CacheServiceError {
     #[error("Storage error: {0}")]
@@ -47,7 +57,7 @@ pub struct MyCache {
 
 impl MyCache {
     pub async fn new(storage: storage::ObjectStore, cache_config: CacheConfig) -> Result<Self, CacheServiceError> {
-        let storage_cache = StorageCache::new(storage, cache_config).await?;
+        let storage_cache = StorageCache::new(storage, cache_config.dir, cache_config.disk_usage_percentage).await?;
         Ok(Self { storage_cache })
     }
 }
@@ -102,7 +112,8 @@ impl proto::cache_service_server::CacheService for MyCache {
         &self,
         request: Request<proto::ScanFromRunRequest>,
     ) -> Result<Response<proto::ScanFromRunResponse>, Status> {
-        if request.get_ref().max_results == 0 || request.get_ref().max_results > 10_000 {
+        let max_results = request.get_ref().max_results;
+        if !(1..=10_000).contains(&max_results) {
             return Err(Status::invalid_argument("max_results must be between 1 and 10000"));
         }
 

@@ -58,6 +58,23 @@ deployments:
       type: NodePort
       port: 50051
       nodePort: 30051
+    env:
+      SKYVAULT_SERVICE: "reader"
+
+  cache:
+    enabled: false
+    instanceName: "cache"
+    replicaCount: 1
+    resources:
+      limits:
+        cpu: 500m
+        memory: 512Mi
+      requests:
+        cpu: 200m
+        memory: 256Mi
+    service:
+      type: ClusterIP
+      port: 50051
     cache:
       # Volume type: "tmpfs", "pvc", or "none"
       volumeType: none
@@ -74,10 +91,10 @@ deployments:
         accessMode: ReadWriteOnce
     # Instance-specific environment variables
     env:
-      SKYVAULT_ENABLE_READER: "true"
-    # Extra labels specific to reader pods
+      SKYVAULT_SERVICE: "cache"
+    # Extra labels specific to cache pods
     extraLabels: {}
-      # reader-specific-label: "reader-value"
+      # cache-specific-label: "cache-value"
 
   writer:
     enabled: false
@@ -95,10 +112,7 @@ deployments:
       port: 50051
       nodePort: 30052
     env:
-      SKYVAULT_ENABLE_WRITER: "true"
-    # Extra labels specific to writer pods
-    extraLabels: {}
-      # writer-specific-label: "writer-value"
+      SKYVAULT_SERVICE: "writer"
 
   orchestrator:
     enabled: false
@@ -116,10 +130,7 @@ deployments:
       port: 50051
       nodePort: 30053
     env:
-      SKYVAULT_ENABLE_ORCHESTRATOR: "true"
-    # Extra labels specific to orchestrator pods
-    extraLabels: {}
-      # orchestrator-specific-label: "orchestrator-value"
+      SKYVAULT_SERVICE: "orchestrator"
 
 # Service account configuration
 serviceAccount:

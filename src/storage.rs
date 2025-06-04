@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    path::PathBuf,
     sync::{
         Arc,
         RwLock,
@@ -28,10 +29,7 @@ use thiserror::Error;
 use tokio::sync::broadcast;
 
 use crate::{
-    cache::{
-        CacheConfig,
-        DiskCache,
-    },
+    cache::DiskCache,
     metadata::SnapshotID,
     runs::{
         RunId,
@@ -237,8 +235,12 @@ pub struct StorageCache {
 
 impl StorageCache {
     /// Create a new StorageCache
-    pub async fn new(storage: ObjectStore, cache_config: CacheConfig) -> Result<Self, StorageCacheError> {
-        let cache = DiskCache::new(cache_config)
+    pub async fn new(
+        storage: ObjectStore,
+        dir: PathBuf,
+        disk_usage_percentage: f64,
+    ) -> Result<Self, StorageCacheError> {
+        let cache = DiskCache::new(dir, disk_usage_percentage)
             .await
             .map_err(|err| StorageCacheError::StorageCacheMmapError(Arc::new(err)))?;
 

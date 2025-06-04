@@ -23,7 +23,6 @@ use schnellru::{
 };
 use tokio::{
     fs,
-    io::AsyncRead,
     sync::RwLock,
 };
 use tracing::{
@@ -31,48 +30,6 @@ use tracing::{
     info,
     warn,
 };
-
-/// Configuration for the disk-backed cache
-#[derive(Debug, Clone)]
-pub struct CacheConfig {
-    /// Directory where cache files are stored
-    pub cache_dir: PathBuf,
-    /// Optional maximum size in bytes (if None, calculated from available disk
-    /// space)
-    pub max_size_bytes: Option<usize>,
-    /// Percentage of available disk space to use for cache (default: 80%)
-    pub disk_usage_percentage: f64,
-}
-
-impl Default for CacheConfig {
-    fn default() -> Self {
-        Self {
-            cache_dir: PathBuf::from("/tmp/skyvault-cache"),
-            max_size_bytes: None,
-            disk_usage_percentage: 80.0,
-        }
-    }
-}
-
-impl CacheConfig {
-    /// Create a new cache configuration with automatic disk space calculation
-    pub fn new(cache_dir: PathBuf) -> Self {
-        Self {
-            cache_dir,
-            max_size_bytes: None,
-            disk_usage_percentage: 80.0,
-        }
-    }
-
-    /// Create a new cache configuration with a fixed maximum size
-    pub fn with_max_size(cache_dir: PathBuf, max_size_bytes: usize) -> Self {
-        Self {
-            cache_dir,
-            max_size_bytes: Some(max_size_bytes),
-            disk_usage_percentage: 80.0,
-        }
-    }
-}
 
 /// A memory-mapped view of cached data
 #[derive(Debug, Clone)]
@@ -177,20 +134,18 @@ impl Limiter<String, CacheEntry> for BySizeBytes {
 
 /// A disk-backed cache with LRU eviction and mmap support
 pub struct DiskCache {
-    config: CacheConfig,
+    dir: PathBuf,
     /// Cache state protected by a single lock
     state: Arc<RwLock<LruMap<String, CacheEntry, BySizeBytes>>>,
-    /// Actual maximum size in bytes (calculated or configured)
-    max_size_bytes: usize,
 }
 
 impl DiskCache {
     /// Calculate maximum size based on available disk space
-    fn calculate_max_size(config: &CacheConfig) -> Result<usize> {
-        let available_bytes = fs2::available_space(&config.cache_dir)
-            .with_context(|| format!("Failed to get available space for {:?}", config.cache_dir))?;
+    fn calculate_max_size(dir: &PathBuf, disk_usage_percentage: f64) -> Result<usize> {
+        let available_bytes =
+            fs2::available_space(dir).with_context(|| format!("Failed to get available space for {dir:?}"))?;
 
-        let usable_bytes = (available_bytes as f64 * config.disk_usage_percentage / 100.0) as u64;
+        let usable_bytes = (available_bytes as f64 * disk_usage_percentage / 100.0) as u64;
         let max_size = usable_bytes.max(1) as usize;
 
         info!(
@@ -202,28 +157,35 @@ impl DiskCache {
     }
 
     /// Create a new disk cache with the given configuration
-    pub async fn new(config: CacheConfig) -> Result<Self> {
+    pub async fn new(dir: PathBuf, disk_usage_percentage: f64) -> Result<Self> {
         // Ensure cache directory exists
-        fs::create_dir_all(&config.cache_dir).await.with_context(|| {
-            format!(
-                "Failed to create cache directory: {cache_dir:?}",
-                cache_dir = config.cache_dir
-            )
-        })?;
+        fs::create_dir_all(&dir)
+            .await
+            .with_context(|| format!("Failed to create cache directory: {dir:?}"))?;
 
-        let max_size_bytes = match config.max_size_bytes {
-            Some(size) => size,
-            None => Self::calculate_max_size(&config)?,
-        };
+        let max_size_bytes = Self::calculate_max_size(&dir, disk_usage_percentage)?;
 
         let limiter = BySizeBytes::new(max_size_bytes);
         let state = Arc::new(RwLock::new(LruMap::new(limiter)));
 
-        let cache = Self {
-            config,
-            state,
-            max_size_bytes,
-        };
+        let cache = Self { dir, state };
+
+        // Load existing cache entries on startup
+        cache.load_existing_entries().await?;
+
+        Ok(cache)
+    }
+
+    #[cfg(test)]
+    pub async fn new_with_max_size(dir: PathBuf, max_size_bytes: usize) -> Result<Self> {
+        fs::create_dir_all(&dir)
+            .await
+            .with_context(|| format!("Failed to create cache directory: {dir:?}", dir = dir))?;
+
+        let limiter = BySizeBytes::new(max_size_bytes);
+        let state = Arc::new(RwLock::new(LruMap::new(limiter)));
+
+        let cache = Self { dir, state };
 
         // Load existing cache entries on startup
         cache.load_existing_entries().await?;
@@ -233,9 +195,9 @@ impl DiskCache {
 
     /// Load existing cache entries from disk
     async fn load_existing_entries(&self) -> Result<()> {
-        let mut entries = fs::read_dir(&self.config.cache_dir)
+        let mut entries = fs::read_dir(&self.dir)
             .await
-            .with_context(|| format!("Failed to read cache directory: {:?}", self.config.cache_dir))?;
+            .with_context(|| format!("Failed to read cache directory: {:?}", self.dir))?;
 
         let mut loaded_entries = Vec::new();
 
@@ -278,7 +240,7 @@ impl DiskCache {
 
     /// Get the file path for a cache key
     fn get_file_path(&self, key: &str) -> PathBuf {
-        self.config.cache_dir.join(key)
+        self.dir.join(key)
     }
 
     async fn insert_and_trim(&self, key: String, entry: CacheEntry) -> Result<()> {
@@ -306,40 +268,6 @@ impl DiskCache {
             }
         }
 
-        Ok(())
-    }
-
-    /// Put data into the cache from an async reader (like ByteStream)
-    pub async fn put_stream<R>(&self, key: String, mut reader: R) -> Result<()>
-    where
-        R: AsyncRead + Unpin,
-    {
-        let file_path = self.get_file_path(&key);
-
-        // Write data to file
-        let mut file = tokio::fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(&file_path)
-            .await
-            .with_context(|| format!("Failed to create cache file: {file_path:?}"))?;
-
-        let size = tokio::io::copy(&mut reader, &mut file)
-            .await
-            .with_context(|| format!("Failed to write stream to cache file: {file_path:?}"))?;
-
-        file.sync_all()
-            .await
-            .with_context(|| format!("Failed to sync cache file: {file_path:?}"))?;
-
-        let entry = CacheEntry {
-            file_path: file_path.clone(),
-            size,
-        };
-
-        self.insert_and_trim(key.clone(), entry).await?;
-        debug!("Cached key '{}' with size {} bytes", key, size);
         Ok(())
     }
 
@@ -396,107 +324,41 @@ impl DiskCache {
     }
 
     /// Check if a key exists in the cache
+    #[cfg(test)]
     pub async fn contains_key(&self, key: &str) -> bool {
         let state = self.state.read().await;
         state.peek(key).is_some()
     }
 
-    /// Remove a key from the cache
-    pub async fn remove(&self, key: &str) -> Result<bool> {
-        let entry = {
-            let mut state = self.state.write().await;
-            state.remove(key)
-        };
-
-        if let Some(entry) = entry {
-            if let Err(e) = fs::remove_file(&entry.file_path).await {
-                warn!("Failed to remove cache file {:?}: {}", entry.file_path, e);
-            }
-
-            debug!("Removed cache entry: {}", key);
-            Ok(true)
-        } else {
-            Ok(false)
-        }
-    }
-
-    /// Clear all entries from the cache
-    pub async fn clear(&self) -> Result<()> {
-        let entries = {
-            let mut state = self.state.write().await;
-            let entries: Vec<_> = state.iter().map(|(_, entry)| entry.file_path.clone()).collect();
-            state.clear();
-            entries
-        };
-
-        // Remove all cache files
-        for file_path in entries {
-            if let Err(e) = fs::remove_file(&file_path).await {
-                warn!("Failed to remove cache file {:?}: {}", file_path, e);
-            }
-        }
-
-        info!("Cleared all cache entries");
-        Ok(())
-    }
-
-    /// Get the number of entries in the cache
-    pub async fn len(&self) -> usize {
-        let state = self.state.read().await;
-        state.len()
-    }
-
-    /// Check if the cache is empty
-    pub async fn is_empty(&self) -> bool {
-        let state = self.state.read().await;
-        state.is_empty()
-    }
-
-    /// Get the current total size of cached data
-    pub async fn current_size(&self) -> usize {
-        let state = self.state.read().await;
-        state.limiter().current_size
-    }
-
-    /// Get all keys currently in the cache
-    pub async fn keys(&self) -> Vec<String> {
-        let state = self.state.read().await;
-        state.iter().map(|(key, _)| key.clone()).collect()
-    }
-
-    /// Get cache statistics
+    #[cfg(test)]
     pub async fn stats(&self) -> CacheStats {
         let state = self.state.read().await;
         CacheStats {
-            entries: state.len(),
-            max_size_bytes: self.max_size_bytes,
+            max_size_bytes: state.limiter().max_size,
             current_size: state.limiter().current_size,
-            cache_dir: self.config.cache_dir.clone(),
         }
     }
 }
 
 /// Cache statistics
+#[cfg(test)]
 #[derive(Debug, Clone)]
 pub struct CacheStats {
-    pub entries: usize,
     pub max_size_bytes: usize,
     pub current_size: usize,
-    pub cache_dir: PathBuf,
 }
 
 #[cfg(test)]
 mod tests {
-    use std::io::Cursor;
-
     use tempfile::TempDir;
 
     use super::*;
 
     async fn create_test_cache() -> (DiskCache, TempDir) {
         let temp_dir = TempDir::new().unwrap();
-        let config = CacheConfig::with_max_size(temp_dir.path().to_path_buf(), 1024); // 1KB limit
-        let cache = DiskCache::new(config).await.unwrap();
+        let cache = DiskCache::new_with_max_size(temp_dir.path().to_path_buf(), 1024)
+            .await
+            .unwrap();
         (cache, temp_dir)
     }
 
@@ -513,20 +375,6 @@ mod tests {
         assert_eq!(mmap_view.as_bytes(), data);
         assert_eq!(mmap_view.len(), data.len());
         assert!(!mmap_view.is_empty());
-    }
-
-    #[tokio::test]
-    async fn test_put_stream() {
-        let (cache, _temp_dir) = create_test_cache().await;
-
-        let key = "stream_key".to_string();
-        let data = b"Stream data test";
-        let cursor = Cursor::new(data);
-
-        cache.put_stream(key.clone(), cursor).await.unwrap();
-
-        let mmap_view = cache.get_mmap(&key).await.unwrap().unwrap();
-        assert_eq!(mmap_view.as_bytes(), data);
     }
 
     #[tokio::test]
@@ -550,11 +398,12 @@ mod tests {
     #[tokio::test]
     async fn test_cache_persistence() {
         let temp_dir = TempDir::new().unwrap();
-        let config = CacheConfig::with_max_size(temp_dir.path().to_path_buf(), 2048);
+        let cache = DiskCache::new_with_max_size(temp_dir.path().to_path_buf(), 2048)
+            .await
+            .unwrap();
 
         // Create cache and add some data
         {
-            let cache = DiskCache::new(config.clone()).await.unwrap();
             cache
                 .put("persistent_key".to_string(), b"persistent_data")
                 .await
@@ -563,7 +412,9 @@ mod tests {
 
         // Create new cache instance and verify data persists
         {
-            let cache = DiskCache::new(config).await.unwrap();
+            let cache = DiskCache::new_with_max_size(temp_dir.path().to_path_buf(), 2048)
+                .await
+                .unwrap();
             let mmap_view = cache.get_mmap("persistent_key").await.unwrap().unwrap();
             assert_eq!(mmap_view.as_bytes(), b"persistent_data");
         }
@@ -572,9 +423,9 @@ mod tests {
     #[tokio::test]
     async fn test_automatic_size_calculation() {
         let temp_dir = TempDir::new().unwrap();
-        let config = CacheConfig::new(temp_dir.path().to_path_buf());
-
-        let cache = DiskCache::new(config).await.unwrap();
+        let cache = DiskCache::new_with_max_size(temp_dir.path().to_path_buf(), 2048)
+            .await
+            .unwrap();
         let stats = cache.stats().await;
 
         // Should have calculated a reasonable max size based on available disk space
