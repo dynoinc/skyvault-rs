@@ -28,6 +28,12 @@ spec:
       labels:
         {{- include "skyvault.selectorLabels" $ | nindent 8 }}
         app.kubernetes.io/component: skyvault-{{ $deployment.instanceName }}
+        {{- with $.Values.common.extraLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- with $deployment.extraLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
     spec:
       serviceAccountName: skyvault-serviceaccount
       containers:
@@ -43,10 +49,8 @@ spec:
           env:
             # Common environment variables
             {{- range $key, $value := $.Values.common.env }}
-            {{- if not (or (eq $key "AWS_ACCESS_KEY_ID") (eq $key "AWS_SECRET_ACCESS_KEY")) }}
             - name: {{ $key }}
               value: {{ $value | quote }}
-            {{- end }}
             {{- end }}
             
             # Instance-specific environment variables
@@ -69,9 +73,6 @@ spec:
           emptyDir:
             medium: Memory
             sizeLimit: {{ $deployment.cache.tmpfs.sizeLimit }}
-          {{- else if eq $deployment.cache.volumeType "pvc" }}
-          persistentVolumeClaim:
-            claimName: skyvault-cache-pvc-{{ $deployment.instanceName }}
           {{- end }}
       {{- end }}
   {{- if $useStatefulSet }}
@@ -81,6 +82,12 @@ spec:
         labels:
           {{- include "skyvault.labels" $ | nindent 10 }}
           app.kubernetes.io/component: skyvault-{{ $deployment.instanceName }}
+          {{- with $.Values.common.extraLabels }}
+          {{- toYaml . | nindent 10 }}
+          {{- end }}
+          {{- with $deployment.extraLabels }}
+          {{- toYaml . | nindent 10 }}
+          {{- end }}
       spec:
         accessModes:
           - {{ $deployment.cache.pvc.accessMode }}
