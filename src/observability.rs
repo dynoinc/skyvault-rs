@@ -37,6 +37,7 @@ use tower::{
     Layer,
     Service,
 };
+use tracing::debug;
 use tracing_subscriber::{
     layer::SubscriberExt,
     util::SubscriberInitExt,
@@ -150,7 +151,7 @@ where
 
         Box::pin(async move {
             let result = fut.await;
-            let elapsed = start.elapsed().as_secs_f64();
+            let elapsed = start.elapsed();
 
             let grpc_status = match &result {
                 Ok(response) => response
@@ -203,9 +204,16 @@ where
 
             // Record metrics using cached handles if available
             if let Some(handles) = handles {
-                handles.duration_histogram.record(elapsed);
+                handles.duration_histogram.record(elapsed.as_secs_f64());
                 handles.request_counter.increment(1);
             }
+
+            debug!(
+                path = %path,
+                grpc_status = %grpc_status_to_name(&grpc_status),
+                duration_ms = elapsed.as_millis(),
+                "gRPC request completed"
+            );
 
             result
         })

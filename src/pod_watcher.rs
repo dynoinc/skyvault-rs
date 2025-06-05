@@ -1,3 +1,5 @@
+use std::net::IpAddr;
+
 use async_stream::stream;
 use futures::{
     Stream,
@@ -14,8 +16,6 @@ use tracing::{
     debug,
     warn,
 };
-
-use std::net::IpAddr;
 
 /// Represents a change in the pod list
 #[derive(Debug, Clone, PartialEq, Eq)]

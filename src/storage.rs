@@ -32,6 +32,7 @@ use metrics::{
 };
 use thiserror::Error;
 use tokio::sync::broadcast;
+use tracing::debug;
 
 use crate::{
     cache::{
@@ -156,7 +157,7 @@ impl S3ObjectStore {
         let req_counter = counter!(
             "skyvault/s3/requests_total",
             "operation" => method,
-            "status" => status,
+            "status" => status.clone(),
         );
         let duration_hist = histogram!(
             "skyvault/s3/request_duration_seconds",
@@ -165,6 +166,13 @@ impl S3ObjectStore {
 
         req_counter.increment(1);
         duration_hist.record(duration.as_secs_f64());
+
+        debug!(
+            operation = method,
+            status = %status,
+            duration_ms = duration.as_millis(),
+            "S3 operation completed"
+        );
 
         result
     }

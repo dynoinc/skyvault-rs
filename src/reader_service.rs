@@ -1,8 +1,10 @@
 use std::{
-    collections::HashMap, hash::{Hash, Hasher}, net::{IpAddr, Ipv4Addr}, sync::{
+    collections::HashMap,
+    net::IpAddr,
+    sync::{
         Arc,
         Mutex,
-    }
+    },
 };
 
 use clap::{
@@ -83,36 +85,18 @@ pub enum ReaderServiceError {
 
     #[error("Forest error: {0}")]
     ForestError(#[from] ForestError),
-
-    #[error("Connection error: {0}")]
-    ConnectionError(#[from] tonic::transport::Error),
 }
 
-#[derive(Clone)]
-struct Pod {
-    name: String,
-    ip: IpAddr,
+struct PodManager {
+    pods: HashMap<String, IpAddr>,
+    consistent_hashring: ConsistentHashRing<String>,
+    connections: HashMap<IpAddr, proto::cache_service_client::CacheServiceClient<Channel>>,
 }
-
-impl Hash for Pod {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.ip.hash(state);
-    }
-}
-
-impl PartialEq for Pod {
-    fn eq(&self, other: &Self) -> bool {
-        self.name == other.name
-    }
-}
-
-impl Eq for Pod {}
 
 #[derive(Clone)]
 struct ConsistentHashCM {
     port: u16,
-    connections: Arc<Mutex<HashMap<IpAddr, proto::cache_service_client::CacheServiceClient<Channel>>>>,
-    consistent_hashring: Arc<Mutex<ConsistentHashRing<Pod>>>,
+    pod_manager: Arc<Mutex<PodManager>>,
 }
 
 impl ConsistentHashCM {
@@ -126,29 +110,32 @@ impl ConsistentHashCM {
         // Create ConnectionManager instance
         let connection_manager = ConsistentHashCM {
             port: reader_config.cache_port,
-            connections: Arc::new(Mutex::new(HashMap::new())),
-            consistent_hashring: Arc::new(Mutex::new(ConsistentHashRing::new(4))),
+            pod_manager: Arc::new(Mutex::new(PodManager {
+                pods: HashMap::new(),
+                connections: HashMap::new(),
+                consistent_hashring: ConsistentHashRing::new(4),
+            })),
         };
 
         // Use hashring from connection_manager for pod watcher
-        let hashring_clone = connection_manager.consistent_hashring.clone();
+        let pod_manager_clone = connection_manager.pod_manager.clone();
         tokio::spawn(async move {
             pin_mut!(pods_stream);
             while let Some(pod_change) = pods_stream.next().await {
                 match pod_change {
                     Ok(PodChange::Added(name, ip)) => {
-                        info!("Adding pod {name} to consistent hashring");
-                        hashring_clone.lock().unwrap().add_node(Pod {
-                            name,
-                            ip,
-                        });
+                        info!("Adding pod {name} ({ip}) to consistent hashring");
+                        let mut pod_manager = pod_manager_clone.lock().unwrap();
+                        pod_manager.pods.insert(name.clone(), ip);
+                        pod_manager.consistent_hashring.add_node(name);
                     },
                     Ok(PodChange::Removed(name)) => {
                         info!("Removing pod {name} from consistent hashring");
-                        hashring_clone.lock().unwrap().remove_node(&Pod {
-                            name,
-                            ip: IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
-                        });
+                        let mut pod_manager = pod_manager_clone.lock().unwrap();
+                        if let Some(ip) = pod_manager.pods.remove(&name) {
+                            pod_manager.consistent_hashring.remove_node(&name);
+                            pod_manager.connections.remove(&ip);
+                        }
                     },
                     Err(e) => {
                         error!(error = %e, "Error watching pods");
@@ -162,26 +149,42 @@ impl ConsistentHashCM {
 
     async fn get_connection(
         &self,
-        pod_ip: &IpAddr,
-    ) -> Result<proto::cache_service_client::CacheServiceClient<Channel>, ReaderServiceError> {
-        // First check if connection exists
-        {
-            let connections = self.connections.lock().unwrap();
-            if let Some(conn) = connections.get(pod_ip).cloned() {
-                return Ok(conn);
-            }
-        }
+        routing_key: &str,
+    ) -> Result<proto::cache_service_client::CacheServiceClient<Channel>, Status> {
+        let (pod_name, pod_ip) = {
+            let pod_manager = self.pod_manager.lock().unwrap();
+            let pod_name = match pod_manager.consistent_hashring.get_node(routing_key) {
+                Some(pod_name) => pod_name,
+                None => return Err(Status::internal(format!("No pod found for routing key {routing_key}"))),
+            };
 
-        // Connection not found, create a new one outside the lock
-        let addr = format!("http://{}:{}", pod_ip, self.port);
+            let pod_ip = match pod_manager.pods.get(&pod_name) {
+                Some(pod_ip) => pod_ip,
+                None => return Err(Status::internal(format!("Pod IP for {pod_name} not found"))),
+            };
+
+            match pod_manager.connections.get(pod_ip).cloned() {
+                Some(conn) => return Ok(conn),
+                None => (pod_name.clone(), *pod_ip),
+            }
+        };
+
+        let port = self.port;
+        let addr = format!("http://{pod_ip}:{port}");
         let conn = match proto::cache_service_client::CacheServiceClient::connect(addr).await {
             Ok(conn) => conn,
-            Err(e) => return Err(ReaderServiceError::ConnectionError(e)),
+            Err(e) => return Err(Status::internal(format!("Failed to connect to {pod_ip}: {e}"))),
         };
 
         // Now acquire the lock again to insert the new connection
         let conn_clone = conn.clone();
-        self.connections.lock().unwrap().insert(*pod_ip, conn);
+        let mut pod_manager = self.pod_manager.lock().unwrap();
+        if let Some(current_ip) = pod_manager.pods.get(&pod_name)
+            && current_ip == &pod_ip
+        {
+            pod_manager.connections.insert(pod_ip, conn);
+        }
+
         Ok(conn_clone)
     }
 }
@@ -193,26 +196,10 @@ impl ConnectionManager for ConsistentHashCM {
         routing_key: String,
         request: Request<proto::GetFromRunRequest>,
     ) -> Result<Response<proto::GetFromRunResponse>, Status> {
-        let run_pod = {
-            let consistent_hashring = self.consistent_hashring.lock().unwrap();
-            consistent_hashring.get_node(&routing_key)
-        };
-
-        let run_pod = match run_pod {
-            Some(pod) => pod,
-            None => return Err(Status::internal("No reader service pods available")),
-        };
-
-        let mut run_conn = match self.get_connection(&run_pod.ip).await {
-            Ok(conn) => conn,
-            Err(e) => {
-                return Err(Status::internal(format!(
-                    "No connection to reader service pod for run: {e}"
-                )));
-            },
-        };
-
-        run_conn.get_from_run(request).await
+        match self.get_connection(&routing_key).await {
+            Ok(mut conn) => conn.get_from_run(request).await,
+            Err(e) => return Err(e),
+        }
     }
 
     async fn table_scan_run(
@@ -220,26 +207,10 @@ impl ConnectionManager for ConsistentHashCM {
         routing_key: String,
         request: Request<proto::ScanFromRunRequest>,
     ) -> Result<Response<proto::ScanFromRunResponse>, Status> {
-        let scan_pod = {
-            let consistent_hashring = self.consistent_hashring.lock().unwrap();
-            consistent_hashring.get_node(&routing_key)
-        };
-
-        let scan_pod = match scan_pod {
-            Some(pod) => pod,
-            None => return Err(Status::internal("No reader service pods available")),
-        };
-
-        let mut scan_conn = match self.get_connection(&scan_pod.ip).await {
-            Ok(conn) => conn,
-            Err(e) => {
-                return Err(Status::internal(format!(
-                    "No connection to reader service pod for scan: {e}"
-                )));
-            },
-        };
-
-        scan_conn.scan_from_run(request).await
+        match self.get_connection(&routing_key).await {
+            Ok(mut conn) => conn.scan_from_run(request).await,
+            Err(e) => return Err(e),
+        }
     }
 }
 

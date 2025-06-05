@@ -55,7 +55,13 @@ where
     }
 
     /// Get the node responsible for the given key.
-    pub fn get_node(&self, key: &impl Hash) -> Option<T> {
+    ///
+    /// This method accepts any type that can be borrowed as a hashable type,
+    /// allowing you to pass `&str` when looking up nodes stored as `String`.
+    pub fn get_node<K>(&self, key: &K) -> Option<T>
+    where
+        K: Hash + ?Sized,
+    {
         if self.ring.is_empty() {
             return None;
         }
@@ -68,7 +74,10 @@ where
     }
 
     /// Hash the given key.
-    fn hash(&self, key: &impl Hash) -> u64 {
+    fn hash<K>(&self, key: &K) -> u64
+    where
+        K: Hash + ?Sized,
+    {
         let mut hasher = DefaultHasher::new();
         key.hash(&mut hasher);
         hasher.finish()
@@ -82,7 +91,7 @@ mod tests {
     #[test]
     fn test_empty_ring() {
         let ring: ConsistentHashRing<String> = ConsistentHashRing::new(10);
-        assert_eq!(ring.get_node(&"test_key"), None);
+        assert_eq!(ring.get_node("test_key"), None);
     }
 
     #[test]
@@ -90,7 +99,7 @@ mod tests {
         let mut ring: ConsistentHashRing<String> = ConsistentHashRing::new(10);
         ring.add_node("node1".to_string());
 
-        assert_eq!(ring.get_node(&"test_key"), Some("node1".to_string()));
+        assert_eq!(ring.get_node("test_key"), Some("node1".to_string()));
     }
 
     #[test]
@@ -101,8 +110,8 @@ mod tests {
         ring.add_node("node3".to_string());
 
         // The node assignment will depend on the hash function
-        assert!(ring.get_node(&"test_key1").is_some());
-        assert!(ring.get_node(&"test_key2").is_some());
+        assert!(ring.get_node("test_key1").is_some());
+        assert!(ring.get_node("test_key2").is_some());
     }
 
     #[test]
@@ -114,6 +123,6 @@ mod tests {
         ring.remove_node(&"node1".to_string());
 
         // After removing node1, all keys should map to node2
-        assert_eq!(ring.get_node(&"test_key"), Some("node2".to_string()));
+        assert_eq!(ring.get_node("test_key"), Some("node2".to_string()));
     }
 }

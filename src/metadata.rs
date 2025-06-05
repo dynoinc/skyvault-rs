@@ -27,6 +27,7 @@ use sqlx::{
     types::JsonValue,
 };
 use thiserror::Error;
+use tracing::debug;
 
 use crate::{
     proto,
@@ -847,6 +848,13 @@ impl MetricsMetadataStore {
 
         req_counter.increment(1);
         duration_hist.record(duration.as_secs_f64());
+
+        debug!(
+            method = method,
+            status = %status,
+            duration_ms = duration.as_millis(),
+            "Postgres operation completed"
+        );
 
         result
     }
