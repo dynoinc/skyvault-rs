@@ -31,76 +31,69 @@ use tracing::{
     warn,
 };
 
+#[derive(Debug)]
+pub struct OnDiskData {
+    path: PathBuf,
+    _file: File,
+    mmap: Mmap,
+}
+
+impl Drop for OnDiskData {
+    fn drop(&mut self) {
+        let path = self.path.clone();
+        tokio::spawn(async move {
+            if let Err(e) = fs::remove_file(&path).await {
+                warn!("Failed to delete cache file {:?}: {}", path, e);
+            } else {
+                debug!("Deleted cache file: {:?}", path);
+            }
+        });
+    }
+}
+
 #[derive(Debug, Clone)]
-enum CacheData {
+pub enum CacheData {
     InMemory(Bytes),
-    OnDisk(PathBuf),
+    OnDisk(Arc<OnDiskData>),
 }
 
-/// A memory-mapped view of cached data
-#[derive(Debug, Clone)]
-pub struct MmapView {
-    data: CacheData,
-    _file: Option<Arc<File>>,
-    _mmap: Option<Arc<Mmap>>,
-}
-
-impl From<Bytes> for MmapView {
+impl From<Bytes> for CacheData {
     fn from(data: Bytes) -> Self {
-        MmapView {
-            data: CacheData::InMemory(data),
-            _file: None,
-            _mmap: None,
-        }
+        CacheData::InMemory(data)
     }
 }
 
-impl From<&[u8]> for MmapView {
+impl From<&[u8]> for CacheData {
     fn from(data: &[u8]) -> Self {
-        MmapView::from(Bytes::copy_from_slice(data))
+        CacheData::from(Bytes::copy_from_slice(data))
     }
 }
 
-impl From<Vec<u8>> for MmapView {
+impl From<Vec<u8>> for CacheData {
     fn from(data: Vec<u8>) -> Self {
-        MmapView::from(Bytes::from(data))
+        CacheData::from(Bytes::from(data))
     }
 }
 
-impl<const N: usize> From<&[u8; N]> for MmapView {
+impl<const N: usize> From<&[u8; N]> for CacheData {
     fn from(data: &[u8; N]) -> Self {
-        MmapView::from(Bytes::copy_from_slice(data))
+        CacheData::from(Bytes::copy_from_slice(data))
     }
 }
 
-impl MmapView {
-    fn from_file(file_path: PathBuf) -> Result<Self> {
-        let file = File::open(&file_path).with_context(|| format!("Failed to open cache file: {file_path:?}"))?;
-        let mmap = unsafe {
-            MmapOptions::new()
-                .map(&file)
-                .with_context(|| format!("Failed to mmap cache file: {file_path:?}"))?
-        };
-
-        Ok(MmapView {
-            data: CacheData::OnDisk(file_path),
-            _file: Some(Arc::new(file)),
-            _mmap: Some(Arc::new(mmap)),
-        })
-    }
-
+impl CacheData {
     /// Get the data as a byte slice
     pub fn as_bytes(&self) -> &[u8] {
-        match &self.data {
-            CacheData::OnDisk(_) => self._mmap.as_ref().unwrap(),
+        match self {
+            CacheData::OnDisk(data) => data.mmap.as_ref(),
             CacheData::InMemory(data) => data,
         }
     }
 
     /// Get the length of the data
     pub fn len(&self) -> usize {
-        match &self.data {
-            CacheData::OnDisk(_) => self._mmap.as_ref().unwrap().len(),
+        match self {
+            CacheData::OnDisk(data) => data.mmap.len(),
             CacheData::InMemory(data) => data.len(),
         }
     }
@@ -111,7 +104,7 @@ impl MmapView {
     }
 }
 
-impl AsRef<[u8]> for MmapView {
+impl AsRef<[u8]> for CacheData {
     fn as_ref(&self) -> &[u8] {
         self.as_bytes()
     }
@@ -254,19 +247,34 @@ impl DiskCache {
 
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
-            if path.is_file() {
-                if let Some(key) = path.file_name().and_then(|n| n.to_str()) {
-                    let metadata = entry.metadata().await?;
-                    let size = metadata.len();
-                    let modified = metadata.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+            if !path.is_file() {
+                continue;
+            }
 
-                    let cache_entry = CacheEntry {
-                        data: CacheData::OnDisk(path.clone()),
-                        size,
-                    };
+            if let Some(key) = path.file_name().and_then(|n| n.to_str()).map(|s| s.to_string()) {
+                let metadata = entry.metadata().await?;
+                let size = metadata.len();
+                let modified = metadata.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
 
-                    loaded_entries.push((key.to_string(), cache_entry, modified));
-                }
+                // Open file and create mmap for loading existing cache entries
+                let file =
+                    std::fs::File::open(&path).with_context(|| format!("Failed to open cache file: {path:?}"))?;
+                let mmap = unsafe {
+                    MmapOptions::new()
+                        .map(&file)
+                        .with_context(|| format!("Failed to mmap cache file: {path:?}"))?
+                };
+
+                let cache_entry = CacheEntry {
+                    data: CacheData::OnDisk(Arc::new(OnDiskData {
+                        path,
+                        _file: file,
+                        mmap,
+                    })),
+                    size,
+                };
+
+                loaded_entries.push((key.to_string(), cache_entry, modified));
             }
         }
 
@@ -295,41 +303,17 @@ impl DiskCache {
     }
 
     async fn insert_and_trim(&self, key: String, entry: CacheEntry) -> Result<()> {
-        let files_to_remove = {
-            let mut state = self.state.write().await;
-            state.insert(key.clone(), entry);
+        let mut state = self.state.write().await;
+        state.insert(key.clone(), entry);
 
-            let mut files_to_remove = Vec::new();
-            while state.limiter().is_over_the_limit(state.len()) {
-                if let Some((_evicted_key, evicted_entry)) = state.pop_oldest() {
-                    files_to_remove.push(evicted_entry.data.clone());
-                } else {
-                    break;
-                }
-            }
-
-            files_to_remove
-        };
-
-        for data in files_to_remove {
-            match data {
-                CacheData::OnDisk(file_path) => {
-                    if let Err(e) = fs::remove_file(&file_path).await {
-                        warn!("Failed to remove evicted cache file {:?}: {}", file_path, e);
-                    } else {
-                        debug!("Evicted cache entry: {:?}", file_path);
-                    }
-                },
-                CacheData::InMemory(_) => {
-                    debug!("Evicted in-memory cache entry");
-                },
-            }
+        while state.limiter().is_over_the_limit(state.len()) {
+            state.pop_oldest();
         }
 
         Ok(())
     }
 
-    pub async fn put(&self, key: String, data: MmapView) -> Result<()> {
+    pub async fn put(&self, key: String, data: CacheData) -> Result<()> {
         let size = data.len() as u64;
         let bytes_data = Bytes::copy_from_slice(data.as_bytes());
 
@@ -355,12 +339,37 @@ impl DiskCache {
             // Update cache entry to point to disk
             let mut state_guard = state.write().await;
             if let Some(entry) = state_guard.get(&key_clone) {
-                let updated_entry = CacheEntry {
-                    data: CacheData::OnDisk(file_path.clone()),
-                    size: entry.size,
-                };
-                state_guard.insert(key_clone.clone(), updated_entry);
-                debug!("Moved cache entry '{}' to disk", key_clone);
+                // Open file and create mmap for the disk-based cache entry
+                let file_result = std::fs::File::open(&file_path);
+                match file_result {
+                    Ok(file) => {
+                        let mmap_result = unsafe {
+                            MmapOptions::new()
+                                .map(&file)
+                                .with_context(|| format!("Failed to mmap cache file: {file_path:?}"))
+                        };
+                        match mmap_result {
+                            Ok(mmap) => {
+                                let updated_entry = CacheEntry {
+                                    data: CacheData::OnDisk(Arc::new(OnDiskData {
+                                        path: file_path.clone(),
+                                        _file: file,
+                                        mmap,
+                                    })),
+                                    size: entry.size,
+                                };
+                                state_guard.insert(key_clone.clone(), updated_entry);
+                                debug!("Moved cache entry '{}' to disk", key_clone);
+                            },
+                            Err(e) => {
+                                warn!("Failed to mmap cache file {:?}: {}", file_path, e);
+                            },
+                        }
+                    },
+                    Err(e) => {
+                        warn!("Failed to open cache file {:?}: {}", file_path, e);
+                    },
+                }
             }
         });
 
@@ -385,19 +394,11 @@ impl DiskCache {
     }
 
     /// Get a memory-mapped view of cached data
-    pub async fn get_mmap(&self, key: &str) -> Result<Option<MmapView>> {
-        let entry_data = {
-            let mut state = self.state.write().await;
-            if let Some(entry) = state.get(key) {
-                entry.data.clone()
-            } else {
-                return Ok(None);
-            }
-        };
-
-        match entry_data {
-            CacheData::OnDisk(file_path) => Ok(Some(MmapView::from_file(file_path)?)),
-            CacheData::InMemory(data) => Ok(Some(MmapView::from(data))),
+    pub async fn get_mmap(&self, key: &str) -> Option<CacheData> {
+        let mut state = self.state.write().await;
+        match state.get(key) {
+            Some(entry) => Some(entry.data.clone()),
+            None => None,
         }
     }
 
@@ -449,7 +450,7 @@ mod tests {
 
         cache.put(key.clone(), data.into()).await.unwrap();
 
-        let mmap_view = cache.get_mmap(&key).await.unwrap().unwrap();
+        let mmap_view = cache.get_mmap(&key).await.unwrap();
         assert_eq!(mmap_view.as_bytes(), data);
         assert_eq!(mmap_view.len(), data.len());
         assert!(!mmap_view.is_empty());
@@ -493,7 +494,7 @@ mod tests {
             let cache = DiskCache::new_with_max_size(temp_dir.path().to_path_buf(), 2048)
                 .await
                 .unwrap();
-            let mmap_view = cache.get_mmap("persistent_key").await.unwrap().unwrap();
+            let mmap_view = cache.get_mmap("persistent_key").await.unwrap();
             assert_eq!(mmap_view.as_bytes(), b"persistent_data");
         }
     }

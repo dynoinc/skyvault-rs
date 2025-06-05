@@ -36,7 +36,7 @@ use tokio::sync::broadcast;
 use crate::{
     cache::{
         DiskCache,
-        MmapView,
+        CacheData,
     },
     metadata::SnapshotID,
     runs::RunId,
@@ -273,7 +273,7 @@ pub enum StorageCacheError {
 }
 
 /// Type alias for the inflight request broadcast sender
-type InflightSender = broadcast::Sender<Result<MmapView, StorageCacheError>>;
+type InflightSender = broadcast::Sender<Result<CacheData, StorageCacheError>>;
 
 /// A simple cache for the object store that caches run data in memory
 pub struct StorageCache {
@@ -308,14 +308,13 @@ impl StorageCache {
     }
 
     /// Get run data from cache or storage if not cached
-    pub async fn get_run(&self, run_id: RunId) -> Result<MmapView, StorageCacheError> {
+    pub async fn get_run(&self, run_id: RunId) -> Result<CacheData, StorageCacheError> {
         // First check if the run is in the cache
         {
             let cache = self
                 .cache
                 .get_mmap(run_id.as_ref())
-                .await
-                .map_err(|err| StorageCacheError::StorageCacheMmapError(Arc::new(err)))?;
+                .await;
             if let Some(run_data) = cache {
                 return Ok(run_data);
             }
@@ -355,7 +354,7 @@ impl StorageCache {
             Ok(bytes::Bytes::from(collected.to_vec()))
         }
         .await
-        .map(MmapView::from);
+        .map(CacheData::from);
 
         if let Ok(data) = result.as_ref() {
             self.cache
