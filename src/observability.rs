@@ -77,20 +77,15 @@ async fn metrics_handler(State(handle): State<PrometheusHandle>) -> (StatusCode,
     (StatusCode::OK, handle.render())
 }
 
-pub async fn serve_metrics(addr: SocketAddr, handle: PrometheusHandle) {
+pub async fn serve_metrics(
+    addr: SocketAddr,
+    handle: PrometheusHandle,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let app = Router::new().route("/metrics", get(metrics_handler)).with_state(handle);
-
+    let listener = TcpListener::bind(addr).await?;
+    axum::serve(listener, app.into_make_service()).await?;
     tracing::info!("Metrics server listening on {}", addr);
-    let listener = match TcpListener::bind(addr).await {
-        Ok(l) => l,
-        Err(e) => {
-            tracing::error!(error = %e, "Failed to bind metrics server address");
-            return;
-        },
-    };
-    if let Err(e) = axum::serve(listener, app.into_make_service()).await {
-        tracing::error!(error = %e, "metrics server error");
-    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
