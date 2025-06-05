@@ -496,8 +496,9 @@ where
 
 /// Reads a serialized run file and returns an iterator over write operations.
 ///
-/// This function takes any type that can be converted into a byte slice and returns
-/// an iterator that yields each write operation (Put or Delete) contained in the run.
+/// This function takes any type that can be converted into a byte slice and
+/// returns an iterator that yields each write operation (Put or Delete)
+/// contained in the run.
 pub fn read_run_iter<T>(data: T) -> Box<dyn Iterator<Item = Result<WriteOperation, RunError>> + Send>
 where
     T: AsRef<[u8]> + Send + 'static,

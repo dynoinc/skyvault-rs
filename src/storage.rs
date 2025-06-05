@@ -34,7 +34,10 @@ use thiserror::Error;
 use tokio::sync::broadcast;
 
 use crate::{
-    cache::{DiskCache, MmapView},
+    cache::{
+        DiskCache,
+        MmapView,
+    },
     metadata::SnapshotID,
     runs::RunId,
 };
@@ -269,23 +272,8 @@ pub enum StorageCacheError {
     StorageCacheMmapError(#[from] Arc<anyhow::Error>),
 }
 
-#[derive(Clone)]
-pub enum RunView {
-    Mmap(MmapView),
-    Bytes(Bytes),
-}
-
-impl AsRef<[u8]> for RunView {
-    fn as_ref(&self) -> &[u8] {
-        match self {
-            RunView::Mmap(mmap) => mmap.as_bytes(),
-            RunView::Bytes(bytes) => bytes.as_ref(),
-        }
-    }
-}
-
 /// Type alias for the inflight request broadcast sender
-type InflightSender = broadcast::Sender<Result<Bytes, StorageCacheError>>;
+type InflightSender = broadcast::Sender<Result<MmapView, StorageCacheError>>;
 
 /// A simple cache for the object store that caches run data in memory
 pub struct StorageCache {
@@ -320,7 +308,7 @@ impl StorageCache {
     }
 
     /// Get run data from cache or storage if not cached
-    pub async fn get_run(&self, run_id: RunId) -> Result<RunView, StorageCacheError> {
+    pub async fn get_run(&self, run_id: RunId) -> Result<MmapView, StorageCacheError> {
         // First check if the run is in the cache
         {
             let cache = self
@@ -329,7 +317,7 @@ impl StorageCache {
                 .await
                 .map_err(|err| StorageCacheError::StorageCacheMmapError(Arc::new(err)))?;
             if let Some(run_data) = cache {
-                return Ok(RunView::Mmap(run_data));
+                return Ok(run_data);
             }
         }
 
@@ -350,7 +338,7 @@ impl StorageCache {
 
         // If we have a receiver, wait for the inflight request to complete
         if let Some(mut receiver) = receiver_opt {
-            return receiver.recv().await?.map(RunView::Bytes);
+            return receiver.recv().await?;
         }
 
         // We're the first request for this run, fetch from storage
@@ -366,11 +354,12 @@ impl StorageCache {
                 .map_err(|err| StorageCacheError::StorageCacheByteStreamError(Arc::new(err)))?;
             Ok(bytes::Bytes::from(collected.to_vec()))
         }
-        .await;
+        .await
+        .map(MmapView::from);
 
         if let Ok(data) = result.as_ref() {
             self.cache
-                .put(run_id.to_string(), data)
+                .put(run_id.to_string(), data.clone())
                 .await
                 .map_err(|err| StorageCacheError::StorageCacheMmapError(Arc::new(err)))?;
         }
@@ -382,6 +371,6 @@ impl StorageCache {
             let _ = sender.send(result.clone());
         }
 
-        result.map(RunView::Bytes)
+        result
     }
 }
