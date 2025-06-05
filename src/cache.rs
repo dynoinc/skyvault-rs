@@ -135,7 +135,6 @@ impl Limiter<String, CacheEntry> for BySizeBytes {
 /// A disk-backed cache with LRU eviction and mmap support
 pub struct DiskCache {
     dir: PathBuf,
-    /// Cache state protected by a single lock
     state: Arc<RwLock<LruMap<String, CacheEntry, BySizeBytes>>>,
 }
 

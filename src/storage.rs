@@ -34,12 +34,9 @@ use thiserror::Error;
 use tokio::sync::broadcast;
 
 use crate::{
-    cache::DiskCache,
+    cache::{DiskCache, MmapView},
     metadata::SnapshotID,
-    runs::{
-        RunId,
-        RunView,
-    },
+    runs::RunId,
 };
 
 #[derive(Error, Debug)]
@@ -270,6 +267,21 @@ pub enum StorageCacheError {
 
     #[error("Storage disk cache error: {0}")]
     StorageCacheMmapError(#[from] Arc<anyhow::Error>),
+}
+
+#[derive(Clone)]
+pub enum RunView {
+    Mmap(MmapView),
+    Bytes(Bytes),
+}
+
+impl AsRef<[u8]> for RunView {
+    fn as_ref(&self) -> &[u8] {
+        match self {
+            RunView::Mmap(mmap) => mmap.as_bytes(),
+            RunView::Bytes(bytes) => bytes.as_ref(),
+        }
+    }
 }
 
 /// Type alias for the inflight request broadcast sender

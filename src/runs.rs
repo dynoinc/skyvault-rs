@@ -16,10 +16,7 @@ use futures::{
     StreamExt,
 };
 
-use crate::{
-    cache::MmapView,
-    proto,
-};
+use crate::proto;
 
 // Type aliases for clarity
 pub type Key = String;
@@ -88,21 +85,6 @@ pub enum SearchResult {
     Found(Value),
     Tombstone,
     NotFound,
-}
-
-#[derive(Clone)]
-pub enum RunView {
-    Mmap(MmapView),
-    Bytes(Bytes),
-}
-
-impl AsRef<[u8]> for RunView {
-    fn as_ref(&self) -> &[u8] {
-        match self {
-            RunView::Mmap(mmap) => mmap.as_bytes(),
-            RunView::Bytes(bytes) => bytes.as_ref(),
-        }
-    }
 }
 
 // Errors that can occur during run operations
@@ -424,17 +406,20 @@ pub fn search_run(run_data: &[u8], search_key: &str) -> SearchResult {
     SearchResult::NotFound
 }
 
-struct RunIterator {
-    view: RunView,
+struct RunIterator<T> {
+    data: T,
     position: usize,
     len: usize,
 }
 
-impl Iterator for RunIterator {
+impl<T> Iterator for RunIterator<T>
+where
+    T: AsRef<[u8]>,
+{
     type Item = Result<WriteOperation, RunError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let bytes = self.view.as_ref();
+        let bytes = self.data.as_ref();
 
         // Return None if we've reached the end
         if self.position >= self.len {
@@ -511,22 +496,25 @@ impl Iterator for RunIterator {
 
 /// Reads a serialized run file and returns an iterator over write operations.
 ///
-/// This function takes a byte slice representing a serialized run and returns
-/// an iterator that yields each write operation (Put or Delete) contained in
-/// the run.
-pub fn read_run_iter(view: RunView) -> Box<dyn Iterator<Item = Result<WriteOperation, RunError>> + Send> {
-    if view.as_ref().is_empty() {
+/// This function takes any type that can be converted into a byte slice and returns
+/// an iterator that yields each write operation (Put or Delete) contained in the run.
+pub fn read_run_iter<T>(data: T) -> Box<dyn Iterator<Item = Result<WriteOperation, RunError>> + Send>
+where
+    T: AsRef<[u8]> + Send + 'static,
+{
+    let bytes = data.as_ref();
+    if bytes.is_empty() {
         return Box::new(std::iter::once(Err(RunError::EmptyInput)));
     }
 
     // Read version byte
-    let version = view.as_ref()[0];
+    let version = bytes[0];
     if version != CURRENT_VERSION {
         return Box::new(std::iter::once(Err(RunError::UnsupportedVersion(version))));
     }
 
-    let len = view.as_ref().len();
-    Box::new(RunIterator { view, position: 1, len })
+    let len = bytes.len();
+    Box::new(RunIterator { data, position: 1, len })
 }
 
 /// Reads a serialized run file and returns a stream of write operations.

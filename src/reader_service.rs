@@ -740,10 +740,7 @@ mod tests {
             )
             .times(1)
             .returning(move |_routing_key, _req| {
-                create_run_response(vec![create_run_item(
-                    &format!("{table_id}.{key}"),
-                    Some("wal_value"),
-                )])
+                create_run_response(vec![create_run_item(&format!("{table_id}.{key}"), Some("wal_value"))])
             });
         mock_conn
             .expect_table_get_batch_run()
@@ -841,8 +838,7 @@ mod tests {
                 eq(buf_run_id.to_string()),
                 function(move |req: &Request<proto::ScanFromRunRequest>| {
                     let inner = req.get_ref();
-                    inner.run_ids == vec![buf_run_id.to_string()]
-                        && inner.exclusive_start_key == exclusive_start_key
+                    inner.run_ids == vec![buf_run_id.to_string()] && inner.exclusive_start_key == exclusive_start_key
                 }),
             )
             .times(1)
