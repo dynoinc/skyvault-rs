@@ -36,6 +36,7 @@ tokio-retry = "0.3"
 aws-config = "1.6"
 aws-sdk-s3 = "1.90"
 aws-smithy-runtime-api = "1.8"
+aws-smithy-types = "1.3"
 
 # gRPC and web API
 axum = "0.8"

@@ -5,6 +5,7 @@ use std::{
         Arc,
         RwLock,
     },
+    time::Instant,
 };
 
 use async_trait::async_trait;
@@ -25,6 +26,10 @@ use aws_smithy_runtime_api::client::{
     result::SdkError,
 };
 use bytes::Bytes;
+use metrics::{
+    counter,
+    histogram,
+};
 use thiserror::Error;
 use tokio::sync::broadcast;
 
@@ -98,12 +103,13 @@ impl S3ObjectStore {
     pub async fn new(s3_config: aws_sdk_s3::config::Config, bucket_name: &str) -> Result<Self, StorageError> {
         let client = S3Client::from_conf(s3_config);
 
-        // Create the bucket if it doesn't exist
-        // Ignore the error if the bucket already exists
-        match client.create_bucket().bucket(bucket_name).send().await {
+        match Self::create_bucket(&client, bucket_name).await {
             Ok(_) => {},
             Err(SdkError::ServiceError(err))
-                if err.err().is_bucket_already_exists() || err.err().is_bucket_already_owned_by_you() => {},
+                if err.err().is_bucket_already_exists() || err.err().is_bucket_already_owned_by_you() =>
+            {
+                tracing::info!("Bucket already exists: {}", bucket_name);
+            },
             Err(err) => return Err(StorageError::CreateBucketError(Box::new(err))),
         }
 
@@ -112,6 +118,57 @@ impl S3ObjectStore {
             bucket_name: bucket_name.to_string(),
         })
     }
+
+    async fn create_bucket(
+        client: &S3Client,
+        bucket_name: &str,
+    ) -> Result<(), SdkError<CreateBucketError, HttpResponse>> {
+        S3ObjectStore::record_s3_metrics("create_bucket", || async {
+            client.create_bucket().bucket(bucket_name).send().await.map(|_| ())
+        })
+        .await
+    }
+
+    async fn record_s3_metrics<T, E, F, Fut>(method: &'static str, operation: F) -> Result<T, SdkError<E, HttpResponse>>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<T, SdkError<E, HttpResponse>>>,
+        E: std::fmt::Debug + aws_smithy_types::error::metadata::ProvideErrorMetadata,
+    {
+        let start = Instant::now();
+        let result = operation().await;
+        let duration = start.elapsed();
+
+        let status = match result.as_ref() {
+            Ok(_) => "success".to_string(),
+            Err(err) => match err {
+                SdkError::ConstructionFailure(_) => "construction_failure".to_string(),
+                SdkError::TimeoutError(_) => "timeout".to_string(),
+                SdkError::DispatchFailure(_) => "dispatch_failure".to_string(),
+                SdkError::ResponseError(_) => "response_error".to_string(),
+                SdkError::ServiceError(service_err) => {
+                    service_err.err().message().unwrap_or("unknown_error").to_string()
+                },
+                _ => "unknown_error".to_string(),
+            },
+        };
+
+        let req_counter = counter!(
+            "skyvault/s3/requests_total",
+            "operation" => method,
+            "status" => status.clone()
+        );
+        let duration_hist = histogram!(
+            "skyvault/s3/request_duration_seconds",
+            "operation" => method,
+            "status" => status
+        );
+
+        req_counter.increment(1);
+        duration_hist.record(duration.as_secs_f64());
+
+        result
+    }
 }
 
 #[async_trait]
@@ -119,58 +176,58 @@ impl ObjectStoreTrait for S3ObjectStore {
     async fn put_snapshot(&self, snapshot_id: SnapshotID, data: Bytes) -> Result<(), StorageError> {
         let byte_stream = ByteStream::from(data);
 
-        match self
-            .client
-            .put_object()
-            .bucket(self.bucket_name.clone())
-            .key(format!("snapshots/{snapshot_id}"))
-            .body(byte_stream)
-            .send()
-            .await
-        {
-            Ok(_) => Ok(()),
-            Err(err) => Err(StorageError::PutObjectError(Box::new(err))),
-        }
+        S3ObjectStore::record_s3_metrics("put_object", || async {
+            self.client
+                .put_object()
+                .bucket(self.bucket_name.clone())
+                .key(format!("snapshots/{snapshot_id}"))
+                .body(byte_stream)
+                .send()
+                .await
+                .map(|_| ())
+        })
+        .await
+        .map_err(|err| StorageError::PutObjectError(Box::new(err)))
     }
 
     async fn put_run(&self, run_id: RunId, data: Bytes) -> Result<(), StorageError> {
         let byte_stream = ByteStream::from(data);
 
-        match self
-            .client
-            .put_object()
-            .bucket(self.bucket_name.clone())
-            .key(format!("runs/{run_id}"))
-            .body(byte_stream)
-            .if_none_match("*".to_string())
-            .send()
-            .await
-        {
-            Ok(_) => Ok(()),
-            Err(err) => Err(StorageError::PutObjectError(Box::new(err))),
-        }
+        S3ObjectStore::record_s3_metrics("put_object", || async {
+            self.client
+                .put_object()
+                .bucket(self.bucket_name.clone())
+                .key(format!("runs/{run_id}"))
+                .body(byte_stream)
+                .if_none_match("*".to_string())
+                .send()
+                .await
+                .map(|_| ())
+        })
+        .await
+        .map_err(|err| StorageError::PutObjectError(Box::new(err)))
     }
 
     async fn get_snapshot(&self, snapshot_id: SnapshotID) -> Result<Bytes, StorageError> {
         let key = format!("snapshots/{snapshot_id}");
-        let response = match self
-            .client
-            .get_object()
-            .bucket(self.bucket_name.clone())
-            .key(key.clone())
-            .send()
-            .await
-        {
-            Ok(resp) => resp,
-            Err(err) => {
-                if let SdkError::ServiceError(ref inner) = err {
-                    if let GetObjectError::NoSuchKey(_) = inner.err() {
-                        return Err(StorageError::NotFound(key));
-                    }
+
+        let response = S3ObjectStore::record_s3_metrics("get_object", || async {
+            self.client
+                .get_object()
+                .bucket(self.bucket_name.clone())
+                .key(key.clone())
+                .send()
+                .await
+        })
+        .await
+        .map_err(|err| {
+            if let SdkError::ServiceError(ref inner) = err {
+                if let GetObjectError::NoSuchKey(_) = inner.err() {
+                    return StorageError::NotFound(key.clone());
                 }
-                return Err(StorageError::GetObjectError(Box::new(err)));
-            },
-        };
+            }
+            StorageError::GetObjectError(Box::new(err))
+        })?;
 
         let bytes = response.body.collect().await?.into_bytes();
         Ok(bytes)
@@ -178,24 +235,24 @@ impl ObjectStoreTrait for S3ObjectStore {
 
     async fn get_run(&self, run_id: RunId) -> Result<ByteStream, StorageError> {
         let key = format!("runs/{run_id}");
-        let response = match self
-            .client
-            .get_object()
-            .bucket(self.bucket_name.clone())
-            .key(key.clone())
-            .send()
-            .await
-        {
-            Ok(resp) => resp,
-            Err(err) => {
-                if let SdkError::ServiceError(ref inner) = err {
-                    if let GetObjectError::NoSuchKey(_) = inner.err() {
-                        return Err(StorageError::NotFound(key));
-                    }
+
+        let response = S3ObjectStore::record_s3_metrics("get_object", || async {
+            self.client
+                .get_object()
+                .bucket(self.bucket_name.clone())
+                .key(key.clone())
+                .send()
+                .await
+        })
+        .await
+        .map_err(|err| {
+            if let SdkError::ServiceError(ref inner) = err {
+                if let GetObjectError::NoSuchKey(_) = inner.err() {
+                    return StorageError::NotFound(key.clone());
                 }
-                return Err(StorageError::GetObjectError(Box::new(err)));
-            },
-        };
+            }
+            StorageError::GetObjectError(Box::new(err))
+        })?;
 
         Ok(response.body)
     }

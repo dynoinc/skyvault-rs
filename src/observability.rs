@@ -187,8 +187,8 @@ where
                         ];
 
                         let handles = MetricsHandles {
-                            request_counter: counter!("skyvault/grpc_requests_total", &labels),
-                            duration_histogram: histogram!("skyvault/grpc_request_duration_seconds", &labels),
+                            request_counter: counter!("skyvault/server/grpc_requests_total", &labels),
+                            duration_histogram: histogram!("skyvault/server/grpc_request_duration_seconds", &labels),
                         };
 
                         let result = handles.clone();
