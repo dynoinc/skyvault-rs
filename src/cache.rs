@@ -180,7 +180,7 @@ impl DiskCache {
     pub async fn new_with_max_size(dir: PathBuf, max_size_bytes: usize) -> Result<Self> {
         fs::create_dir_all(&dir)
             .await
-            .with_context(|| format!("Failed to create cache directory: {dir:?}", dir = dir))?;
+            .with_context(|| format!("Failed to create cache directory: {dir:?}"))?;
 
         let limiter = BySizeBytes::new(max_size_bytes);
         let state = Arc::new(RwLock::new(LruMap::new(limiter)));

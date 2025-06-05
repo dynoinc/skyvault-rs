@@ -739,9 +739,7 @@ mod tests {
 
                     let mut found_in_run = false;
                     for (run_data, stats) in &built_runs {
-                        let s = match stats {
-                            Stats::StatsV1(s) => s,
-                        };
+                        let Stats::StatsV1(s) = stats;
                         if search_key >= s.min_key.as_str() && search_key <= s.max_key.as_str() {
                             let result = search_run(run_data, search_key);
                             if !found_in_run {
@@ -769,15 +767,13 @@ mod tests {
 
                 // Test a few keys not in the original map
                 for i in 0..5 {
-                    let non_existent_key = format!("__PROPTTest_NON_EXISTENT_KEY_{}__", i);
+                    let non_existent_key = format!("__PROPTTest_NON_EXISTENT_KEY_{i}__");
                     if ops_map.contains_key(&non_existent_key) {
                         continue;
                     }
 
                     for (run_data, stats) in &built_runs {
-                        let s = match stats {
-                            Stats::StatsV1(s) => s,
-                        };
+                        let Stats::StatsV1(s) = stats;
                         if non_existent_key.as_str() >= s.min_key.as_str() &&
                             non_existent_key.as_str() <= s.max_key.as_str() {
                             let result = search_run(run_data, &non_existent_key);
@@ -948,7 +944,7 @@ mod tests {
         // Create a larger stream to test the actual 128MB limit splitting (this will be
         // slow/large) We need a helper to generate large-ish data.
         fn generate_op(key_prefix: &str, index: usize, size: usize) -> WriteOperation {
-            let key = format!("{}_{:010}", key_prefix, index);
+            let key = format!("{key_prefix}_{index:010}");
             let value = vec![0u8; size]; // Generate a value of specified size
             WriteOperation::Put(key, value)
         }
@@ -1018,7 +1014,7 @@ mod tests {
                         },
                     }
                 },
-                Err(e) => panic!("Unexpected error in run stream: {:?}", e),
+                Err(e) => panic!("Unexpected error in run stream: {e:?}"),
             }
         }
     }

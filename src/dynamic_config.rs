@@ -243,7 +243,7 @@ mod tests {
     fn test_app_config_from_k8s_data_empty() {
         let data = BTreeMap::new();
         let config = from_k8s_data(&data).unwrap();
-        assert_eq!(config.uploads_semaphore.available_permits(), 4 as usize);
+        assert_eq!(config.uploads_semaphore.available_permits(), 4);
     }
 
     #[test]
@@ -251,7 +251,7 @@ mod tests {
         let mut data = BTreeMap::new();
         data.insert("concurrent_uploads".to_string(), "10".to_string());
         let config = from_k8s_data(&data).unwrap();
-        assert_eq!(config.uploads_semaphore.available_permits(), 10 as usize);
+        assert_eq!(config.uploads_semaphore.available_permits(), 10);
     }
 
     #[test]
@@ -260,7 +260,7 @@ mod tests {
         data.insert("concurrent_uploads".to_string(), "not_a_number".to_string());
         let config = from_k8s_data(&data).unwrap();
         // Should fall back to default because "not_a_number" is not parsable to u32
-        assert_eq!(config.uploads_semaphore.available_permits(), 4 as usize);
+        assert_eq!(config.uploads_semaphore.available_permits(), 4);
     }
 
     #[test]
@@ -269,12 +269,12 @@ mod tests {
         data.insert("other_key".to_string(), "some_value".to_string());
         let config = from_k8s_data(&data).unwrap();
         // concurrent_uploads key is missing, so it should use the default
-        assert_eq!(config.uploads_semaphore.available_permits(), 4 as usize);
+        assert_eq!(config.uploads_semaphore.available_permits(), 4);
     }
 
     #[test]
     fn test_app_config_default_trait() {
         let config = AppConfig::from(ParsedConfigMap::default());
-        assert_eq!(config.uploads_semaphore.available_permits(), 4 as usize);
+        assert_eq!(config.uploads_semaphore.available_permits(), 4);
     }
 }

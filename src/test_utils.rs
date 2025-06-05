@@ -71,7 +71,7 @@ pub async fn setup_test_db() -> Result<(MetadataStore, ContainerAsync<Postgres>)
     let port = container.get_host_port_ipv4(5432).await.expect("Failed to get port");
 
     // Create PostgreSQL connection string
-    let postgres_url = format!("postgres://postgres:postgres@localhost:{}/postgres", port);
+    let postgres_url = format!("postgres://postgres:postgres@localhost:{port}/postgres");
 
     let metadata_store = PostgresMetadataStore::from_url(postgres_url).await?;
 
@@ -93,7 +93,7 @@ pub async fn setup_test_object_store() -> Result<(ObjectStore, ContainerAsync<mi
         .expect("Failed to get Minio port");
 
     // Create MinIO connection details
-    let endpoint_url = format!("http://localhost:{}", port);
+    let endpoint_url = format!("http://localhost:{port}");
     let region = Region::new("us-east-1"); // MinIO requires a region
     let bucket_name = "test-bucket";
 

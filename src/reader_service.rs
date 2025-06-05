@@ -741,7 +741,7 @@ mod tests {
             .times(1)
             .returning(move |_routing_key, _req| {
                 create_run_response(vec![create_run_item(
-                    &format!("{}.{}", table_id, key),
+                    &format!("{table_id}.{key}"),
                     Some("wal_value"),
                 )])
             });
@@ -828,12 +828,12 @@ mod tests {
                 function(move |req: &Request<proto::ScanFromRunRequest>| {
                     let inner = req.get_ref();
                     inner.run_ids == vec![wal_run_id.to_string()]
-                        && inner.exclusive_start_key == format!("{}.{}", table_id, exclusive_start_key)
+                        && inner.exclusive_start_key == format!("{table_id}.{exclusive_start_key}")
                 }),
             )
             .times(1)
             .returning(move |_routing_key, _req| {
-                create_scan_response(vec![create_run_item(&format!("{}.key2", table_id), Some("wal_value"))])
+                create_scan_response(vec![create_run_item(&format!("{table_id}.key2"), Some("wal_value"))])
             });
         mock_conn
             .expect_table_scan_run()
@@ -842,7 +842,7 @@ mod tests {
                 function(move |req: &Request<proto::ScanFromRunRequest>| {
                     let inner = req.get_ref();
                     inner.run_ids == vec![buf_run_id.to_string()]
-                        && inner.exclusive_start_key == exclusive_start_key.to_string()
+                        && inner.exclusive_start_key == exclusive_start_key
                 }),
             )
             .times(1)
