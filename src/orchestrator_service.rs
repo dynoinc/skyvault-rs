@@ -414,40 +414,37 @@ impl MyOrchestrator {
                                 job_id.to_string(),
                             ]),
                             image: std::env::var("SKYVAULT_IMAGE_ID").ok(),
-                            env: Some({
-                                let env_vars = vec![
+                            env: Some(
+                                [
                                     // Postgres (password comes from k8s secrets)
-                                    ("SKYVAULT_POSTGRES_USER", None),
-                                    ("SKYVAULT_POSTGRES_HOST", None),
-                                    ("SKYVAULT_POSTGRES_PORT", None),
-                                    ("SKYVAULT_POSTGRES_DB", None),
-                                    ("SKYVAULT_POSTGRES_SSLMODE", None),
+                                    "SKYVAULT_POSTGRES_USER",
+                                    "SKYVAULT_POSTGRES_HOST",
+                                    "SKYVAULT_POSTGRES_PORT",
+                                    "SKYVAULT_POSTGRES_DB",
+                                    "SKYVAULT_POSTGRES_SSLMODE",
                                     // S3 (access key and secret key comes from k8s secrets)
-                                    ("AWS_REGION", None),
-                                    ("AWS_ENDPOINT_URL_S3", None),
-                                    ("SKYVAULT_S3_BUCKET", None),
+                                    "AWS_REGION",
+                                    "AWS_ENDPOINT_URL_S3",
+                                    "SKYVAULT_S3_BUCKET",
                                     // K8s
-                                    ("KUBERNETES_SERVICE_HOST", None),
-                                    ("KUBERNETES_SERVICE_PORT", None),
+                                    "KUBERNETES_SERVICE_HOST",
+                                    "KUBERNETES_SERVICE_PORT",
                                     // Rust
-                                    ("RUST_BACKTRACE", None),
-                                    ("RUST_LOG", Some(|v: String| v.replace("skyvault", "worker"))),
-                                ];
-
-                                env_vars
-                                    .into_iter()
-                                    .filter_map(|(name, transform)| {
-                                        std::env::var(name).ok().map(|value| {
-                                            let value = transform.map_or(value.clone(), |f| f(value));
-                                            k8s_openapi::api::core::v1::EnvVar {
-                                                name: name.to_string(),
-                                                value: Some(value),
-                                                value_from: None,
-                                            }
-                                        })
+                                    "RUST_BACKTRACE",
+                                    "RUST_LOG",
+                                ]
+                                .iter()
+                                .filter_map(|name| {
+                                    std::env::var(name).ok().map(|value| {
+                                        k8s_openapi::api::core::v1::EnvVar {
+                                            name: name.to_string(),
+                                            value: Some(value),
+                                            value_from: None,
+                                        }
                                     })
-                                    .collect::<Vec<_>>()
-                            }),
+                                })
+                                .collect::<Vec<_>>()
+                            ),
                             ..k8s_openapi::api::core::v1::Container::default()
                         }],
                         restart_policy: Some("Never".to_string()),
