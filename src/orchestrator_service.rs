@@ -435,15 +435,15 @@ impl MyOrchestrator {
                                 ]
                                 .iter()
                                 .filter_map(|name| {
-                                    std::env::var(name).ok().map(|value| {
-                                        k8s_openapi::api::core::v1::EnvVar {
+                                    std::env::var(name)
+                                        .ok()
+                                        .map(|value| k8s_openapi::api::core::v1::EnvVar {
                                             name: name.to_string(),
                                             value: Some(value),
                                             value_from: None,
-                                        }
-                                    })
+                                        })
                                 })
-                                .collect::<Vec<_>>()
+                                .collect::<Vec<_>>(),
                             ),
                             ..k8s_openapi::api::core::v1::Container::default()
                         }],
