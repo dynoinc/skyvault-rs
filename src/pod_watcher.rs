@@ -15,19 +15,19 @@ use tracing::{
     warn,
 };
 
+use std::net::IpAddr;
+
+/// Represents a change in the pod list
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PodChange {
+    Added(String, IpAddr),
+    Removed(String),
+}
+
 #[derive(Error, Debug)]
 pub enum PodWatcherError {
     #[error("Kubernetes request error: {0}")]
-    K8sError(#[from] kube::Error),
-
-    #[error("Failed to read namespace from ServiceAccount secret: {0}")]
-    NamespaceReadError(#[from] std::io::Error),
-
-    #[error("Pod missing app.kubernetes.io/component label")]
-    MissingComponentLabel,
-
-    #[error("Watcher error: {0}")]
-    WatcherError(#[from] kube::runtime::watcher::Error),
+    K8s(#[from] kube::Error),
 }
 
 /// Watches Kubernetes pods with a specific instance label and provides a
@@ -52,13 +52,19 @@ pub async fn watch(
                 Ok(event) => {
                     match event {
                         watcher::Event::Apply(pod) | watcher::Event::InitApply(pod) => {
-                            if let Some(ip) = pod.status.and_then(|status| status.pod_ip) {
-                                yield Ok(PodChange::Added(ip));
+                            if let Some(name) = pod.metadata.name {
+                                if let Some(status) = pod.status {
+                                    if let Some(pod_ip) = status.pod_ip {
+                                        if let Ok(ip_addr) = pod_ip.parse::<IpAddr>() {
+                                            yield Ok(PodChange::Added(name, ip_addr));
+                                        }
+                                    }
+                                }
                             }
                         }
                         watcher::Event::Delete(pod) => {
-                            if let Some(ip) = pod.status.and_then(|status| status.pod_ip) {
-                                yield Ok(PodChange::Removed(ip));
+                            if let Some(name) = pod.metadata.name {
+                                yield Ok(PodChange::Removed(name));
                             }
                         }
                         watcher::Event::Init => {
@@ -77,11 +83,4 @@ pub async fn watch(
     };
 
     Ok(pod_stream)
-}
-
-/// Represents a change in the pod list
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PodChange {
-    Added(String),
-    Removed(String),
 }

@@ -53,7 +53,7 @@ roleRef:
 apiVersion: v1
 kind: Pod
 metadata:
-  name: "{{ include "skyvault.fullname" . }}-test-pvc-creation"
+  name: "{{ include "skyvault.fullname" . }}-test-cache-statefulset"
   labels:
     {{- include "skyvault.labels" . | nindent 4 }}
   annotations:
@@ -64,23 +64,43 @@ spec:
   restartPolicy: Never
   serviceAccountName: "{{ include "skyvault.fullname" . }}-test-sa"
   containers:
-  - name: pvc-test
+  - name: cache-statefulset-test
     image: bitnami/kubectl:latest
     command: ["/bin/bash"]
     args:
       - -c
       - |
         set -e
-        echo "Testing PVC creation logic..."
+        echo "Testing cache service StatefulSet and PVC creation logic..."
         
-        # Test 1: Check that PVCs exist for deployments with cache.volumeType=pvc and reader enabled
         {{- range $key, $deployment := .Values.deployments }}
         {{- if $deployment.enabled }}
-        {{- $readerEnabled := eq ((get ($deployment.env | default dict) "SKYVAULT_ENABLE_READER" | default "false") | toString) "true" }}
-        {{- $useStatefulSet := and (eq (get ($deployment.cache | default dict) "volumeType" | default "none") "pvc") $readerEnabled }}
-        {{- if and $readerEnabled (eq (get ($deployment.cache | default dict) "volumeType" | default "none") "pvc") }}
+        {{- $isCacheService := eq ((get ($deployment.env | default dict) "SKYVAULT_SERVICE" | default "") | toString) "cache" }}
+        {{- $usePVC := and $isCacheService (eq (get ($deployment.cache | default dict) "volumeType" | default "none") "pvc") }}
+        {{- $volumeType := get ($deployment.cache | default dict) "volumeType" | default "none" }}
         
-        echo "Checking that {{ $deployment.instanceName }} with PVC cache has StatefulSet with volumeClaimTemplates..."
+        {{- if $isCacheService }}
+        echo "Testing cache service: {{ $deployment.instanceName }} (volumeType: {{ $volumeType }})"
+        
+        # Cache services should always be StatefulSet
+        if kubectl get statefulset skyvault-{{ $deployment.instanceName }} > /dev/null 2>&1; then
+          echo "✓ Cache service {{ $deployment.instanceName }} is a StatefulSet"
+        else
+          echo "✗ Cache service {{ $deployment.instanceName }} should be a StatefulSet"
+          exit 1
+        fi
+        
+        # Should NOT be a Deployment
+        if kubectl get deployment skyvault-{{ $deployment.instanceName }} > /dev/null 2>&1; then
+          echo "✗ Cache service {{ $deployment.instanceName }} should not be a Deployment"
+          exit 1
+        else
+          echo "✓ Cache service {{ $deployment.instanceName }} is not a Deployment (correct)"
+        fi
+        
+        {{- if $usePVC }}
+        # Cache service with PVC should have volumeClaimTemplates
+        echo "Checking that cache service {{ $deployment.instanceName }} with PVC has volumeClaimTemplates..."
         kubectl get statefulset skyvault-{{ $deployment.instanceName }} -o jsonpath='{.spec.volumeClaimTemplates[0].metadata.name}' | grep -q "cache-volume"
         if [ $? -eq 0 ]; then
           echo "✓ StatefulSet skyvault-{{ $deployment.instanceName }} has volumeClaimTemplates"
@@ -97,38 +117,56 @@ spec:
           exit 1
         fi
         
-        {{- else if $readerEnabled }}
+        {{- else }}
+        # Cache service without PVC should not have PVCs
+        echo "Checking that cache service {{ $deployment.instanceName }} without PVC has no PVCs..."
         
-        echo "Checking that {{ $deployment.instanceName }} with non-PVC cache ({{ get ($deployment.cache | default dict) "volumeType" | default "none" }}) has no PVCs..."
-        # Should be a Deployment, not StatefulSet
-        if kubectl get deployment skyvault-{{ $deployment.instanceName }} > /dev/null 2>&1; then
-          echo "✓ {{ $deployment.instanceName }} is a Deployment (not StatefulSet)"
+        if [ "$(kubectl get pvc -l app.kubernetes.io/component=skyvault-{{ $deployment.instanceName }} --no-headers 2>/dev/null | wc -l)" -eq "0" ]; then
+          echo "✓ No PVCs exist for {{ $deployment.instanceName }} (volumeType: {{ $volumeType }})"
         else
-          echo "✗ {{ $deployment.instanceName }} should be a Deployment"
+          echo "✗ Unexpected PVCs found for {{ $deployment.instanceName }} (volumeType: {{ $volumeType }})"
           exit 1
+        fi
+        
+        # Should not have volumeClaimTemplates
+        if kubectl get statefulset skyvault-{{ $deployment.instanceName }} -o jsonpath='{.spec.volumeClaimTemplates}' 2>/dev/null | grep -q "cache-volume"; then
+          echo "✗ StatefulSet skyvault-{{ $deployment.instanceName }} should not have volumeClaimTemplates"
+          exit 1
+        else
+          echo "✓ StatefulSet skyvault-{{ $deployment.instanceName }} has no volumeClaimTemplates (correct)"
+        fi
+        {{- end }}
+        
+        {{- else }}
+        # Non-cache services should always be Deployment
+        echo "Testing non-cache service: {{ $deployment.instanceName }}"
+        
+        if kubectl get deployment skyvault-{{ $deployment.instanceName }} > /dev/null 2>&1; then
+          echo "✓ Non-cache service {{ $deployment.instanceName }} is a Deployment"
+        else
+          echo "✗ Non-cache service {{ $deployment.instanceName }} should be a Deployment"
+          exit 1
+        fi
+        
+        # Should NOT be a StatefulSet
+        if kubectl get statefulset skyvault-{{ $deployment.instanceName }} > /dev/null 2>&1; then
+          echo "✗ Non-cache service {{ $deployment.instanceName }} should not be a StatefulSet"
+          exit 1
+        else
+          echo "✓ Non-cache service {{ $deployment.instanceName }} is not a StatefulSet (correct)"
         fi
         
         # Should have no PVCs
         if [ "$(kubectl get pvc -l app.kubernetes.io/component=skyvault-{{ $deployment.instanceName }} --no-headers 2>/dev/null | wc -l)" -eq "0" ]; then
-          echo "✓ No PVCs exist for {{ $deployment.instanceName }} (as expected)"
+          echo "✓ No PVCs exist for non-cache service {{ $deployment.instanceName }}"
         else
-          echo "✗ Unexpected PVCs found for {{ $deployment.instanceName }}"
+          echo "✗ Unexpected PVCs found for non-cache service {{ $deployment.instanceName }}"
           exit 1
         fi
-        
-        {{- else }}
-        
-        echo "Checking that {{ $deployment.instanceName }} without reader enabled has no PVCs..."
-        # Should have no PVCs regardless of cache type
-        if [ "$(kubectl get pvc -l app.kubernetes.io/component=skyvault-{{ $deployment.instanceName }} --no-headers 2>/dev/null | wc -l)" -eq "0" ]; then
-          echo "✓ No PVCs exist for {{ $deployment.instanceName }} (reader disabled)"
-        else
-          echo "✗ Unexpected PVCs found for {{ $deployment.instanceName }} (reader disabled)"
-          exit 1
-        fi
-        
         {{- end }}
+        
+        echo "---"
         {{- end }}
         {{- end }}
         
-        echo "All PVC creation tests passed!" 
+        echo "All cache service StatefulSet and PVC tests passed!" 

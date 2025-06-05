@@ -1,7 +1,8 @@
 {{- range $key, $deployment := .Values.deployments }}
 {{- if $deployment.enabled }}
-{{- $readerEnabled := eq ((get ($deployment.env | default dict) "SKYVAULT_ENABLE_READER" | default "false") | toString) "true" }}
-{{- $useStatefulSet := and (eq (get ($deployment.cache | default dict) "volumeType" | default "none") "pvc") $readerEnabled }}
+{{- $isCacheService := eq ((get ($deployment.env | default dict) "SKYVAULT_SERVICE" | default "") | toString) "cache" }}
+{{- $useStatefulSet := $isCacheService }}
+{{- $usePVC := and $isCacheService (eq (get ($deployment.cache | default dict) "volumeType" | default "none") "pvc") }}
 ---
 apiVersion: apps/v1
 {{- if $useStatefulSet }}
@@ -61,21 +62,21 @@ spec:
             
             - name: SKYVAULT_IMAGE_ID
               value: "{{ $.Values.common.image.id }}"
-          {{- if and $readerEnabled (ne $deployment.cache.volumeType "none") }}
+          {{- if and $isCacheService (ne (get ($deployment.cache | default dict) "volumeType" | default "none") "none") }}
           volumeMounts:
             - name: cache-volume
               mountPath: /tmp/skyvault-cache
           {{- end }}
-      {{- if and $readerEnabled (ne $deployment.cache.volumeType "none") (not $useStatefulSet) }}
+      {{- if and $isCacheService (ne (get ($deployment.cache | default dict) "volumeType" | default "none") "none") (not $usePVC) }}
       volumes:
         - name: cache-volume
-          {{- if eq $deployment.cache.volumeType "tmpfs" }}
+          {{- if eq (get ($deployment.cache | default dict) "volumeType" | default "none") "tmpfs" }}
           emptyDir:
             medium: Memory
             sizeLimit: {{ $deployment.cache.tmpfs.sizeLimit }}
           {{- end }}
       {{- end }}
-  {{- if $useStatefulSet }}
+  {{- if $usePVC }}
   volumeClaimTemplates:
     - metadata:
         name: cache-volume

@@ -1,9 +1,8 @@
 use std::{
-    collections::HashMap,
-    sync::{
+    collections::HashMap, hash::{Hash, Hasher}, net::{IpAddr, Ipv4Addr}, sync::{
         Arc,
         Mutex,
-    },
+    }
 };
 
 use clap::{
@@ -90,10 +89,30 @@ pub enum ReaderServiceError {
 }
 
 #[derive(Clone)]
+struct Pod {
+    name: String,
+    ip: IpAddr,
+}
+
+impl Hash for Pod {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.ip.hash(state);
+    }
+}
+
+impl PartialEq for Pod {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+    }
+}
+
+impl Eq for Pod {}
+
+#[derive(Clone)]
 struct ConsistentHashCM {
     port: u16,
-    connections: Arc<Mutex<HashMap<String, proto::cache_service_client::CacheServiceClient<Channel>>>>,
-    consistent_hashring: Arc<Mutex<ConsistentHashRing<String>>>,
+    connections: Arc<Mutex<HashMap<IpAddr, proto::cache_service_client::CacheServiceClient<Channel>>>>,
+    consistent_hashring: Arc<Mutex<ConsistentHashRing<Pod>>>,
 }
 
 impl ConsistentHashCM {
@@ -117,13 +136,19 @@ impl ConsistentHashCM {
             pin_mut!(pods_stream);
             while let Some(pod_change) = pods_stream.next().await {
                 match pod_change {
-                    Ok(PodChange::Added(pod)) => {
-                        info!("Adding pod {pod} to consistent hashring");
-                        hashring_clone.lock().unwrap().add_node(pod);
+                    Ok(PodChange::Added(name, ip)) => {
+                        info!("Adding pod {name} to consistent hashring");
+                        hashring_clone.lock().unwrap().add_node(Pod {
+                            name,
+                            ip,
+                        });
                     },
-                    Ok(PodChange::Removed(pod)) => {
-                        info!("Removing pod {pod} from consistent hashring");
-                        hashring_clone.lock().unwrap().remove_node(&pod);
+                    Ok(PodChange::Removed(name)) => {
+                        info!("Removing pod {name} from consistent hashring");
+                        hashring_clone.lock().unwrap().remove_node(&Pod {
+                            name,
+                            ip: IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
+                        });
                     },
                     Err(e) => {
                         error!(error = %e, "Error watching pods");
@@ -137,18 +162,18 @@ impl ConsistentHashCM {
 
     async fn get_connection(
         &self,
-        pod: &str,
+        pod_ip: &IpAddr,
     ) -> Result<proto::cache_service_client::CacheServiceClient<Channel>, ReaderServiceError> {
         // First check if connection exists
         {
             let connections = self.connections.lock().unwrap();
-            if let Some(conn) = connections.get(pod).cloned() {
+            if let Some(conn) = connections.get(pod_ip).cloned() {
                 return Ok(conn);
             }
         }
 
         // Connection not found, create a new one outside the lock
-        let addr = format!("http://{}:{}", pod, self.port);
+        let addr = format!("http://{}:{}", pod_ip, self.port);
         let conn = match proto::cache_service_client::CacheServiceClient::connect(addr).await {
             Ok(conn) => conn,
             Err(e) => return Err(ReaderServiceError::ConnectionError(e)),
@@ -156,7 +181,7 @@ impl ConsistentHashCM {
 
         // Now acquire the lock again to insert the new connection
         let conn_clone = conn.clone();
-        self.connections.lock().unwrap().insert(pod.to_string(), conn);
+        self.connections.lock().unwrap().insert(*pod_ip, conn);
         Ok(conn_clone)
     }
 }
@@ -178,7 +203,7 @@ impl ConnectionManager for ConsistentHashCM {
             None => return Err(Status::internal("No reader service pods available")),
         };
 
-        let mut run_conn = match self.get_connection(&run_pod).await {
+        let mut run_conn = match self.get_connection(&run_pod.ip).await {
             Ok(conn) => conn,
             Err(e) => {
                 return Err(Status::internal(format!(
@@ -205,7 +230,7 @@ impl ConnectionManager for ConsistentHashCM {
             None => return Err(Status::internal("No reader service pods available")),
         };
 
-        let mut scan_conn = match self.get_connection(&scan_pod).await {
+        let mut scan_conn = match self.get_connection(&scan_pod.ip).await {
             Ok(conn) => conn,
             Err(e) => {
                 return Err(Status::internal(format!(

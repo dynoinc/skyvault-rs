@@ -35,8 +35,8 @@ use tokio::sync::broadcast;
 
 use crate::{
     cache::{
-        DiskCache,
         CacheData,
+        DiskCache,
     },
     metadata::SnapshotID,
     runs::RunId,
@@ -311,10 +311,7 @@ impl StorageCache {
     pub async fn get_run(&self, run_id: RunId) -> Result<CacheData, StorageCacheError> {
         // First check if the run is in the cache
         {
-            let cache = self
-                .cache
-                .get_mmap(run_id.as_ref())
-                .await;
+            let cache = self.cache.get_mmap(run_id.as_ref()).await;
             if let Some(run_data) = cache {
                 return Ok(run_data);
             }
