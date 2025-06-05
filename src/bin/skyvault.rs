@@ -105,7 +105,7 @@ async fn main() -> Result<()> {
 
     // Create metadata client
     let metadata_url = config.postgres.to_url(k8s_client.clone(), &current_namespace).await?;
-    let metadata = Arc::new(metadata::PostgresMetadataStore::new(metadata_url).await?);
+    let metadata = metadata::PostgresMetadataStore::from_url(metadata_url).await?;
 
     // Create storage client
     let s3_config = config.s3.to_config(k8s_client.clone(), &current_namespace).await?;

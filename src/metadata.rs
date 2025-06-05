@@ -8,11 +8,18 @@ use std::{
     pin::Pin,
     str::FromStr,
     sync::Arc,
-    time::Duration,
+    time::{
+        Duration,
+        Instant,
+    },
 };
 
 use async_stream::stream;
 use futures::Stream;
+use metrics::{
+    counter,
+    histogram,
+};
 use sqlx::{
     PgPool,
     migrate::Migrator,
@@ -476,12 +483,12 @@ pub struct PostgresMetadataStore {
 static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 
 impl PostgresMetadataStore {
-    pub async fn new(metadata_url: String) -> Result<Self, MetadataError> {
+    pub async fn from_url(metadata_url: String) -> Result<MetadataStore, MetadataError> {
         let pg_pool = PgPoolOptions::new().max_connections(5).connect(&metadata_url).await?;
 
         MIGRATOR.run(&pg_pool).await?;
 
-        Ok(Self { pg_pool })
+        Ok(Arc::new(MetricsMetadataStore::new(Self { pg_pool })))
     }
 
     /// Attempts to perform the append_wal operation within a single
@@ -793,6 +800,150 @@ impl PostgresMetadataStore {
         }
 
         Ok(changelog_seq_no)
+    }
+}
+
+pub struct MetricsMetadataStore {
+    inner: PostgresMetadataStore,
+}
+
+impl MetricsMetadataStore {
+    pub fn new(inner: PostgresMetadataStore) -> Self {
+        Self { inner }
+    }
+
+    async fn record_metrics<T, F, Fut>(method: &'static str, operation: F) -> Result<T, MetadataError>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<T, MetadataError>>,
+    {
+        let start = Instant::now();
+        let result = operation().await;
+        let duration = start.elapsed();
+
+        let status = match result.as_ref() {
+            Ok(_) => "ok".to_string(),
+            Err(err) => match err {
+                MetadataError::DatabaseError(_) => "database_error".to_string(),
+                MetadataError::DatabaseMigrationError(_) => "migration_error".to_string(),
+                MetadataError::JsonSerdeError(_) => "json_error".to_string(),
+                MetadataError::AlreadyDeleted(_) => "already_deleted".to_string(),
+                MetadataError::InvalidJobState(_) => "invalid_job_state".to_string(),
+                MetadataError::TableAlreadyExists(_) => "table_exists".to_string(),
+                MetadataError::TableNotFound(_) => "table_not_found".to_string(),
+                MetadataError::TableIDNotFound(_) => "table_id_not_found".to_string(),
+            },
+        };
+
+        let req_counter = counter!(
+            "skyvault/postgres/requests_total",
+            "method" => method,
+            "status" => status.clone()
+        );
+        let duration_hist = histogram!(
+            "skyvault/postgres/request_duration_seconds",
+            "method" => method
+        );
+
+        req_counter.increment(1);
+        duration_hist.record(duration.as_secs_f64());
+
+        result
+    }
+}
+
+#[async_trait::async_trait]
+impl MetadataStoreTrait for MetricsMetadataStore {
+    async fn get_latest_snapshot_id(&self) -> Result<Option<(SnapshotID, SeqNo)>, MetadataError> {
+        Self::record_metrics("get_latest_snapshot_id", || self.inner.get_latest_snapshot_id()).await
+    }
+
+    async fn get_latest_snapshot(&self) -> Result<(Option<SnapshotID>, Vec<ChangelogEntryWithID>), MetadataError> {
+        Self::record_metrics("get_latest_snapshot", || self.inner.get_latest_snapshot()).await
+    }
+
+    async fn persist_snapshot(&self, snapshot_id: SnapshotID, seq_no: SeqNo) -> Result<(), MetadataError> {
+        Self::record_metrics("persist_snapshot", || self.inner.persist_snapshot(snapshot_id, seq_no)).await
+    }
+
+    async fn stream_changelog(&self) -> Result<(Option<SnapshotID>, ChangelogStream), MetadataError> {
+        Self::record_metrics("stream_changelog", || self.inner.stream_changelog()).await
+    }
+
+    async fn get_changelog(&self, from_seq_no: SeqNo) -> Result<Vec<ChangelogEntryWithID>, MetadataError> {
+        Self::record_metrics("get_changelog", || self.inner.get_changelog(from_seq_no)).await
+    }
+
+    async fn append_wal(&self, run_ids: Vec<(RunId, Stats)>) -> Result<SeqNo, MetadataError> {
+        Self::record_metrics("append_wal", || self.inner.append_wal(run_ids)).await
+    }
+
+    async fn append_wal_compaction(
+        &self,
+        job_id: JobID,
+        compacted: Vec<RunId>,
+        new_table_runs: Vec<(RunId, TableID, Stats)>,
+    ) -> Result<SeqNo, MetadataError> {
+        Self::record_metrics("append_wal_compaction", || {
+            self.inner.append_wal_compaction(job_id, compacted, new_table_runs)
+        })
+        .await
+    }
+
+    async fn append_table_compaction(
+        &self,
+        job_id: JobID,
+        compacted: Vec<RunId>,
+        new_runs: Vec<RunMetadata>,
+    ) -> Result<SeqNo, MetadataError> {
+        Self::record_metrics("append_table_compaction", || {
+            self.inner.append_table_compaction(job_id, compacted, new_runs)
+        })
+        .await
+    }
+
+    async fn get_run_metadata_batch(&self, run_ids: Vec<RunId>) -> Result<HashMap<RunId, RunMetadata>, MetadataError> {
+        Self::record_metrics("get_run_metadata_batch", || self.inner.get_run_metadata_batch(run_ids)).await
+    }
+
+    async fn schedule_job(&self, job_params: JobParams) -> Result<JobID, MetadataError> {
+        Self::record_metrics("schedule_job", || self.inner.schedule_job(job_params)).await
+    }
+
+    async fn get_job_status(&self, job_id: JobID) -> Result<JobStatus, MetadataError> {
+        Self::record_metrics("get_job_status", || self.inner.get_job_status(job_id)).await
+    }
+
+    async fn get_pending_jobs(&self) -> Result<Vec<(JobID, JobParams)>, MetadataError> {
+        Self::record_metrics("get_pending_jobs", || self.inner.get_pending_jobs()).await
+    }
+
+    async fn get_job(&self, job_id: JobID) -> Result<JobParams, MetadataError> {
+        Self::record_metrics("get_job", || self.inner.get_job(job_id)).await
+    }
+
+    async fn mark_job_failed(&self, job_id: JobID) -> Result<(), MetadataError> {
+        Self::record_metrics("mark_job_failed", || self.inner.mark_job_failed(job_id)).await
+    }
+
+    async fn create_table(&self, config: TableConfig) -> Result<SeqNo, MetadataError> {
+        Self::record_metrics("create_table", || self.inner.create_table(config)).await
+    }
+
+    async fn drop_table(&self, table_name: TableName) -> Result<(), MetadataError> {
+        Self::record_metrics("drop_table", || self.inner.drop_table(table_name)).await
+    }
+
+    async fn list_tables(&self) -> Result<Vec<TableConfig>, MetadataError> {
+        Self::record_metrics("list_tables", || self.inner.list_tables()).await
+    }
+
+    async fn get_table(&self, table_name: TableName) -> Result<TableConfig, MetadataError> {
+        Self::record_metrics("get_table", || self.inner.get_table(table_name)).await
+    }
+
+    async fn get_table_by_id(&self, table_id: TableID) -> Result<TableConfig, MetadataError> {
+        Self::record_metrics("get_table_by_id", || self.inner.get_table_by_id(table_id)).await
     }
 }
 

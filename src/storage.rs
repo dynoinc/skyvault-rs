@@ -156,12 +156,11 @@ impl S3ObjectStore {
         let req_counter = counter!(
             "skyvault/s3/requests_total",
             "operation" => method,
-            "status" => status.clone()
+            "status" => status,
         );
         let duration_hist = histogram!(
             "skyvault/s3/request_duration_seconds",
             "operation" => method,
-            "status" => status
         );
 
         req_counter.increment(1);

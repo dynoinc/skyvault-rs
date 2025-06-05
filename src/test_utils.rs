@@ -73,11 +73,9 @@ pub async fn setup_test_db() -> Result<(MetadataStore, ContainerAsync<Postgres>)
     // Create PostgreSQL connection string
     let postgres_url = format!("postgres://postgres:postgres@localhost:{}/postgres", port);
 
-    let metadata_store = PostgresMetadataStore::new(postgres_url)
-        .await
-        .expect("Failed to create metadata store");
+    let metadata_store = PostgresMetadataStore::from_url(postgres_url).await?;
 
-    Ok((Arc::new(metadata_store), container))
+    Ok((metadata_store, container))
 }
 
 /// Sets up a test MinIO instance in a container for testing S3ObjectStore.
