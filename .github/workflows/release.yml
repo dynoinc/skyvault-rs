@@ -9,58 +9,19 @@ jobs:
     uses: ./.github/workflows/build.yml
     permissions:
       contents: read
-  
-  scan:
+
+  bump_scan_push:
     runs-on: ubuntu-latest
+    needs: [test]
     if: success()
-    name: Security Scan
-    permissions:
-      contents: read
-      packages: read
-      security-events: write
-
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
-      - name: Set Up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-    
-      - name: Build Docker Image
-        run: docker build -t skyvault:latest -f Dockerfile.release .
-
-      - name: Scan Docker Image with Trivy
-        id: trivy_scan
-        uses: aquasecurity/trivy-action@0.29.0
-        with:
-          image-ref: skyvault:latest
-          format: "sarif"
-          output: trivy-results.sarif
-          exit-code: "1"
-          ignore-unfixed: true
-        continue-on-error: true
-
-      - name: Upload SARIF Report
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: trivy-results.sarif
-
-      - name: Fail if vulnerabilities found
-        if: steps.trivy_scan.outcome == 'failure'
-        run: exit 1
-
-  bump_version:
-    runs-on: ubuntu-latest
-    needs: [test, scan]
-    if: success()
-    name: Bump Version
+    name: Bump Version, Scan, and Push
     permissions:
       contents: write
+      packages: write
+      security-events: write
     outputs:
       VERSION: ${{ steps.generate_version.outputs.VERSION }}
-      COMMIT_HASH: ${{ steps.update_manifests_and_commit.outputs.COMMIT_HASH }}
+      COMMIT_HASH: ${{ steps.commit_and_push.outputs.COMMIT_HASH }}
       VERSION_NO_V: ${{ steps.generate_version.outputs.VERSION_NO_V }}
 
     steps:
@@ -80,10 +41,12 @@ jobs:
           else
             NEW_COMMITS=$(git log $LAST_TAG..HEAD --oneline)
             if [ -z "$NEW_COMMITS" ]; then
-              echo "No new commits since last tag."
-              echo "NEW_COMMITS=false" >> $GITHUB_ENV
+              echo "❌ No new commits since last tag ($LAST_TAG)."
+              echo "Cannot create a new release without new commits."
+              echo "Please make some changes before running the release workflow."
+              exit 1
             else
-              echo "New commits found."
+              echo "✅ New commits found since $LAST_TAG."
               echo "NEW_COMMITS=true" >> $GITHUB_ENV
               echo "LAST_VERSION=${LAST_TAG#v}" >> $GITHUB_ENV
             fi
@@ -91,16 +54,13 @@ jobs:
 
       - name: Generate version
         id: generate_version
-        if: env.NEW_COMMITS == 'true'
         run: |
           IFS='.' read -r major minor patch <<< "$LAST_VERSION"
           NEW_VERSION="$major.$minor.$((patch + 1))"
           echo "VERSION=v$NEW_VERSION" >> $GITHUB_OUTPUT
           echo "VERSION_NO_V=$NEW_VERSION" >> $GITHUB_OUTPUT
 
-      - name: Update manifests, commit, tag, and push
-        id: update_manifests_and_commit
-        if: env.NEW_COMMITS == 'true'
+      - name: Update manifests locally (no commit yet)
         env:
           NEW_TAGGED_VERSION: ${{ steps.generate_version.outputs.VERSION }}
         run: |
@@ -108,72 +68,84 @@ jobs:
           echo "New version (no v prefix): $VERSION_NO_V"
           echo "New version (with v prefix / tag): $NEW_TAGGED_VERSION"
 
-          # Configure Git
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-
           # Update charts/skyvault/Chart.yaml
           echo "Updating charts/skyvault/Chart.yaml to version $VERSION_NO_V"
           sed -i -e "s|^version:.*|version: $VERSION_NO_V|" \
                  -e "s|^appVersion:.*|appVersion: \"$VERSION_NO_V\"|" \
                  charts/skyvault/Chart.yaml
-          git add charts/skyvault/Chart.yaml
 
           # Update root Cargo.toml and Cargo.lock
           echo "Updating ./Cargo.toml and Cargo.lock to version $VERSION_NO_V"
-          # This sed command targets 'version = "..."' under [package] or [workspace.package]
-          # It handles version assignments within these specific TOML tables.
           sed -i "3s/version = \".*\"/version = \"$VERSION_NO_V\"/" Cargo.toml
-          # Update version in Cargo.lock for the skyvault package
           sed -i '/name = "skyvault"/,/version = ".*"/ s/version = ".*"/version = "'$VERSION_NO_V'"/' Cargo.lock
+
+          echo "Files updated locally, will commit after successful scan"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker Image for scanning
+        run: |
+          echo "Building Docker image with version ${{ steps.generate_version.outputs.VERSION_NO_V }}"
+          docker build -t skyvault:latest -f Dockerfile.release .
+
+      - name: Scan Docker Image with Trivy
+        id: trivy_scan
+        uses: aquasecurity/trivy-action@0.29.0
+        with:
+          image-ref: skyvault:latest
+          format: "sarif"
+          output: trivy-results.sarif
+          exit-code: "1"
+          ignore-unfixed: true
+        continue-on-error: true
+
+      - name: Upload SARIF Report
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+
+      - name: Fail if vulnerabilities found
+        if: steps.trivy_scan.outcome == 'failure'
+        run: |
+          echo "❌ Security vulnerabilities found in the image!"
+          echo "Version bump will not be committed and image will not be pushed."
+          exit 1
+
+      - name: Commit version changes and push (only after successful scan)
+        id: commit_and_push
+        env:
+          NEW_TAGGED_VERSION: ${{ steps.generate_version.outputs.VERSION }}
+        run: |
+          VERSION_NO_V="${NEW_TAGGED_VERSION#v}"
+          
+          # Configure Git
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+
+          # Stage the updated files
+          git add charts/skyvault/Chart.yaml
           git add Cargo.toml
           git add Cargo.lock
 
           # Commit changes
-          # Check if there are changes to commit
           if ! git diff --staged --quiet; then
             git commit -m "chore: Bump version to $VERSION_NO_V"
-            echo "Committed version updates."
+            echo "✅ Committed version updates."
           else
             echo "No manifest changes to commit."
-            # If there were no file changes but we are in NEW_COMMITS == 'true' path,
-            # it implies version was bumped but files were already at new version (unlikely scenario, but good to handle)
-            # We still want to tag and push the current HEAD.
           fi
 
-          # Tag this commit (or current HEAD if no file changes were made)
+          # Tag this commit
           git tag "$NEW_TAGGED_VERSION"
-          echo "Tagged $NEW_TAGGED_VERSION"
+          echo "✅ Tagged $NEW_TAGGED_VERSION"
 
-          # Push commit (if any) and tag
-          # github.ref_name is the branch name (e.g., main)
-          git push origin HEAD:${{ github.ref_name }} # Push the commit to the branch
-          git push --tags # Push the new tag
+          # Push commit and tag
+          git push origin HEAD:${{ github.ref_name }}
+          git push --tags
 
-          echo "Pushed commit and tag to ${{ github.ref_name }}."
+          echo "✅ Pushed commit and tag to ${{ github.ref_name }}."
           echo "COMMIT_HASH=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
-
-  push:
-    runs-on: ubuntu-latest
-    needs: bump_version
-    if: needs.bump_version.outputs.VERSION != '' && success()
-    name: Push Container Image
-    permissions:
-      contents: read
-      packages: write
-
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.bump_version.outputs.COMMIT_HASH }}
-          fetch-depth: 1
-          fetch-tags: true
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
@@ -182,7 +154,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push Docker image
+      - name: Build and push Docker image (only after successful scan and commit)
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -191,12 +163,14 @@ jobs:
           platforms: linux/amd64
           tags: |
             ghcr.io/${{ github.repository }}:latest
-            ghcr.io/${{ github.repository }}:${{ needs.bump_version.outputs.VERSION }}
-  
+            ghcr.io/${{ github.repository }}:${{ steps.generate_version.outputs.VERSION }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
   create_release:
     runs-on: ubuntu-latest
-    needs: [bump_version, push]
-    if: needs.bump_version.outputs.VERSION != '' && success()
+    needs: [bump_scan_push]
+    if: needs.bump_scan_push.outputs.VERSION != '' && success()
     name: Create Release
     permissions:
       contents: write
@@ -204,43 +178,43 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.bump_version.outputs.COMMIT_HASH }}
+          ref: ${{ needs.bump_scan_push.outputs.COMMIT_HASH }}
 
       - name: Set up Helm
         uses: azure/setup-helm@v3
         
       - name: Package Helm Chart
         run: |
-          VERSION="${{ needs.bump_version.outputs.VERSION }}"
+          VERSION="${{ needs.bump_scan_push.outputs.VERSION }}"
           VERSION_NO_V="${VERSION#v}"
           helm package charts/skyvault --version $VERSION_NO_V --app-version $VERSION_NO_V
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: ${{ needs.bump_version.outputs.VERSION }}
-          name: Release ${{ needs.bump_version.outputs.VERSION }}
+          tag_name: ${{ needs.bump_scan_push.outputs.VERSION }}
+          name: Release ${{ needs.bump_scan_push.outputs.VERSION }}
           generate_release_notes: true
           body: |
             ## Container Image
             ```
-            ghcr.io/${{ github.repository }}:${{ needs.bump_version.outputs.VERSION }}
+            ghcr.io/${{ github.repository }}:${{ needs.bump_scan_push.outputs.VERSION }}
             ```
 
             ## Artifacts
-            - Container Image: `ghcr.io/${{ github.repository }}:${{ needs.bump_version.outputs.VERSION }}`
-            - Helm Chart: [skyvault-${{ needs.bump_version.outputs.VERSION_NO_V }}.tgz](https://github.com/${{ github.repository }}/releases/download/${{ needs.bump_version.outputs.VERSION }}/skyvault-${{ needs.bump_version.outputs.VERSION_NO_V }}.tgz)
+            - Container Image: `ghcr.io/${{ github.repository }}:${{ needs.bump_scan_push.outputs.VERSION }}`
+            - Helm Chart: [skyvault-${{ needs.bump_scan_push.outputs.VERSION_NO_V }}.tgz](https://github.com/${{ github.repository }}/releases/download/${{ needs.bump_scan_push.outputs.VERSION }}/skyvault-${{ needs.bump_scan_push.outputs.VERSION_NO_V }}.tgz)
             
             ## Installation
             ```bash
-            helm install my-release https://github.com/${{ github.repository }}/releases/download/${{ needs.bump_version.outputs.VERSION }}/skyvault-${{ needs.bump_version.outputs.VERSION_NO_V }}.tgz
+            helm install my-release https://github.com/${{ github.repository }}/releases/download/${{ needs.bump_scan_push.outputs.VERSION }}/skyvault-${{ needs.bump_scan_push.outputs.VERSION_NO_V }}.tgz
             ```
           files: |
             skyvault-*.tgz
           
   purge_old_versions:
     runs-on: ubuntu-latest
-    needs: push
+    needs: bump_scan_push
     if: success()
     name: Purge Old Versions
     permissions:
