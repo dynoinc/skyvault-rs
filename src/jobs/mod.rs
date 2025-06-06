@@ -1,10 +1,7 @@
 use crate::{
     forest::ForestError,
     metadata::{
-        self,
-        JobParams,
-        MetadataError,
-        MetadataStore,
+        self, JobParams, JobStatus, MetadataError, MetadataStore
     },
     runs::RunError,
     storage::{
@@ -43,9 +40,13 @@ pub async fn execute(
     object_store: ObjectStore,
     job_id: metadata::JobID,
 ) -> Result<(), JobError> {
-    let job_params = metadata_store.get_job(job_id).await?;
+    let job = metadata_store.get_job(job_id).await?;
 
-    match job_params {
+    if job.status != JobStatus::Pending {
+        return Err(JobError::InvalidInput(format!("Job {job_id} is not pending: {:?}", job.status)));
+    }
+
+    match job.params {
         JobParams::WALCompaction => {
             let (compacted, table_runs) = wal_compaction::execute(metadata_store.clone(), object_store.clone()).await?;
             metadata_store

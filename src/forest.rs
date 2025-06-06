@@ -396,7 +396,8 @@ impl ForestImpl {
             },
             TableChangelogEntryV1::TableDropped(_) => {
                 tracing::debug!("Table removed: {:?}", table_config);
-                new_state.tables.remove(&table_config.table_name.clone());
+                new_state.tables.remove(&table_config.table_name);
+                new_state.trees.remove(&table_id);
             },
         }
 
@@ -408,5 +409,33 @@ impl ForestImpl {
 impl ForestTrait for ForestImpl {
     fn get_state(&self) -> Arc<Snapshot> {
         self.state.lock().unwrap().clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        requires_docker,
+        test_utils::{setup_test_db, setup_test_object_store},
+    };
+
+    #[tokio::test]
+    async fn test_forest_handles_table_create_and_drop() {
+        requires_docker!();
+
+        // Setup test database and object store
+        let (metadata_store, _db_container) = setup_test_db().await.unwrap();
+        let (object_store, _store_container) = setup_test_object_store().await.unwrap();
+
+        // Create a test table
+        let table_config = TableConfig {
+            table_id: None,
+            table_name: TableName::from("test_forest_table"),
+        };
+        
+        metadata_store.create_table(table_config.clone()).await.unwrap();
+        metadata_store.drop_table(table_config.table_name.clone()).await.unwrap();
+        assert!(ForestImpl::latest(metadata_store.clone(), object_store.clone()).await.is_ok());
     }
 }

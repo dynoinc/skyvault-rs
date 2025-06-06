@@ -511,16 +511,16 @@ impl proto::orchestrator_service_server::OrchestratorService for MyOrchestrator 
         &self,
         request: Request<proto::KickOffJobRequest>,
     ) -> Result<Response<proto::KickOffJobResponse>, Status> {
-        let r = match request.into_inner().job {
-            Some(proto::kick_off_job_request::Job::WalCompaction(true)) => {
+        let r = match request.into_inner().params {
+            Some(proto::JobParams { params: Some(proto::job_params::Params::WalCompaction(_)) }) => {
                 self.metadata.schedule_job(JobParams::WALCompaction).await
             },
-            Some(proto::kick_off_job_request::Job::TableBufferCompaction(table_id)) => {
+            Some(proto::JobParams { params: Some(proto::job_params::Params::TableBufferCompaction(table_id)) }) => {
                 self.metadata
                     .schedule_job(JobParams::TableBufferCompaction(TableID::from(table_id)))
                     .await
             },
-            Some(proto::kick_off_job_request::Job::TableTreeCompaction(table_tree_compaction)) => {
+            Some(proto::JobParams { params: Some(proto::job_params::Params::TableTreeCompaction(table_tree_compaction)) }) => {
                 self.metadata
                     .schedule_job(JobParams::TableTreeCompaction(
                         TableID::from(table_tree_compaction.table_id),
@@ -544,14 +544,28 @@ impl proto::orchestrator_service_server::OrchestratorService for MyOrchestrator 
         request: Request<proto::GetJobStatusRequest>,
     ) -> Result<Response<proto::GetJobStatusResponse>, Status> {
         let job_id = metadata::JobID::from(request.into_inner().job_id);
-        let status = match self.metadata.get_job_status(job_id).await {
-            Ok(status) => status,
+        let job = match self.metadata.get_job(job_id).await {
+            Ok(job) => job,
+            Err(MetadataError::JobNotFound(_)) => return Err(Status::not_found(format!("Job not found: {job_id}"))),
             Err(e) => return Err(Status::internal(e.to_string())),
         };
 
         Ok(Response::new(proto::GetJobStatusResponse {
-            status: Some(status.into()),
+            status: Some(job.status.into()),
         }))
+    }
+
+    async fn list_jobs(
+        &self,
+        request: Request<proto::ListJobsRequest>,
+    ) -> Result<Response<proto::ListJobsResponse>, Status> {
+        let limit = request.into_inner().limit.clamp(1, 100);
+        let jobs = match self.metadata.list_jobs(limit).await {
+            Ok(jobs) => jobs.into_iter().map(|j| j.into()).collect(),
+            Err(e) => return Err(Status::internal(e.to_string())),
+        };
+
+        Ok(Response::new(proto::ListJobsResponse { jobs }))
     }
 
     async fn persist_snapshot(

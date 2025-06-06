@@ -113,6 +113,7 @@ service OrchestratorService {
   rpc DumpChangelog (DumpChangelogRequest) returns (DumpChangelogResponse);
 
   rpc KickOffJob (KickOffJobRequest) returns (KickOffJobResponse);
+  rpc ListJobs (ListJobsRequest) returns (ListJobsResponse);
   rpc GetJobStatus (GetJobStatusRequest) returns (GetJobStatusResponse);
 
   rpc CreateTable (CreateTableRequest) returns (CreateTableResponse);
@@ -128,28 +129,51 @@ message TableTreeCompaction {
   uint64 level = 2;
 }
 
-message KickOffJobRequest {
-  oneof job {
-    bool wal_compaction = 1;
+message JobParams {
+  oneof params {
+    google.protobuf.Empty wal_compaction = 1;
     int64 table_buffer_compaction = 2;
     TableTreeCompaction table_tree_compaction = 3;
   }
+}
+
+message JobStatus {
+  oneof status {
+    bool pending = 1;
+    int64 seq_no = 2;
+    bool failed = 3;
+  }
+}
+
+message KickOffJobRequest {
+  JobParams params = 1;
 }
 
 message KickOffJobResponse {
   int64 job_id = 1;
 }
 
+message ListJobsRequest {
+  int64 limit = 1;
+}
+
+message Job {
+  int64 id = 1;
+  JobParams params = 2;
+  JobStatus status = 3;
+}
+
+message ListJobsResponse {
+  repeated Job jobs = 1;
+}
+
+
 message GetJobStatusRequest {
   int64 job_id = 1;
 }
 
 message GetJobStatusResponse {
-  oneof status {
-    bool pending = 1;
-    int64 seq_no = 2;
-    bool failed = 3;
-  }
+  JobStatus status = 1;
 }
 
 message DumpSnapshotRequest {

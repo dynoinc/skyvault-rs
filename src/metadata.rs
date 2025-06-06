@@ -54,6 +54,9 @@ pub enum MetadataError {
     #[error("Job is not in pending state")]
     InvalidJobState(String),
 
+    #[error("Job not found: {0}")]
+    JobNotFound(JobID),
+
     #[error("Table already exists")]
     TableAlreadyExists(TableName),
 
@@ -363,18 +366,71 @@ pub enum JobParams {
     TableTreeCompaction(TableID, Level),
 }
 
+impl From<JobParams> for proto::JobParams {
+    fn from(params: JobParams) -> Self {
+        match params {
+            JobParams::WALCompaction => proto::JobParams {
+                params: Some(proto::job_params::Params::WalCompaction(())),
+            },
+            JobParams::TableBufferCompaction(table_id) => proto::JobParams {
+                params: Some(proto::job_params::Params::TableBufferCompaction(table_id.0)),
+            },
+            JobParams::TableTreeCompaction(table_id, level) => proto::JobParams {
+                params: Some(proto::job_params::Params::TableTreeCompaction(proto::TableTreeCompaction {
+                    table_id: table_id.0,
+                    level: level.0,
+                })),
+            },
+        }
+    }
+}
+
+impl From<proto::JobParams> for JobParams {
+    fn from(params: proto::JobParams) -> Self {
+        match params.params {
+            Some(proto::job_params::Params::WalCompaction(_)) => JobParams::WALCompaction,
+            Some(proto::job_params::Params::TableBufferCompaction(table_id)) => JobParams::TableBufferCompaction(TableID(table_id)),
+            Some(proto::job_params::Params::TableTreeCompaction(table_tree)) => JobParams::TableTreeCompaction(TableID(table_tree.table_id), Level(table_tree.level)),
+            None => panic!("params is None"),
+        }
+    }
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq)]
 pub enum JobStatus {
     Pending,
     Completed(SeqNo),
     Failed,
 }
 
-impl From<JobStatus> for proto::get_job_status_response::Status {
+impl From<JobStatus> for proto::JobStatus {
     fn from(status: JobStatus) -> Self {
         match status {
-            JobStatus::Pending => proto::get_job_status_response::Status::Pending(true),
-            JobStatus::Completed(seq_no) => proto::get_job_status_response::Status::SeqNo(seq_no.0),
-            JobStatus::Failed => proto::get_job_status_response::Status::Failed(true),
+            JobStatus::Pending => proto::JobStatus {
+                status: Some(proto::job_status::Status::Pending(true)),
+            },
+            JobStatus::Completed(seq_no) => proto::JobStatus {
+                status: Some(proto::job_status::Status::SeqNo(seq_no.0)),
+            },
+            JobStatus::Failed => proto::JobStatus {
+                status: Some(proto::job_status::Status::Failed(true)),
+            },
+        }
+    }
+}
+
+pub struct Job {
+    pub id: JobID,
+    pub params: JobParams,
+    pub status: JobStatus,
+}
+
+impl From<Job> for proto::Job {
+    fn from(job: Job) -> Self {
+        proto::Job {
+            id: job.id.0,
+            params: Some(job.params.into()),
+            status: Some(job.status.into()),
         }
     }
 }
@@ -461,9 +517,9 @@ pub trait MetadataStoreTrait: Send + Sync + 'static {
 
     // JOBS
     async fn schedule_job(&self, job_params: JobParams) -> Result<JobID, MetadataError>;
-    async fn get_job_status(&self, job_id: JobID) -> Result<JobStatus, MetadataError>;
     async fn get_pending_jobs(&self) -> Result<Vec<(JobID, JobParams)>, MetadataError>;
-    async fn get_job(&self, job_id: JobID) -> Result<JobParams, MetadataError>;
+    async fn get_job(&self, job_id: JobID) -> Result<Job, MetadataError>;
+    async fn list_jobs(&self, limit: i64) -> Result<Vec<Job>, MetadataError>;
     async fn mark_job_failed(&self, job_id: JobID) -> Result<(), MetadataError>;
 
     // TABLES
@@ -830,6 +886,7 @@ impl MetricsMetadataStore {
                 MetadataError::JsonSerdeError(_) => "json_error".to_string(),
                 MetadataError::AlreadyDeleted(_) => "already_deleted".to_string(),
                 MetadataError::InvalidJobState(_) => "invalid_job_state".to_string(),
+                MetadataError::JobNotFound(_) => "job_not_found".to_string(),
                 MetadataError::TableAlreadyExists(_) => "table_exists".to_string(),
                 MetadataError::TableNotFound(_) => "table_not_found".to_string(),
                 MetadataError::TableIDNotFound(_) => "table_id_not_found".to_string(),
@@ -918,16 +975,16 @@ impl MetadataStoreTrait for MetricsMetadataStore {
         Self::record_metrics("schedule_job", || self.inner.schedule_job(job_params)).await
     }
 
-    async fn get_job_status(&self, job_id: JobID) -> Result<JobStatus, MetadataError> {
-        Self::record_metrics("get_job_status", || self.inner.get_job_status(job_id)).await
-    }
-
     async fn get_pending_jobs(&self) -> Result<Vec<(JobID, JobParams)>, MetadataError> {
         Self::record_metrics("get_pending_jobs", || self.inner.get_pending_jobs()).await
     }
 
-    async fn get_job(&self, job_id: JobID) -> Result<JobParams, MetadataError> {
+    async fn get_job(&self, job_id: JobID) -> Result<Job, MetadataError> {
         Self::record_metrics("get_job", || self.inner.get_job(job_id)).await
+    }
+
+    async fn list_jobs(&self, limit: i64) -> Result<Vec<Job>, MetadataError> {
+        Self::record_metrics("list_jobs", || self.inner.list_jobs(limit)).await
     }
 
     async fn mark_job_failed(&self, job_id: JobID) -> Result<(), MetadataError> {
@@ -1153,7 +1210,7 @@ impl MetadataStoreTrait for PostgresMetadataStore {
         let existing_job = sqlx::query!(
             r#"
             SELECT id FROM jobs 
-            WHERE status IN ('pending', 'running') AND job = $1
+            WHERE status = 'pending' AND job = $1
             LIMIT 1
             "#,
             serde_json::to_value(job_params.clone())?
@@ -1184,34 +1241,6 @@ impl MetadataStoreTrait for PostgresMetadataStore {
         Ok(JobID::from(job_id))
     }
 
-    async fn get_job_status(&self, job_id: JobID) -> Result<JobStatus, MetadataError> {
-        let row = sqlx::query!(
-            r#"
-            SELECT status, output FROM jobs WHERE id = $1
-            "#,
-            job_id.0
-        )
-        .fetch_one(&self.pg_pool)
-        .await?;
-
-        let status = match row.status.as_str() {
-            "pending" => JobStatus::Pending,
-            "completed" => {
-                let seq_no: SeqNo = serde_json::from_value(row.output).map_err(MetadataError::JsonSerdeError)?;
-                JobStatus::Completed(seq_no)
-            },
-            "failed" => JobStatus::Failed,
-            _ => {
-                return Err(MetadataError::InvalidJobState(format!(
-                    "Invalid job status: {}",
-                    row.status
-                )));
-            },
-        };
-
-        Ok(status)
-    }
-
     async fn get_pending_jobs(&self) -> Result<Vec<(JobID, JobParams)>, MetadataError> {
         let jobs = sqlx::query!(
             r#"
@@ -1230,14 +1259,41 @@ impl MetadataStoreTrait for PostgresMetadataStore {
         Ok(jobs)
     }
 
-    async fn get_job(&self, job_id: JobID) -> Result<JobParams, MetadataError> {
-        let row = sqlx::query!(r#"SELECT id, job FROM jobs WHERE id = $1"#, job_id.0)
-            .fetch_one(&self.pg_pool)
+    async fn get_job(&self, job_id: JobID) -> Result<Job, MetadataError> {
+        let row = sqlx::query!(r#"SELECT id, job, status FROM jobs WHERE id = $1"#, job_id.0)
+            .fetch_optional(&self.pg_pool)
             .await?;
 
-        let params: JobParams = serde_json::from_value(row.job).map_err(MetadataError::JsonSerdeError)?;
+        let job = match row {
+            Some(row) => Job {
+                id: JobID::from(row.id),
+                params: serde_json::from_value(row.job).map_err(MetadataError::JsonSerdeError)?,
+                status: serde_json::from_str(&row.status).map_err(MetadataError::JsonSerdeError)?,
+            },
+            None => return Err(MetadataError::JobNotFound(job_id)),
+        };
 
-        Ok(params)
+        Ok(job)
+    }
+
+    async fn list_jobs(&self, limit: i64) -> Result<Vec<Job>, MetadataError> {
+        let jobs = sqlx::query!(
+            r#"
+            SELECT id, job, status FROM jobs ORDER BY id DESC LIMIT $1
+            "#,
+            limit
+        )
+        .fetch_all(&self.pg_pool)
+        .await?
+        .into_iter()
+        .map(|row| {
+            let job_params: JobParams = serde_json::from_value(row.job).map_err(MetadataError::JsonSerdeError)?;
+            let job_status: JobStatus = serde_json::from_str(&row.status).map_err(MetadataError::JsonSerdeError)?;
+            Ok(Job { id: JobID::from(row.id), params: job_params, status: job_status })
+        })
+        .collect::<Result<Vec<Job>, MetadataError>>()?;
+
+        Ok(jobs)
     }
 
     async fn mark_job_failed(&self, job_id: JobID) -> Result<(), MetadataError> {
@@ -1332,7 +1388,7 @@ impl MetadataStoreTrait for PostgresMetadataStore {
 
         sqlx::query!(
             r#"
-            DELETE FROM tables WHERE name = $1 AND deleted_at IS NULL
+            UPDATE tables SET deleted_at = NOW() WHERE name = $1 AND deleted_at IS NULL
             "#,
             table_name.to_string()
         )
@@ -1368,7 +1424,7 @@ impl MetadataStoreTrait for PostgresMetadataStore {
     async fn get_table_by_id(&self, table_id: TableID) -> Result<TableConfig, MetadataError> {
         let row = sqlx::query!(
             r#"
-            SELECT id, config FROM tables WHERE id = $1 AND deleted_at IS NULL
+            SELECT id, config FROM tables WHERE id = $1
             "#,
             table_id.0
         )
