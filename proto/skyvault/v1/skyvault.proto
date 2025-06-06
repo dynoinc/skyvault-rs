@@ -278,6 +278,7 @@ message DropTableRequest {
 }
 
 message DropTableResponse {
+  int64 seq_no = 1;
 }
 
 message GetTableRequest {

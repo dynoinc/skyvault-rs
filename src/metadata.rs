@@ -468,7 +468,7 @@ pub trait MetadataStoreTrait: Send + Sync + 'static {
 
     // TABLES
     async fn create_table(&self, config: TableConfig) -> Result<SeqNo, MetadataError>;
-    async fn drop_table(&self, table_name: TableName) -> Result<(), MetadataError>;
+    async fn drop_table(&self, table_name: TableName) -> Result<SeqNo, MetadataError>;
     async fn list_tables(&self) -> Result<Vec<TableConfig>, MetadataError>;
     async fn get_table(&self, table_name: TableName) -> Result<TableConfig, MetadataError>;
     async fn get_table_by_id(&self, table_id: TableID) -> Result<TableConfig, MetadataError>;
@@ -938,7 +938,7 @@ impl MetadataStoreTrait for MetricsMetadataStore {
         Self::record_metrics("create_table", || self.inner.create_table(config)).await
     }
 
-    async fn drop_table(&self, table_name: TableName) -> Result<(), MetadataError> {
+    async fn drop_table(&self, table_name: TableName) -> Result<SeqNo, MetadataError> {
         Self::record_metrics("drop_table", || self.inner.drop_table(table_name)).await
     }
 
@@ -1298,10 +1298,10 @@ impl MetadataStoreTrait for PostgresMetadataStore {
         }
     }
 
-    async fn drop_table(&self, table_name: TableName) -> Result<(), MetadataError> {
+    async fn drop_table(&self, table_name: TableName) -> Result<SeqNo, MetadataError> {
         let mut transaction = self.pg_pool.begin().await?;
 
-        let id = sqlx::query_scalar!(
+        let tbl_id = sqlx::query_scalar!(
             r#"
             SELECT id FROM tables WHERE name = $1 AND deleted_at IS NULL FOR UPDATE
             "#,
@@ -1310,21 +1310,25 @@ impl MetadataStoreTrait for PostgresMetadataStore {
         .fetch_optional(&mut *transaction)
         .await?;
 
-        if let Some(id) = id {
-            let changelog_changes = serde_json::to_value(ChangelogEntry::TablesV1(
-                TableChangelogEntryV1::TableDropped(TableID::from(id)),
-            ))?;
+        let table_id = match tbl_id {
+            Some(id) => TableID::from(id),
+            None => return Err(MetadataError::TableNotFound(table_name)),
+        };
 
-            sqlx::query!(
-                r#"
-                INSERT INTO changelog (changes)
-                VALUES ($1)
-                "#,
-                changelog_changes
-            )
-            .execute(&mut *transaction)
-            .await?;
-        }
+        let changelog_changes = serde_json::to_value(ChangelogEntry::TablesV1(
+            TableChangelogEntryV1::TableDropped(table_id),
+        ))?;
+
+        let seq_no = sqlx::query_scalar!(
+            r#"
+            INSERT INTO changelog (changes)
+            VALUES ($1)
+            RETURNING id
+            "#,
+            changelog_changes
+        )
+        .fetch_one(&mut *transaction)
+        .await?;
 
         sqlx::query!(
             r#"
@@ -1337,7 +1341,7 @@ impl MetadataStoreTrait for PostgresMetadataStore {
 
         transaction.commit().await?;
 
-        Ok(())
+        Ok(SeqNo::from(seq_no))
     }
 
     async fn get_table(&self, table_name: TableName) -> Result<TableConfig, MetadataError> {

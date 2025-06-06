@@ -602,8 +602,9 @@ impl proto::orchestrator_service_server::OrchestratorService for MyOrchestrator 
         let request = request.into_inner();
         let table_name = TableName::from(request.table_name);
 
-        match self.metadata.drop_table(table_name).await {
-            Ok(_) => Ok(Response::new(proto::DropTableResponse {})),
+        match self.metadata.drop_table(table_name.clone()).await {
+            Ok(seq_no) => Ok(Response::new(proto::DropTableResponse { seq_no: seq_no.into() })),
+            Err(MetadataError::TableNotFound(_)) => Err(Status::not_found(format!("Table not found: {table_name}"))),
             Err(e) => Err(Status::internal(e.to_string())),
         }
     }
