@@ -1,0 +1,5 @@
+TRUNCATE TABLE tables;
+TRUNCATE TABLE runs;
+TRUNCATE TABLE changelog;
+TRUNCATE TABLE snapshots;
+TRUNCATE TABLE jobs;
