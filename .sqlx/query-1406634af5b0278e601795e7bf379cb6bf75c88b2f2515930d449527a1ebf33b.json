@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            SELECT id, config FROM tables WHERE id = $1 AND deleted_at IS NULL\n            ",
+  "query": "\n            SELECT id, job, status FROM jobs ORDER BY id DESC LIMIT $1\n            ",
   "describe": {
     "columns": [
       {
@@ -10,8 +10,13 @@
       },
       {
         "ordinal": 1,
-        "name": "config",
+        "name": "job",
         "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 2,
+        "name": "status",
+        "type_info": "Text"
       }
     ],
     "parameters": {
@@ -21,8 +26,9 @@
     },
     "nullable": [
       false,
+      false,
       false
     ]
   },
-  "hash": "359f88efb1118f9834c88997cf42455f02d2b340c4ba15b3b87570d38f2c1b77"
+  "hash": "1406634af5b0278e601795e7bf379cb6bf75c88b2f2515930d449527a1ebf33b"
 }

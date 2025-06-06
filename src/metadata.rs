@@ -1511,6 +1511,10 @@ mod tests {
         // Schedule a WAL compaction job
         metadata_store.schedule_job(JobParams::WALCompaction).await.unwrap();
 
+        // Confirm job is pending
+        let job = metadata_store.get_job(JobID::from(1)).await.unwrap();
+        assert_eq!(job.status, JobStatus::Pending);
+
         // Get pending jobs
         let pending_jobs = metadata_store.get_pending_jobs().await.unwrap();
 

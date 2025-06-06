@@ -1,7 +1,11 @@
 use crate::{
     forest::ForestError,
     metadata::{
-        self, JobParams, JobStatus, MetadataError, MetadataStore
+        self,
+        JobParams,
+        JobStatus,
+        MetadataError,
+        MetadataStore,
     },
     runs::RunError,
     storage::{
@@ -43,7 +47,10 @@ pub async fn execute(
     let job = metadata_store.get_job(job_id).await?;
 
     if job.status != JobStatus::Pending {
-        return Err(JobError::InvalidInput(format!("Job {job_id} is not pending: {:?}", job.status)));
+        return Err(JobError::InvalidInput(format!(
+            "Job {job_id} is not pending: {:?}",
+            job.status
+        )));
     }
 
     match job.params {

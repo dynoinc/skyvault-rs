@@ -417,7 +417,10 @@ mod tests {
     use super::*;
     use crate::{
         requires_docker,
-        test_utils::{setup_test_db, setup_test_object_store},
+        test_utils::{
+            setup_test_db,
+            setup_test_object_store,
+        },
     };
 
     #[tokio::test]
@@ -433,9 +436,16 @@ mod tests {
             table_id: None,
             table_name: TableName::from("test_forest_table"),
         };
-        
+
         metadata_store.create_table(table_config.clone()).await.unwrap();
-        metadata_store.drop_table(table_config.table_name.clone()).await.unwrap();
-        assert!(ForestImpl::latest(metadata_store.clone(), object_store.clone()).await.is_ok());
+        metadata_store
+            .drop_table(table_config.table_name.clone())
+            .await
+            .unwrap();
+        assert!(
+            ForestImpl::latest(metadata_store.clone(), object_store.clone())
+                .await
+                .is_ok()
+        );
     }
 }

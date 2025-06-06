@@ -512,15 +512,19 @@ impl proto::orchestrator_service_server::OrchestratorService for MyOrchestrator 
         request: Request<proto::KickOffJobRequest>,
     ) -> Result<Response<proto::KickOffJobResponse>, Status> {
         let r = match request.into_inner().params {
-            Some(proto::JobParams { params: Some(proto::job_params::Params::WalCompaction(_)) }) => {
-                self.metadata.schedule_job(JobParams::WALCompaction).await
-            },
-            Some(proto::JobParams { params: Some(proto::job_params::Params::TableBufferCompaction(table_id)) }) => {
+            Some(proto::JobParams {
+                params: Some(proto::job_params::Params::WalCompaction(_)),
+            }) => self.metadata.schedule_job(JobParams::WALCompaction).await,
+            Some(proto::JobParams {
+                params: Some(proto::job_params::Params::TableBufferCompaction(table_id)),
+            }) => {
                 self.metadata
                     .schedule_job(JobParams::TableBufferCompaction(TableID::from(table_id)))
                     .await
             },
-            Some(proto::JobParams { params: Some(proto::job_params::Params::TableTreeCompaction(table_tree_compaction)) }) => {
+            Some(proto::JobParams {
+                params: Some(proto::job_params::Params::TableTreeCompaction(table_tree_compaction)),
+            }) => {
                 self.metadata
                     .schedule_job(JobParams::TableTreeCompaction(
                         TableID::from(table_tree_compaction.table_id),

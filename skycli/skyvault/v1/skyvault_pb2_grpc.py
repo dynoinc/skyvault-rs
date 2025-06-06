@@ -341,6 +341,11 @@ class OrchestratorServiceStub(object):
                 request_serializer=skyvault_dot_v1_dot_skyvault__pb2.KickOffJobRequest.SerializeToString,
                 response_deserializer=skyvault_dot_v1_dot_skyvault__pb2.KickOffJobResponse.FromString,
                 _registered_method=True)
+        self.ListJobs = channel.unary_unary(
+                '/skyvault.v1.OrchestratorService/ListJobs',
+                request_serializer=skyvault_dot_v1_dot_skyvault__pb2.ListJobsRequest.SerializeToString,
+                response_deserializer=skyvault_dot_v1_dot_skyvault__pb2.ListJobsResponse.FromString,
+                _registered_method=True)
         self.GetJobStatus = channel.unary_unary(
                 '/skyvault.v1.OrchestratorService/GetJobStatus',
                 request_serializer=skyvault_dot_v1_dot_skyvault__pb2.GetJobStatusRequest.SerializeToString,
@@ -390,6 +395,12 @@ class OrchestratorServiceServicer(object):
         raise NotImplementedError('Method not implemented!')
 
     def KickOffJob(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ListJobs(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -448,6 +459,11 @@ def add_OrchestratorServiceServicer_to_server(servicer, server):
                     servicer.KickOffJob,
                     request_deserializer=skyvault_dot_v1_dot_skyvault__pb2.KickOffJobRequest.FromString,
                     response_serializer=skyvault_dot_v1_dot_skyvault__pb2.KickOffJobResponse.SerializeToString,
+            ),
+            'ListJobs': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListJobs,
+                    request_deserializer=skyvault_dot_v1_dot_skyvault__pb2.ListJobsRequest.FromString,
+                    response_serializer=skyvault_dot_v1_dot_skyvault__pb2.ListJobsResponse.SerializeToString,
             ),
             'GetJobStatus': grpc.unary_unary_rpc_method_handler(
                     servicer.GetJobStatus,
@@ -562,6 +578,33 @@ class OrchestratorService(object):
             '/skyvault.v1.OrchestratorService/KickOffJob',
             skyvault_dot_v1_dot_skyvault__pb2.KickOffJobRequest.SerializeToString,
             skyvault_dot_v1_dot_skyvault__pb2.KickOffJobResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListJobs(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/skyvault.v1.OrchestratorService/ListJobs',
+            skyvault_dot_v1_dot_skyvault__pb2.ListJobsRequest.SerializeToString,
+            skyvault_dot_v1_dot_skyvault__pb2.ListJobsResponse.FromString,
             options,
             channel_credentials,
             insecure,

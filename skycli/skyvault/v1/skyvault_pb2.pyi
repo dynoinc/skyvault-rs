@@ -145,29 +145,17 @@ class TableTreeCompaction(_message.Message):
     level: int
     def __init__(self, table_id: _Optional[int] = ..., level: _Optional[int] = ...) -> None: ...
 
-class KickOffJobRequest(_message.Message):
+class JobParams(_message.Message):
     __slots__ = ("wal_compaction", "table_buffer_compaction", "table_tree_compaction")
     WAL_COMPACTION_FIELD_NUMBER: _ClassVar[int]
     TABLE_BUFFER_COMPACTION_FIELD_NUMBER: _ClassVar[int]
     TABLE_TREE_COMPACTION_FIELD_NUMBER: _ClassVar[int]
-    wal_compaction: bool
+    wal_compaction: _empty_pb2.Empty
     table_buffer_compaction: int
     table_tree_compaction: TableTreeCompaction
-    def __init__(self, wal_compaction: bool = ..., table_buffer_compaction: _Optional[int] = ..., table_tree_compaction: _Optional[_Union[TableTreeCompaction, _Mapping]] = ...) -> None: ...
+    def __init__(self, wal_compaction: _Optional[_Union[_empty_pb2.Empty, _Mapping]] = ..., table_buffer_compaction: _Optional[int] = ..., table_tree_compaction: _Optional[_Union[TableTreeCompaction, _Mapping]] = ...) -> None: ...
 
-class KickOffJobResponse(_message.Message):
-    __slots__ = ("job_id",)
-    JOB_ID_FIELD_NUMBER: _ClassVar[int]
-    job_id: int
-    def __init__(self, job_id: _Optional[int] = ...) -> None: ...
-
-class GetJobStatusRequest(_message.Message):
-    __slots__ = ("job_id",)
-    JOB_ID_FIELD_NUMBER: _ClassVar[int]
-    job_id: int
-    def __init__(self, job_id: _Optional[int] = ...) -> None: ...
-
-class GetJobStatusResponse(_message.Message):
+class JobStatus(_message.Message):
     __slots__ = ("pending", "seq_no", "failed")
     PENDING_FIELD_NUMBER: _ClassVar[int]
     SEQ_NO_FIELD_NUMBER: _ClassVar[int]
@@ -176,6 +164,52 @@ class GetJobStatusResponse(_message.Message):
     seq_no: int
     failed: bool
     def __init__(self, pending: bool = ..., seq_no: _Optional[int] = ..., failed: bool = ...) -> None: ...
+
+class KickOffJobRequest(_message.Message):
+    __slots__ = ("params",)
+    PARAMS_FIELD_NUMBER: _ClassVar[int]
+    params: JobParams
+    def __init__(self, params: _Optional[_Union[JobParams, _Mapping]] = ...) -> None: ...
+
+class KickOffJobResponse(_message.Message):
+    __slots__ = ("job_id",)
+    JOB_ID_FIELD_NUMBER: _ClassVar[int]
+    job_id: int
+    def __init__(self, job_id: _Optional[int] = ...) -> None: ...
+
+class ListJobsRequest(_message.Message):
+    __slots__ = ("limit",)
+    LIMIT_FIELD_NUMBER: _ClassVar[int]
+    limit: int
+    def __init__(self, limit: _Optional[int] = ...) -> None: ...
+
+class Job(_message.Message):
+    __slots__ = ("id", "params", "status")
+    ID_FIELD_NUMBER: _ClassVar[int]
+    PARAMS_FIELD_NUMBER: _ClassVar[int]
+    STATUS_FIELD_NUMBER: _ClassVar[int]
+    id: int
+    params: JobParams
+    status: JobStatus
+    def __init__(self, id: _Optional[int] = ..., params: _Optional[_Union[JobParams, _Mapping]] = ..., status: _Optional[_Union[JobStatus, _Mapping]] = ...) -> None: ...
+
+class ListJobsResponse(_message.Message):
+    __slots__ = ("jobs",)
+    JOBS_FIELD_NUMBER: _ClassVar[int]
+    jobs: _containers.RepeatedCompositeFieldContainer[Job]
+    def __init__(self, jobs: _Optional[_Iterable[_Union[Job, _Mapping]]] = ...) -> None: ...
+
+class GetJobStatusRequest(_message.Message):
+    __slots__ = ("job_id",)
+    JOB_ID_FIELD_NUMBER: _ClassVar[int]
+    job_id: int
+    def __init__(self, job_id: _Optional[int] = ...) -> None: ...
+
+class GetJobStatusResponse(_message.Message):
+    __slots__ = ("status",)
+    STATUS_FIELD_NUMBER: _ClassVar[int]
+    status: JobStatus
+    def __init__(self, status: _Optional[_Union[JobStatus, _Mapping]] = ...) -> None: ...
 
 class DumpSnapshotRequest(_message.Message):
     __slots__ = ()
@@ -359,8 +393,10 @@ class DropTableRequest(_message.Message):
     def __init__(self, table_name: _Optional[str] = ...) -> None: ...
 
 class DropTableResponse(_message.Message):
-    __slots__ = ()
-    def __init__(self) -> None: ...
+    __slots__ = ("seq_no",)
+    SEQ_NO_FIELD_NUMBER: _ClassVar[int]
+    seq_no: int
+    def __init__(self, seq_no: _Optional[int] = ...) -> None: ...
 
 class GetTableRequest(_message.Message):
     __slots__ = ("table_name",)

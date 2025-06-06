@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, job FROM jobs WHERE id = $1",
+  "query": "SELECT id, job, status FROM jobs WHERE id = $1",
   "describe": {
     "columns": [
       {
@@ -12,6 +12,11 @@
         "ordinal": 1,
         "name": "job",
         "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 2,
+        "name": "status",
+        "type_info": "Text"
       }
     ],
     "parameters": {
@@ -21,8 +26,9 @@
     },
     "nullable": [
       false,
+      false,
       false
     ]
   },
-  "hash": "1d4acc1d3a22badfdbfdcf208caf9d9bcbe5d838b8ca7466de283059eb6f5d89"
+  "hash": "5db3273f78cf4a8b82faba84b3fe6152a98086c2e2df03965d991ef56c9c41af"
 }

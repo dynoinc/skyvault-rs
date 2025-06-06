@@ -2,6 +2,7 @@ import grpc
 import time
 import pytest
 import concurrent.futures
+import google.protobuf.empty_pb2
 
 from skyvault.v1 import skyvault_pb2
 from skyvault.v1 import skyvault_pb2_grpc
@@ -126,7 +127,9 @@ def perform_read_with_retry(
 
 def trigger_wal_compaction(stub):
     request = skyvault_pb2.KickOffJobRequest(
-        wal_compaction=True,
+        params=skyvault_pb2.JobParams(
+            wal_compaction=google.protobuf.empty_pb2.Empty(),
+        ),
     )
     response = stub.KickOffJob(request, timeout=20)
 
