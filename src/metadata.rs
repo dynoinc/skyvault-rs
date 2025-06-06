@@ -376,10 +376,12 @@ impl From<JobParams> for proto::JobParams {
                 params: Some(proto::job_params::Params::TableBufferCompaction(table_id.0)),
             },
             JobParams::TableTreeCompaction(table_id, level) => proto::JobParams {
-                params: Some(proto::job_params::Params::TableTreeCompaction(proto::TableTreeCompaction {
-                    table_id: table_id.0,
-                    level: level.0,
-                })),
+                params: Some(proto::job_params::Params::TableTreeCompaction(
+                    proto::TableTreeCompaction {
+                        table_id: table_id.0,
+                        level: level.0,
+                    },
+                )),
             },
         }
     }
@@ -389,8 +391,12 @@ impl From<proto::JobParams> for JobParams {
     fn from(params: proto::JobParams) -> Self {
         match params.params {
             Some(proto::job_params::Params::WalCompaction(_)) => JobParams::WALCompaction,
-            Some(proto::job_params::Params::TableBufferCompaction(table_id)) => JobParams::TableBufferCompaction(TableID(table_id)),
-            Some(proto::job_params::Params::TableTreeCompaction(table_tree)) => JobParams::TableTreeCompaction(TableID(table_tree.table_id), Level(table_tree.level)),
+            Some(proto::job_params::Params::TableBufferCompaction(table_id)) => {
+                JobParams::TableBufferCompaction(TableID(table_id))
+            },
+            Some(proto::job_params::Params::TableTreeCompaction(table_tree)) => {
+                JobParams::TableTreeCompaction(TableID(table_tree.table_id), Level(table_tree.level))
+            },
             None => panic!("params is None"),
         }
     }
@@ -1260,7 +1266,7 @@ impl MetadataStoreTrait for PostgresMetadataStore {
     }
 
     async fn get_job(&self, job_id: JobID) -> Result<Job, MetadataError> {
-        let row = sqlx::query!(r#"SELECT id, job, status FROM jobs WHERE id = $1"#, job_id.0)
+        let row = sqlx::query!(r#"SELECT id, job, status, output FROM jobs WHERE id = $1"#, job_id.0)
             .fetch_optional(&self.pg_pool)
             .await?;
 
@@ -1268,7 +1274,19 @@ impl MetadataStoreTrait for PostgresMetadataStore {
             Some(row) => Job {
                 id: JobID::from(row.id),
                 params: serde_json::from_value(row.job).map_err(MetadataError::JsonSerdeError)?,
-                status: serde_json::from_str(&row.status).map_err(MetadataError::JsonSerdeError)?,
+                status: match row.status.as_str() {
+                    "pending" => JobStatus::Pending,
+                    "failed" => JobStatus::Failed,
+                    "completed" => {
+                        let seq_no: i64 = serde_json::from_value(row.output).map_err(MetadataError::JsonSerdeError)?;
+                        JobStatus::Completed(SeqNo::from(seq_no))
+                    },
+                    status_str => {
+                        return Err(MetadataError::DatabaseError(sqlx::Error::Decode(
+                            format!("Unknown job status: {status_str}").into(),
+                        )));
+                    },
+                },
             },
             None => return Err(MetadataError::JobNotFound(job_id)),
         };
@@ -1279,7 +1297,7 @@ impl MetadataStoreTrait for PostgresMetadataStore {
     async fn list_jobs(&self, limit: i64) -> Result<Vec<Job>, MetadataError> {
         let jobs = sqlx::query!(
             r#"
-            SELECT id, job, status FROM jobs ORDER BY id DESC LIMIT $1
+            SELECT id, job, status, output FROM jobs ORDER BY id DESC LIMIT $1
             "#,
             limit
         )
@@ -1288,8 +1306,24 @@ impl MetadataStoreTrait for PostgresMetadataStore {
         .into_iter()
         .map(|row| {
             let job_params: JobParams = serde_json::from_value(row.job).map_err(MetadataError::JsonSerdeError)?;
-            let job_status: JobStatus = serde_json::from_str(&row.status).map_err(MetadataError::JsonSerdeError)?;
-            Ok(Job { id: JobID::from(row.id), params: job_params, status: job_status })
+            let job_status = match row.status.as_str() {
+                "pending" => JobStatus::Pending,
+                "failed" => JobStatus::Failed,
+                "completed" => {
+                    let seq_no: i64 = serde_json::from_value(row.output).map_err(MetadataError::JsonSerdeError)?;
+                    JobStatus::Completed(SeqNo::from(seq_no))
+                },
+                status_str => {
+                    return Err(MetadataError::DatabaseError(sqlx::Error::Decode(
+                        format!("Unknown job status: {status_str}").into(),
+                    )));
+                },
+            };
+            Ok(Job {
+                id: JobID::from(row.id),
+                params: job_params,
+                status: job_status,
+            })
         })
         .collect::<Result<Vec<Job>, MetadataError>>()?;
 
@@ -1371,9 +1405,8 @@ impl MetadataStoreTrait for PostgresMetadataStore {
             None => return Err(MetadataError::TableNotFound(table_name)),
         };
 
-        let changelog_changes = serde_json::to_value(ChangelogEntry::TablesV1(
-            TableChangelogEntryV1::TableDropped(table_id),
-        ))?;
+        let changelog_changes =
+            serde_json::to_value(ChangelogEntry::TablesV1(TableChangelogEntryV1::TableDropped(table_id)))?;
 
         let seq_no = sqlx::query_scalar!(
             r#"

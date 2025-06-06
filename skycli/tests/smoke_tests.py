@@ -138,8 +138,8 @@ def trigger_wal_compaction(stub):
     while time.time() - start_time < 5:
         status_request = skyvault_pb2.GetJobStatusRequest(job_id=response.job_id)
         status_response = stub.GetJobStatus(status_request, timeout=10)
-        if not status_response.pending:
-            return status_response.seq_no
+        if not status_response.status.pending:
+            return status_response.status.seq_no
         time.sleep(0.5)
 
     raise TimeoutError("Compaction job did not complete within 5 seconds")
