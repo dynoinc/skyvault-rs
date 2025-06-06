@@ -1,6 +1,6 @@
 [package]
 name = "skyvault"
-version = "0.0.14"
+version = "0.0.15"
 edition = "2024"
 license-file = "LICENSE"
 description = "Object store backed key-value store"
