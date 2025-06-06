@@ -87,7 +87,11 @@ jobs:
       - name: Build Docker Image for scanning
         run: |
           echo "Building Docker image with version ${{ steps.generate_version.outputs.VERSION_NO_V }}"
-          docker build -t skyvault:latest -f Dockerfile.release .
+          docker build \
+            -t skyvault:latest \
+            -t ghcr.io/${{ github.repository }}:latest \
+            -t ghcr.io/${{ github.repository }}:${{ steps.generate_version.outputs.VERSION }} \
+            -f Dockerfile.release .
 
       - name: Scan Docker Image with Trivy
         id: trivy_scan
@@ -154,18 +158,11 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push Docker image (only after successful scan and commit)
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: Dockerfile.release
-          push: true
-          platforms: linux/amd64
-          tags: |
-            ghcr.io/${{ github.repository }}:latest
-            ghcr.io/${{ github.repository }}:${{ steps.generate_version.outputs.VERSION }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Push Docker image (reusing already built image)
+        run: |
+          echo "Pushing already built Docker images..."
+          docker push ghcr.io/${{ github.repository }}:latest
+          docker push ghcr.io/${{ github.repository }}:${{ steps.generate_version.outputs.VERSION }}
 
   create_release:
     runs-on: ubuntu-latest
