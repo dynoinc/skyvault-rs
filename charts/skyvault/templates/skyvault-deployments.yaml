@@ -45,6 +45,22 @@ spec:
             - name: grpc
               containerPort: {{ $deployment.service.port }}
               protocol: TCP
+          readinessProbe:
+            grpc:
+              port: {{ $deployment.service.port }}
+              service: ""
+            initialDelaySeconds: 2
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            grpc:
+              port: {{ $deployment.service.port }}
+              service: ""
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
           resources:
             {{- toYaml $deployment.resources | nindent 12 }}
           env:
