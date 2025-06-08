@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{net::SocketAddr, sync::Arc};
 
 use anyhow::{
     Context,
@@ -9,13 +9,12 @@ use rustls::crypto::aws_lc_rs;
 use skyvault::{
     config::{
         PostgresConfig,
-        S3Config,
+        S3Config, SentryConfig,
     },
     dynamic_config,
     jobs,
     k8s,
-    metadata,
-    metadata::JobID,
+    metadata::{self, JobID},
     observability,
     storage,
 };
@@ -23,11 +22,17 @@ use skyvault::{
 #[derive(Debug, Parser)]
 #[command(name = "worker", about = "A worker for skyvault.")]
 pub struct Config {
+    #[arg(long, env = "SKYVAULT_METRICS_ADDR", value_parser = clap::value_parser!(SocketAddr), default_value = "0.0.0.0:9095")]
+    metrics_addr: SocketAddr,
+
     #[clap(flatten)]
     pub postgres: PostgresConfig,
 
     #[clap(flatten)]
     pub s3: S3Config,
+
+    #[clap(flatten)]
+    pub sentry: SentryConfig,
 
     #[arg(long)]
     pub job_id: JobID,
@@ -35,14 +40,25 @@ pub struct Config {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let _sentry = observability::init_tracing_and_sentry();
-
     aws_lc_rs::default_provider()
         .install_default()
-        .expect("failed to install aws-lc-rs CryptoProvider");
+        .expect("Failed to install aws-lc-rs CryptoProvider");
 
     let config = Config::parse();
     let version = env!("CARGO_PKG_VERSION");
+    let _sentry = observability::init_tracing_and_sentry(config.sentry.clone());
+
+    // Initialize metrics recorder
+    let handle = observability::init_metrics_recorder();
+    let _metrics_server_handle = {
+        let handle_clone = handle.clone();
+        let metrics_addr = config.metrics_addr;
+        tokio::spawn(async move {
+            observability::serve_metrics(metrics_addr, handle_clone)
+                .await
+                .expect("Failed to start metrics server");
+        })
+    };
 
     // Initialize K8s client
     let current_namespace = k8s::get_namespace().await.context("Failed to get namespace")?;

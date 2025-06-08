@@ -16,7 +16,7 @@ use skyvault::{
     cache_service,
     config::{
         PostgresConfig,
-        S3Config,
+        S3Config, SentryConfig,
     },
     dynamic_config,
     k8s,
@@ -55,6 +55,9 @@ struct Config {
     #[clap(flatten)]
     s3: S3Config,
 
+    #[clap(flatten)]
+    sentry: SentryConfig,
+
     #[arg(long, env = "SKYVAULT_SERVICE", default_value = "reader")]
     service: Service,
 
@@ -66,18 +69,17 @@ struct Config {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
-    let config = Config::parse();
-    let _sentry = observability::init_tracing_and_sentry();
-
+async fn main() -> Result<()> {    
     aws_lc_rs::default_provider()
         .install_default()
-        .expect("failed to install aws-lc-rs CryptoProvider");
+        .expect("Failed to install aws-lc-rs CryptoProvider");
 
+    let config = Config::parse();
     let version = env!("CARGO_PKG_VERSION");
+    let _sentry = observability::init_tracing_and_sentry(config.sentry.clone());
 
+    // Initialize metrics recorder
     let handle = observability::init_metrics_recorder();
-
     let _metrics_server_handle = {
         let handle_clone = handle.clone();
         let metrics_addr = config.metrics_addr;

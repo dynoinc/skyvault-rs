@@ -8,6 +8,15 @@ use kube::Client;
 use crate::k8s;
 
 #[derive(Debug, Parser, Clone)]
+pub struct SentryConfig {
+    #[arg(long, env = "SENTRY_DSN", default_value = "")]
+    pub dsn: String,
+
+    #[arg(long, env = "SENTRY_SAMPLE_RATE", default_value = "0.0")]
+    pub sample_rate: f64,
+}
+
+#[derive(Debug, Parser, Clone)]
 pub struct PostgresConfig {
     #[arg(long, env = "SKYVAULT_POSTGRES_USER", default_value = "postgres")]
     pub user: String,

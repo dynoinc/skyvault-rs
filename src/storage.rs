@@ -147,9 +147,7 @@ impl S3ObjectStore {
                 SdkError::TimeoutError(_) => "timeout".to_string(),
                 SdkError::DispatchFailure(_) => "dispatch_failure".to_string(),
                 SdkError::ResponseError(_) => "response_error".to_string(),
-                SdkError::ServiceError(service_err) => {
-                    service_err.err().code().unwrap_or("unknown_error").to_string()
-                },
+                SdkError::ServiceError(service_err) => service_err.err().code().unwrap_or("unknown_error").to_string(),
                 _ => "unknown_error".to_string(),
             },
         };

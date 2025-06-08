@@ -379,7 +379,7 @@ impl MyOrchestrator {
         // Get job retry limit from dynamic config
         let retry_limit = {
             let config = self.dynamic_config.read().await;
-            config.job_retry_limit
+            config.orchestrator_job_retry_limit
         };
 
         tracing::info!("Creating K8s job with retry limit of {}", retry_limit);
@@ -429,6 +429,11 @@ impl MyOrchestrator {
                                     // K8s
                                     "KUBERNETES_SERVICE_HOST",
                                     "KUBERNETES_SERVICE_PORT",
+                                    // Metrics
+                                    "SKYVAULT_METRICS_ADDR",
+                                    // Sentry
+                                    "SENTRY_DSN",
+                                    "SENTRY_SAMPLE_RATE",
                                     // Rust
                                     "RUST_BACKTRACE",
                                     "RUST_LOG",

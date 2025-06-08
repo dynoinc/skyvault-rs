@@ -4,6 +4,22 @@
 {{- $useStatefulSet := $isCacheService }}
 {{- $usePVC := and $isCacheService (eq (get ($deployment.cache | default dict) "volumeType" | default "none") "pvc") }}
 ---
+# Dynamic ConfigMap for each Skyvault instance
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: skyvault-dynamic-config-{{ $deployment.instanceName }}
+  labels:
+    {{- include "skyvault.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: skyvault-{{ $deployment.instanceName }}
+data:
+  {{- if and $deployment.dynamicConfig (hasKey $deployment.dynamicConfig "writerConcurrentUploads") }}
+  writer_concurrent_uploads: {{ $deployment.dynamicConfig.writerConcurrentUploads | quote }}
+  {{- end }}
+  {{- if and $deployment.dynamicConfig (hasKey $deployment.dynamicConfig "orchestratorJobRetryLimit") }}
+  orchestrator_job_retry_limit: {{ $deployment.dynamicConfig.orchestratorJobRetryLimit | quote }}
+  {{- end }}
+---
 apiVersion: apps/v1
 {{- if $useStatefulSet }}
 kind: StatefulSet

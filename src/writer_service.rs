@@ -123,7 +123,7 @@ impl MyWriter {
             // acquiring permit
             let semaphore = {
                 let config = dynamic_config.read().await;
-                config.uploads_semaphore.clone()
+                config.writer_uploads_semaphore.clone()
             }; // read lock is released here
 
             // Now acquire the permit without holding any locks on the config

@@ -37,16 +37,11 @@ common:
     RUST_BACKTRACE: 1
     RUST_LOG: "skyvault=debug"
 
-# Dynamic Configuration
-dynamicConfig:
-  # Number of concurrent uploads allowed in writer service
-  concurrentUploads: "2"
-
 deployments:
   reader:
     enabled: false
     instanceName: "reader"
-    replicaCount: 2
+    replicaCount: 1
     resources:
       limits:
         cpu: 500m
@@ -66,7 +61,7 @@ deployments:
   cache:
     enabled: false
     instanceName: "cache"
-    replicaCount: 4
+    replicaCount: 1
     resources:
       limits:
         cpu: 500m
@@ -101,7 +96,7 @@ deployments:
   writer:
     enabled: false
     instanceName: "writer"
-    replicaCount: 2
+    replicaCount: 1
     resources:
       limits:
         cpu: 1000m
@@ -115,6 +110,9 @@ deployments:
       nodePort: 30052
     env:
       SKYVAULT_SERVICE: "writer"
+    # Dynamic configuration specific to writer
+    dynamicConfig:
+      writerConcurrentUploads: "2"
 
   orchestrator:
     enabled: false
