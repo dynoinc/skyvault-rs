@@ -1,4 +1,7 @@
-use std::{net::SocketAddr, sync::Arc};
+use std::{
+    net::SocketAddr,
+    sync::Arc,
+};
 
 use anyhow::{
     Context,
@@ -9,12 +12,16 @@ use rustls::crypto::aws_lc_rs;
 use skyvault::{
     config::{
         PostgresConfig,
-        S3Config, SentryConfig,
+        S3Config,
+        SentryConfig,
     },
     dynamic_config,
     jobs,
     k8s,
-    metadata::{self, JobID},
+    metadata::{
+        self,
+        JobID,
+    },
     observability,
     storage,
 };

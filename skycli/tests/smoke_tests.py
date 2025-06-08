@@ -4,8 +4,8 @@ import pytest
 import concurrent.futures
 import google.protobuf.empty_pb2
 
-from skyvault.v1 import skyvault_pb2
-from skyvault.v1 import skyvault_pb2_grpc
+from proto.skyvault.v1 import skyvault_pb2
+from proto.skyvault.v1 import skyvault_pb2_grpc
 from minikube import setup_connection
 
 #

@@ -4,7 +4,7 @@ from google.protobuf import descriptor_pool, message_factory
 from google.protobuf.json_format import ParseDict
 
 from minikube import setup_connection
-from skyvault.v1 import skyvault_pb2_grpc
+from proto.skyvault.v1 import skyvault_pb2_grpc
 
 
 SERVICE_CONFIG = {

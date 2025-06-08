@@ -16,7 +16,8 @@ use skyvault::{
     cache_service,
     config::{
         PostgresConfig,
-        S3Config, SentryConfig,
+        S3Config,
+        SentryConfig,
     },
     dynamic_config,
     k8s,
@@ -69,7 +70,7 @@ struct Config {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {    
+async fn main() -> Result<()> {
     aws_lc_rs::default_provider()
         .install_default()
         .expect("Failed to install aws-lc-rs CryptoProvider");
@@ -122,7 +123,8 @@ async fn main() -> Result<()> {
 
     let mut builder = Server::builder()
         .layer(observability::MetricsLayer)
-        .add_service(reflection_service);
+        .add_service(reflection_service)
+        .add_service(health_service);
 
     match config.service {
         Service::Writer => {
@@ -177,7 +179,6 @@ async fn main() -> Result<()> {
     }
 
     builder
-        .add_service(health_service)
         .serve_with_shutdown(config.grpc_addr, async {
             let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
                 .expect("Failed to install SIGTERM handler");

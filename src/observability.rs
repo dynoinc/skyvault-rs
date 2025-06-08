@@ -51,12 +51,12 @@ pub fn init_tracing_and_sentry(sentry_config: SentryConfig) -> Option<ClientInit
     } else {
         Some(sentry::init((
             sentry_config.dsn,
-                sentry::ClientOptions {
-                    release: Some(env!("CARGO_PKG_VERSION").into()),
-                    ..Default::default()
-                },
-            )))
-        };
+            sentry::ClientOptions {
+                release: Some(env!("CARGO_PKG_VERSION").into()),
+                ..Default::default()
+            },
+        )))
+    };
 
     let fmt_layer = tracing_subscriber::fmt::layer()
         .compact()

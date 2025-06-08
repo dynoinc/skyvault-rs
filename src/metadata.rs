@@ -366,6 +366,16 @@ pub enum JobParams {
     TableTreeCompaction(TableID, Level),
 }
 
+impl JobParams {
+    pub fn job_type(&self) -> &'static str {
+        match self {
+            JobParams::WALCompaction => "wal-compaction",
+            JobParams::TableBufferCompaction(_) => "table-buffer-compaction",
+            JobParams::TableTreeCompaction(_, _) => "table-tree-compaction",
+        }
+    }
+}
+
 impl From<JobParams> for proto::JobParams {
     fn from(params: JobParams) -> Self {
         match params {

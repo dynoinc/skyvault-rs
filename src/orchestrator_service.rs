@@ -245,30 +245,15 @@ impl MyOrchestrator {
                     continue;
                 }
 
-                match job_params {
-                    JobParams::WALCompaction => {
-                        tracing::info!("Kicking off WAL compaction job with ID: {}", current_job_id);
-                        if let Err(e) = self.create_k8s_job(current_job_id, "wal-compaction").await {
-                            tracing::error!(error = %e, "Failed to create k8s job for WAL compaction");
-                        }
-                    },
-                    JobParams::TableBufferCompaction(_) => {
-                        tracing::info!("Kicking off table buffer compaction job with ID: {}", current_job_id);
-                        if let Err(e) = self.create_k8s_job(current_job_id, "table-buffer-compaction").await {
-                            tracing::error!(error = %e, "Failed to create k8s job for table buffer compaction");
-                        }
-                    },
-                    JobParams::TableTreeCompaction(..) => {
-                        tracing::info!("Kicking off table tree compaction job with ID: {}", current_job_id);
-                        if let Err(e) = self.create_k8s_job(current_job_id, "table-tree-compaction").await {
-                            tracing::error!(error = %e, "Failed to create k8s job for table tree compaction");
-                        }
-                    },
+                let job_type = job_params.job_type();
+                tracing::info!("Kicking off job with ID: {} and type: {}", current_job_id, job_type);
+                if let Err(e) = self.create_k8s_job(current_job_id, job_type).await {
+                    tracing::error!(error = %e, "Failed to create k8s job for job type: {}", job_type);
                 }
             }
         }
     }
-
+    
     async fn watch_jobs(&self, namespace: String) {
         let label_selector = "batch.skyvault.io/created-by=orchestrator";
 
