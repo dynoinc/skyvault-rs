@@ -253,7 +253,7 @@ impl MyOrchestrator {
             }
         }
     }
-    
+
     async fn watch_jobs(&self, namespace: String) {
         let label_selector = "batch.skyvault.io/created-by=orchestrator";
 

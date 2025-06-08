@@ -131,11 +131,31 @@ deployments:
       nodePort: 30053
     env:
       SKYVAULT_SERVICE: "orchestrator"
+    # Dynamic configuration specific to orchestrator
+    dynamicConfig:
+      orchestratorJobRetryLimit: "3"
 
 # Service account configuration
 serviceAccount:
   create: true
   annotations: {}
+
+# Dynamic configurations for job types
+jobDynamicConfigs:
+  # WAL compaction job configuration
+  wal-compaction:
+    writerConcurrentUploads: "4"
+    orchestratorJobRetryLimit: "3"
+  
+  # Table buffer compaction job configuration  
+  table-buffer-compaction:
+    writerConcurrentUploads: "6"
+    orchestratorJobRetryLimit: "5"
+  
+  # Table tree compaction job configuration
+  table-tree-compaction:
+    writerConcurrentUploads: "8"
+    orchestratorJobRetryLimit: "5"
 
 # Values for the minio service
 minio:

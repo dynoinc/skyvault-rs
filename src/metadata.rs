@@ -371,7 +371,7 @@ impl JobParams {
         match self {
             JobParams::WALCompaction => "wal-compaction",
             JobParams::TableBufferCompaction(_) => "table-buffer-compaction",
-            JobParams::TableTreeCompaction(_, _) => "table-tree-compaction",
+            JobParams::TableTreeCompaction(..) => "table-tree-compaction",
         }
     }
 }

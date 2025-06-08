@@ -115,21 +115,13 @@ impl From<ParsedConfigMap> for AppConfig {
 
 impl AppConfig {
     fn apply(&mut self, new_config: ParsedConfigMap) {
-        let current_permits = self.writer_uploads_semaphore.available_permits();
+        // For semaphore changes, we need to replace the entire semaphore
+        // because we can't reliably reduce permits from an existing semaphore
         let new_permits = new_config.writer_concurrent_uploads as usize;
+        let current_permits = self.writer_uploads_semaphore.available_permits();
 
-        if new_permits > current_permits {
-            // Add permits if new limit is higher
-            self.writer_uploads_semaphore.add_permits(new_permits - current_permits);
-        } else if new_permits < current_permits {
-            // Remove permits if new limit is lower by acquiring them
-            for _ in 0..(current_permits - new_permits) {
-                // Try to acquire permits, but don't wait if they're not available
-                if let Ok(permit) = self.writer_uploads_semaphore.try_acquire() {
-                    // Immediately drop the permit to effectively remove it
-                    drop(permit);
-                }
-            }
+        if new_permits != current_permits {
+            self.writer_uploads_semaphore = Arc::new(Semaphore::new(new_permits));
         }
 
         // Orchestrator
@@ -151,9 +143,19 @@ async fn determine_instance_name(client: Client, namespace: &str) -> Result<Stri
         .map_err(|e| ConfigError::InstanceNameError(format!("Failed to get pod {hostname}: {e}")))?;
 
     let labels = pod.metadata.labels.unwrap_or_default();
-    let component_label = labels
-        .get("app.kubernetes.io/component")
-        .ok_or_else(|| ConfigError::InstanceNameError("Pod missing app.kubernetes.io/component label".to_string()))?;
+
+    // First, try to get instance name from batch.skyvault.io/type label (for batch
+    // jobs)
+    if let Some(job_type) = labels.get("batch.skyvault.io/type") {
+        return Ok(job_type.clone());
+    }
+
+    // Fallback to app.kubernetes.io/component label (for long-running services)
+    let component_label = labels.get("app.kubernetes.io/component").ok_or_else(|| {
+        ConfigError::InstanceNameError(
+            "Pod missing both app.kubernetes.io/component and batch.skyvault.io/type labels".to_string(),
+        )
+    })?;
 
     // Extract instance name from component label (e.g., "skyvault-writer" ->
     // "writer")
@@ -335,5 +337,38 @@ mod tests {
         let config = from_k8s_data(&data).unwrap();
         assert_eq!(config.writer_uploads_semaphore.available_permits(), 6);
         assert_eq!(config.orchestrator_job_retry_limit, 10);
+    }
+
+    #[test]
+    fn test_app_config_apply_semaphore_increase() {
+        let mut config = AppConfig::default();
+        assert_eq!(config.writer_uploads_semaphore.available_permits(), 4);
+
+        let new_config = ParsedConfigMap {
+            writer_concurrent_uploads: 8,
+            orchestrator_job_retry_limit: 5,
+        };
+
+        config.apply(new_config);
+        assert_eq!(config.writer_uploads_semaphore.available_permits(), 8);
+        assert_eq!(config.orchestrator_job_retry_limit, 5);
+    }
+
+    #[test]
+    fn test_app_config_apply_semaphore_decrease() {
+        let mut config = AppConfig::from(ParsedConfigMap {
+            writer_concurrent_uploads: 8,
+            orchestrator_job_retry_limit: 3,
+        });
+        assert_eq!(config.writer_uploads_semaphore.available_permits(), 8);
+
+        let new_config = ParsedConfigMap {
+            writer_concurrent_uploads: 4,
+            orchestrator_job_retry_limit: 2,
+        };
+
+        config.apply(new_config);
+        assert_eq!(config.writer_uploads_semaphore.available_permits(), 4);
+        assert_eq!(config.orchestrator_job_retry_limit, 2);
     }
 }
