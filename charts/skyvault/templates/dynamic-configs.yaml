@@ -1,0 +1,33 @@
+{{- range $key, $deployment := .Values.deployments }}
+{{- if $deployment.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: skyvault-dynamic-config-{{ $deployment.instanceName }}
+  labels:
+    {{- include "skyvault.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: skyvault-{{ $deployment.instanceName }}
+data:
+  {{- if $deployment.dynamicConfig }}
+  {{- range $configKey, $configValue := $deployment.dynamicConfig }}
+  {{ $configKey | snakecase }}: {{ $configValue | quote }}
+  {{- end }}
+  {{- end }}
+{{- end }}
+{{- end }}
+
+{{- range $jobType, $config := .Values.jobDynamicConfigs }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: skyvault-dynamic-config-{{ $jobType }}
+  labels:
+    {{- include "skyvault.labels" $ | nindent 4 }}
+    batch.skyvault.io/type: {{ $jobType }}
+data:
+  {{- range $configKey, $configValue := $config }}
+  {{ $configKey | snakecase }}: {{ $configValue | quote }}
+  {{- end }}
+{{- end }}
