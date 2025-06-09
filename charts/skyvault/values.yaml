@@ -34,9 +34,9 @@ common:
     SKYVAULT_POSTGRES_SSLMODE: allow
 
     # OpenTelemetry
-    # For HTTP: use port 4318 with protocol "http"
-    # For gRPC: use port 4317 with protocol "grpc"
-    OTEL_EXPORTER_OTLP_ENDPOINT: http://skyvault-otel-collector:4318
+    # For HTTP: use port 4318 with protocol "http" (includes /v1/metrics path)
+    # For gRPC: use port 4317 with protocol "grpc" (no path needed)
+    OTEL_EXPORTER_OTLP_ENDPOINT: http://skyvault-otel-collector:4318/v1/metrics
     OTEL_EXPORTER_OTLP_PROTOCOL: http
 
     # Rust

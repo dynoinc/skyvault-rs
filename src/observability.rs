@@ -79,21 +79,24 @@ pub fn init_otel_metrics(otel_config: OtelConfig) -> Result<(), Box<dyn std::err
         return Ok(());
     }
 
-    // Create OTLP metrics exporter based on protocol
+    // Create OTLP metrics exporter based on protocol with timeout for debugging
     let exporter = match otel_config.protocol.to_lowercase().as_str() {
         "grpc" => opentelemetry_otlp::MetricExporter::builder()
             .with_tonic()
             .with_endpoint(&otel_config.endpoint)
+            .with_timeout(std::time::Duration::from_secs(10))
             .build()?,
         "http" | "http/protobuf" => opentelemetry_otlp::MetricExporter::builder()
             .with_http()
             .with_endpoint(&otel_config.endpoint)
+            .with_timeout(std::time::Duration::from_secs(10))
             .build()?,
         _ => {
             tracing::warn!("Unknown OTEL protocol '{}', defaulting to HTTP", otel_config.protocol);
             opentelemetry_otlp::MetricExporter::builder()
                 .with_http()
                 .with_endpoint(&otel_config.endpoint)
+                .with_timeout(std::time::Duration::from_secs(10))
                 .build()?
         },
     };

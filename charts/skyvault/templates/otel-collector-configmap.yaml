@@ -18,9 +18,12 @@ data:
     exporters:
       debug:
         verbosity: detailed
-        sampling_initial: 5
-        sampling_thereafter: 200
+        sampling_initial: 2
+        sampling_thereafter: 5
     service:
+      telemetry:
+        logs:
+          level: debug
       pipelines:
         metrics:
           receivers: [otlp]
