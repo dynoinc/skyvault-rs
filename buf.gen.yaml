@@ -1,8 +1,0 @@
-version: v2
-plugins:
-  - remote: buf.build/protocolbuffers/python
-    out: skycli/
-  - remote: buf.build/protocolbuffers/pyi
-    out: skycli/
-  - remote: buf.build/grpc/python
-    out: skycli/
