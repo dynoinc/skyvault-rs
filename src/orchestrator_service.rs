@@ -414,8 +414,8 @@ impl MyOrchestrator {
                                     // K8s
                                     "KUBERNETES_SERVICE_HOST",
                                     "KUBERNETES_SERVICE_PORT",
-                                    // Metrics
-                                    "SKYVAULT_METRICS_ADDR",
+                                    // OpenTelemetry
+                                    "OTEL_EXPORTER_OTLP_ENDPOINT",
                                     // Sentry
                                     "SENTRY_DSN",
                                     "SENTRY_SAMPLE_RATE",

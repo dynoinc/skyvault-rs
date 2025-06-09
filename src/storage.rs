@@ -26,9 +26,9 @@ use aws_smithy_runtime_api::client::{
     result::SdkError,
 };
 use bytes::Bytes;
-use metrics::{
-    counter,
-    histogram,
+use opentelemetry::{
+    KeyValue,
+    global,
 };
 use thiserror::Error;
 use tokio::sync::broadcast;
@@ -152,18 +152,20 @@ impl S3ObjectStore {
             },
         };
 
-        let req_counter = counter!(
-            "skyvault/s3/requests_total",
-            "operation" => method,
-            "status" => status.clone(),
-        );
-        let duration_hist = histogram!(
-            "skyvault/s3/request_duration_seconds",
-            "operation" => method,
-        );
+        let meter = global::meter("skyvault");
+        let attributes = vec![
+            KeyValue::new("operation", method.to_string()),
+            KeyValue::new("status", status.clone()),
+        ];
 
-        req_counter.increment(1);
-        duration_hist.record(duration.as_secs_f64());
+        let req_counter = meter.u64_counter("skyvault_s3_requests_total").build();
+        let duration_hist = meter.f64_histogram("skyvault_s3_request_duration_seconds").build();
+
+        req_counter.add(1, &attributes);
+        duration_hist.record(
+            duration.as_secs_f64(),
+            &[KeyValue::new("operation", method.to_string())],
+        );
 
         debug!(
             operation = method,

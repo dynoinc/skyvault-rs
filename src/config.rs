@@ -17,6 +17,12 @@ pub struct SentryConfig {
 }
 
 #[derive(Debug, Parser, Clone)]
+pub struct OtelConfig {
+    #[arg(long, env = "OTEL_EXPORTER_OTLP_ENDPOINT", default_value = "")]
+    pub endpoint: String,
+}
+
+#[derive(Debug, Parser, Clone)]
 pub struct PostgresConfig {
     #[arg(long, env = "SKYVAULT_POSTGRES_USER", default_value = "postgres")]
     pub user: String,

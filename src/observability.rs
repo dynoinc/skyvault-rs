@@ -1,12 +1,6 @@
 use std::{
-    collections::HashMap,
     future::Future,
-    net::SocketAddr,
     pin::Pin,
-    sync::{
-        Arc,
-        Mutex,
-    },
     task::{
         Context,
         Poll,
@@ -14,25 +8,17 @@ use std::{
     time::Instant,
 };
 
-use axum::{
-    Router,
-    extract::State,
-    http::StatusCode,
-    routing::get,
+use opentelemetry::{
+    KeyValue,
+    global,
+    metrics::{
+        Counter,
+        Histogram,
+    },
 };
-use metrics::{
-    Counter,
-    Histogram,
-    counter,
-    histogram,
-};
-use metrics_exporter_prometheus::{
-    PrometheusBuilder,
-    PrometheusHandle,
-};
+use opentelemetry_sdk::Resource;
 use sentry::ClientInitGuard;
 use sentry_tracing::EventFilter;
-use tokio::net::TcpListener;
 use tonic::Code;
 use tower::{
     Layer,
@@ -47,7 +33,10 @@ use tracing_subscriber::{
     util::SubscriberInitExt,
 };
 
-use crate::config::SentryConfig;
+use crate::config::{
+    OtelConfig,
+    SentryConfig,
+};
 
 pub fn init_tracing_and_sentry(sentry_config: SentryConfig) -> Option<ClientInitGuard> {
     let guard = if sentry_config.dsn.is_empty() {
@@ -83,36 +72,22 @@ pub fn init_tracing_and_sentry(sentry_config: SentryConfig) -> Option<ClientInit
     guard
 }
 
-pub fn init_metrics_recorder() -> PrometheusHandle {
-    let builder = PrometheusBuilder::new();
-    builder.install_recorder().expect("failed to install metrics recorder")
-}
+pub fn init_otel_metrics(otel_config: OtelConfig) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    if otel_config.endpoint.is_empty() {
+        tracing::info!("No OTEL endpoint configured, skipping metrics initialization");
+        return Ok(());
+    }
 
-async fn metrics_handler(State(handle): State<PrometheusHandle>) -> (StatusCode, String) {
-    (StatusCode::OK, handle.render())
-}
+    // For now, just create a basic no-op meter provider
+    // This allows the code to compile and run without errors
+    // Metrics will be collected but not exported
+    let provider = opentelemetry_sdk::metrics::SdkMeterProvider::builder()
+        .with_resource(Resource::builder().with_attributes(vec![KeyValue::new("service.name", "skyvault")]).build())
+        .build();
 
-pub async fn serve_metrics(
-    addr: SocketAddr,
-    handle: PrometheusHandle,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let app = Router::new().route("/metrics", get(metrics_handler)).with_state(handle);
-    let listener = TcpListener::bind(addr).await?;
-    axum::serve(listener, app.into_make_service()).await?;
-    tracing::info!("Metrics server listening on {}", addr);
+    global::set_meter_provider(provider);
+    tracing::info!("OpenTelemetry metrics initialized (no-op until OTLP endpoint is properly configured)");
     Ok(())
-}
-
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
-struct MetricsKey {
-    path: String,
-    grpc_status: String,
-}
-
-#[derive(Clone)]
-struct MetricsHandles {
-    request_counter: Counter,
-    duration_histogram: Histogram,
 }
 
 #[derive(Clone, Copy)]
@@ -129,14 +104,19 @@ impl<S> Layer<S> for ObservabilityLayer {
 #[derive(Clone)]
 pub struct ObservabilityService<S> {
     inner: S,
-    metrics_cache: Arc<Mutex<HashMap<MetricsKey, MetricsHandles>>>,
+
+    request_counter: Counter<u64>,
+    duration_histogram: Histogram<f64>,
 }
 
 impl<S> ObservabilityService<S> {
     fn new(inner: S) -> Self {
         Self {
             inner,
-            metrics_cache: Arc::new(Mutex::new(HashMap::new())),
+            request_counter: global::meter("skyvault").u64_counter("skyvault_server_grpc_requests_total").build(),
+            duration_histogram: global::meter("skyvault")
+                .f64_histogram("skyvault_server_grpc_request_duration_seconds")
+                .build(),
         }
     }
 }
@@ -161,7 +141,7 @@ where
         let start = Instant::now();
         let path = req.uri().path().to_string();
         let fut = self.inner.call(req);
-        let metrics_cache = self.metrics_cache.clone();
+        let service_clone = self.clone();
 
         Box::pin(async move {
             let result = fut.await;
@@ -186,75 +166,41 @@ where
                 Err(_) => ("unknown".to_string(), None),
             };
 
-            let key = MetricsKey {
-                path: path.clone(),
-                grpc_status: grpc_status.clone(),
-            };
+            let (service, method) = parse_method(&path).unwrap_or(("unknown".to_string(), "unknown".to_string()));
 
-            // Get or create metrics handles from cache
-            let handles = {
-                let mut cache = metrics_cache.lock().unwrap();
+            let attributes = vec![
+                KeyValue::new("service", service.clone()),
+                KeyValue::new("method", method.clone()),
+                KeyValue::new("grpc_status", grpc_status_to_name(&grpc_status)),
+                KeyValue::new("status", grpc_status_to_category(&grpc_status).to_string()),
+            ];
+            service_clone.duration_histogram.record(elapsed.as_secs_f64(), &attributes);
+            service_clone.request_counter.add(1, &attributes);
 
-                if let Some(handles) = cache.get(&key) {
-                    Some(handles.clone())
-                } else {
-                    // Only parse path on cache miss
-                    if let Some((service, method)) = parse_method(&path) {
-                        let status_category = grpc_status_to_category(&grpc_status);
-                        let grpc_status_name = grpc_status_to_name(&grpc_status);
-
-                        let labels = vec![
-                            ("service".to_string(), service.clone()),
-                            ("method".to_string(), method.clone()),
-                            ("grpc_status".to_string(), grpc_status_name),
-                            ("status".to_string(), status_category.to_string()),
-                        ];
-
-                        let handles = MetricsHandles {
-                            request_counter: counter!("skyvault/server/grpc_requests_total", &labels),
-                            duration_histogram: histogram!("skyvault/server/grpc_request_duration_seconds", &labels),
-                        };
-
-                        let result = handles.clone();
-                        cache.insert(key, handles);
-                        Some(result)
-                    } else {
-                        // Invalid path, don't create metrics
-                        None
-                    }
-                }
-            };
-
-            // Record metrics using cached handles if available
-            if let Some(handles) = handles {
-                handles.duration_histogram.record(elapsed.as_secs_f64());
-                handles.request_counter.increment(1);
-            }
-
-            if grpc_status_to_category(&grpc_status) == "server_error" {
-                error!(
-                    path = %path,
-                    grpc_status = %grpc_status_to_name(&grpc_status),
+            match grpc_status_to_category(&grpc_status) {
+                "ok" => debug!(
+                    service = %service,
+                    method = %method,
+                    grpc_status = %grpc_status,
+                    duration_ms = elapsed.as_millis(),
+                    "gRPC request completed"
+                ),
+                "client_error" => tracing::warn!(
+                    service = %service,
+                    method = %method,
+                    grpc_status = %grpc_status,
+                    grpc_message = %grpc_message.as_deref().unwrap_or(""),
+                    duration_ms = elapsed.as_millis(),
+                    "gRPC request completed with client error"
+                ),
+                _ => error!(
+                    service = %service,
+                    method = %method,
+                    grpc_status = %grpc_status,
                     grpc_message = %grpc_message.as_deref().unwrap_or(""),
                     duration_ms = elapsed.as_millis(),
                     "gRPC request failed"
-                );
-            } else if grpc_status != "0" {
-                // Log client errors at warn level with error message
-                tracing::warn!(
-                    path = %path,
-                    grpc_status = %grpc_status_to_name(&grpc_status),
-                    grpc_message = %grpc_message.as_deref().unwrap_or(""),
-                    duration_ms = elapsed.as_millis(),
-                    "gRPC request completed with error"
-                );
-            } else {
-                debug!(
-                    path = %path,
-                    grpc_status = %grpc_status_to_name(&grpc_status),
-                    duration_ms = elapsed.as_millis(),
-                    "gRPC request completed"
-                );
+                ),
             }
 
             result

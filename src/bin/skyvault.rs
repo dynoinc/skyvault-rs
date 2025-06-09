@@ -19,6 +19,7 @@ use sentry_tower::{
 use skyvault::{
     cache_service,
     config::{
+        OtelConfig,
         PostgresConfig,
         S3Config,
         SentryConfig,
@@ -54,9 +55,6 @@ struct Config {
     #[arg(long, env = "SKYVAULT_GRPC_ADDR", value_parser = clap::value_parser!(SocketAddr), default_value = "0.0.0.0:50051")]
     grpc_addr: SocketAddr,
 
-    #[arg(long, env = "SKYVAULT_METRICS_ADDR", value_parser = clap::value_parser!(SocketAddr), default_value = "0.0.0.0:9095")]
-    metrics_addr: SocketAddr,
-
     #[clap(flatten)]
     postgres: PostgresConfig,
 
@@ -65,6 +63,9 @@ struct Config {
 
     #[clap(flatten)]
     sentry: SentryConfig,
+
+    #[clap(flatten)]
+    otel: OtelConfig,
 
     #[arg(long, env = "SKYVAULT_SERVICE", default_value = "reader")]
     service: Service,
@@ -86,17 +87,8 @@ async fn main() -> Result<()> {
     let version = env!("CARGO_PKG_VERSION");
     let _sentry = observability::init_tracing_and_sentry(config.sentry.clone());
 
-    // Initialize metrics recorder
-    let handle = observability::init_metrics_recorder();
-    let _metrics_server_handle = {
-        let handle_clone = handle.clone();
-        let metrics_addr = config.metrics_addr;
-        tokio::spawn(async move {
-            observability::serve_metrics(metrics_addr, handle_clone)
-                .await
-                .expect("Failed to start metrics server");
-        })
-    };
+    // Initialize OpenTelemetry metrics
+    observability::init_otel_metrics(config.otel.clone()).expect("Failed to initialize OpenTelemetry metrics");
 
     // Initialize K8s client
     let current_namespace = k8s::get_namespace()

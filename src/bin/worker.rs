@@ -1,7 +1,4 @@
-use std::{
-    net::SocketAddr,
-    sync::Arc,
-};
+use std::sync::Arc;
 
 use anyhow::{
     Context,
@@ -11,6 +8,7 @@ use clap::Parser;
 use rustls::crypto::aws_lc_rs;
 use skyvault::{
     config::{
+        OtelConfig,
         PostgresConfig,
         S3Config,
         SentryConfig,
@@ -29,9 +27,6 @@ use skyvault::{
 #[derive(Debug, Parser)]
 #[command(name = "worker", about = "A worker for skyvault.")]
 pub struct Config {
-    #[arg(long, env = "SKYVAULT_METRICS_ADDR", value_parser = clap::value_parser!(SocketAddr), default_value = "0.0.0.0:9095")]
-    metrics_addr: SocketAddr,
-
     #[clap(flatten)]
     pub postgres: PostgresConfig,
 
@@ -40,6 +35,9 @@ pub struct Config {
 
     #[clap(flatten)]
     pub sentry: SentryConfig,
+
+    #[clap(flatten)]
+    pub otel: OtelConfig,
 
     #[arg(long)]
     pub job_id: JobID,
@@ -55,17 +53,8 @@ async fn main() -> Result<()> {
     let version = env!("CARGO_PKG_VERSION");
     let _sentry = observability::init_tracing_and_sentry(config.sentry.clone());
 
-    // Initialize metrics recorder
-    let handle = observability::init_metrics_recorder();
-    let _metrics_server_handle = {
-        let handle_clone = handle.clone();
-        let metrics_addr = config.metrics_addr;
-        tokio::spawn(async move {
-            observability::serve_metrics(metrics_addr, handle_clone)
-                .await
-                .expect("Failed to start metrics server");
-        })
-    };
+    // Initialize OpenTelemetry metrics
+    observability::init_otel_metrics(config.otel.clone()).expect("Failed to initialize OpenTelemetry metrics");
 
     // Initialize K8s client
     let current_namespace = k8s::get_namespace().await.context("Failed to get namespace")?;

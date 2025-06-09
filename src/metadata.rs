@@ -16,9 +16,9 @@ use std::{
 
 use async_stream::stream;
 use futures::Stream;
-use metrics::{
-    counter,
-    histogram,
+use opentelemetry::{
+    KeyValue,
+    global,
 };
 use sqlx::{
     PgPool,
@@ -909,18 +909,22 @@ impl InstrumentedMetadataStore {
             },
         };
 
-        let req_counter = counter!(
-            "skyvault/postgres/requests_total",
-            "method" => method,
-            "status" => status.clone()
-        );
-        let duration_hist = histogram!(
-            "skyvault/postgres/request_duration_seconds",
-            "method" => method
-        );
+        let meter = global::meter("skyvault");
+        let attributes = vec![
+            KeyValue::new("method", method.to_string()),
+            KeyValue::new("status", status.clone()),
+        ];
 
-        req_counter.increment(1);
-        duration_hist.record(duration.as_secs_f64());
+        let req_counter = meter.u64_counter("skyvault_postgres_requests_total").build();
+        let duration_hist = meter
+            .f64_histogram("skyvault_postgres_request_duration_seconds")
+            .build();
+
+        req_counter.add(1, &attributes);
+        duration_hist.record(
+            duration.as_secs_f64(),
+            &[KeyValue::new("method", method.to_string())],
+        );
 
         debug!(
             method = method,
