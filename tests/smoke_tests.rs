@@ -21,15 +21,12 @@ struct TestStubs {
 }
 
 async fn setup_stubs() -> Result<TestStubs> {
-    let (
-        (writer_channel, writer_child),
-        (reader_channel, reader_child),
-        (orchestrator_channel, orchestrator_child),
-    ) = tokio::try_join!(
-        common::setup_connection("skyvault-writer"),
-        common::setup_connection("skyvault-reader"),
-        common::setup_connection("skyvault-orchestrator")
-    )?;
+    let ((writer_channel, writer_child), (reader_channel, reader_child), (orchestrator_channel, orchestrator_child)) =
+        tokio::try_join!(
+            common::setup_connection("skyvault-writer"),
+            common::setup_connection("skyvault-reader"),
+            common::setup_connection("skyvault-orchestrator")
+        )?;
 
     Ok(TestStubs {
         writer: proto::writer_service_client::WriterServiceClient::new(writer_channel),

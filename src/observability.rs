@@ -38,7 +38,10 @@ use tower::{
     Layer,
     Service,
 };
-use tracing::{debug, error};
+use tracing::{
+    debug,
+    error,
+};
 use tracing_subscriber::{
     layer::SubscriberExt,
     util::SubscriberInitExt,
@@ -154,8 +157,13 @@ where
     }
 
     fn call(&mut self, req: http::Request<ReqBody>) -> Self::Future {
-        let path = req.uri().path().to_string();
+        // Skip observability for health and reflection services
+        if should_skip_observability(req.uri().path()) {
+            return Box::pin(self.inner.call(req));
+        }
+
         let start = Instant::now();
+        let path = req.uri().path().to_string();    
         let fut = self.inner.call(req);
         let metrics_cache = self.metrics_cache.clone();
 
@@ -218,7 +226,7 @@ where
                 handles.request_counter.increment(1);
             }
 
-            if grpc_status_to_name(&grpc_status) == "server_error" {
+            if grpc_status_to_category(&grpc_status) == "server_error" {
                 error!(
                     path = %path,
                     grpc_status = %grpc_status_to_name(&grpc_status),
@@ -237,6 +245,20 @@ where
             result
         })
     }
+}
+
+fn should_skip_observability(path: &str) -> bool {
+    // Skip health check service
+    if path.contains("/grpc.health.v1.Health/") {
+        return true;
+    }
+
+    // Skip reflection service
+    if path.contains("/grpc.reflection.v1alpha.ServerReflection/") {
+        return true;
+    }
+
+    false
 }
 
 fn parse_method(path: &str) -> Option<(String, String)> {
@@ -293,6 +315,30 @@ fn grpc_status_to_category(code: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_should_skip_observability() {
+        // Health check service should be skipped
+        assert!(should_skip_observability("/grpc.health.v1.Health/Check"));
+        assert!(should_skip_observability("/grpc.health.v1.Health/Watch"));
+
+        // Reflection service should be skipped
+        assert!(should_skip_observability(
+            "/grpc.reflection.v1alpha.ServerReflection/ServerReflectionInfo"
+        ));
+
+        // Business services should not be skipped
+        assert!(!should_skip_observability("/skyvault.v1.ReaderService/Get"));
+        assert!(!should_skip_observability("/skyvault.v1.WriterService/Put"));
+        assert!(!should_skip_observability("/skyvault.v1.CacheService/Get"));
+        assert!(!should_skip_observability(
+            "/skyvault.v1.OrchestratorService/DumpSnapshot"
+        ));
+
+        // Random paths should not be skipped
+        assert!(!should_skip_observability("/some/random/path"));
+        assert!(!should_skip_observability("/api/v1/users"));
+    }
 
     #[test]
     fn test_grpc_status_to_name() {
