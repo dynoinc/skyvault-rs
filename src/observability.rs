@@ -57,6 +57,7 @@ pub fn init_tracing_and_sentry(sentry_config: SentryConfig) -> Option<ClientInit
             sentry_config.dsn,
             sentry::ClientOptions {
                 release: Some(env!("CARGO_PKG_VERSION").into()),
+                traces_sample_rate: sentry_config.sample_rate,
                 ..Default::default()
             },
         )))
@@ -163,7 +164,7 @@ where
         }
 
         let start = Instant::now();
-        let path = req.uri().path().to_string();    
+        let path = req.uri().path().to_string();
         let fut = self.inner.call(req);
         let metrics_cache = self.metrics_cache.clone();
 

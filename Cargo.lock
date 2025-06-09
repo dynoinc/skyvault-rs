@@ -4094,6 +4094,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "sentry-tower"
+version = "0.38.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "53e699974e956e032e08e3595ca67590860b0d7aa522ede2214094eb13200880"
+dependencies = [
+ "http 1.3.1",
+ "pin-project",
+ "sentry-core",
+ "tower-layer",
+ "tower-service",
+ "url",
+]
+
+[[package]]
 name = "sentry-tracing"
 version = "0.38.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4345,6 +4359,7 @@ dependencies = [
  "rustls 0.23.26",
  "schnellru",
  "sentry",
+ "sentry-tower",
  "sentry-tracing",
  "serde",
  "serde_json",

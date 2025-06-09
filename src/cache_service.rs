@@ -73,6 +73,7 @@ impl MyCache {
 
 #[tonic::async_trait]
 impl proto::cache_service_server::CacheService for MyCache {
+    #[tracing::instrument(skip(self, request))]
     async fn get_from_run(
         &self,
         request: Request<proto::GetFromRunRequest>,
@@ -117,6 +118,7 @@ impl proto::cache_service_server::CacheService for MyCache {
         Ok(Response::new(response))
     }
 
+    #[tracing::instrument(skip(self, request))]
     async fn scan_from_run(
         &self,
         request: Request<proto::ScanFromRunRequest>,

@@ -13,7 +13,7 @@ pub struct SentryConfig {
     pub dsn: String,
 
     #[arg(long, env = "SENTRY_SAMPLE_RATE", default_value = "0.0")]
-    pub sample_rate: f64,
+    pub sample_rate: f32,
 }
 
 #[derive(Debug, Parser, Clone)]

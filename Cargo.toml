@@ -74,6 +74,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 # Error tracking
 sentry = { version = "0.38", features = ["tracing"] }
 sentry-tracing = "0.38"
+sentry-tower = { version = "0.38", features = ["http"] }
 
 # Miscellaneous
 clap = { version = "4.5", features = ["derive", "env"] }

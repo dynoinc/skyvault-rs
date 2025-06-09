@@ -181,6 +181,7 @@ impl MyWriter {
 
 #[tonic::async_trait]
 impl proto::writer_service_server::WriterService for MyWriter {
+    #[tracing::instrument(skip(self, req))]
     async fn write_batch(
         &self,
         req: Request<proto::WriteBatchRequest>,

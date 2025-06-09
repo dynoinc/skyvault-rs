@@ -359,7 +359,7 @@ impl From<ChangelogEntryWithID> for proto::ChangelogEntryWithId {
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub enum JobParams {
     WALCompaction,
     TableBufferCompaction(TableID),
@@ -561,7 +561,7 @@ impl PostgresMetadataStore {
 
         MIGRATOR.run(&pg_pool).await?;
 
-        Ok(Arc::new(MetricsMetadataStore::new(Self { pg_pool })))
+        Ok(Arc::new(InstrumentedMetadataStore::new(Self { pg_pool })))
     }
 
     /// Attempts to perform the append_wal operation within a single
@@ -876,11 +876,11 @@ impl PostgresMetadataStore {
     }
 }
 
-pub struct MetricsMetadataStore {
+pub struct InstrumentedMetadataStore {
     inner: PostgresMetadataStore,
 }
 
-impl MetricsMetadataStore {
+impl InstrumentedMetadataStore {
     pub fn new(inner: PostgresMetadataStore) -> Self {
         Self { inner }
     }
@@ -934,31 +934,38 @@ impl MetricsMetadataStore {
 }
 
 #[async_trait::async_trait]
-impl MetadataStoreTrait for MetricsMetadataStore {
+impl MetadataStoreTrait for InstrumentedMetadataStore {
+    #[tracing::instrument(skip(self))]
     async fn get_latest_snapshot_id(&self) -> Result<Option<(SnapshotID, SeqNo)>, MetadataError> {
         Self::record_metrics("get_latest_snapshot_id", || self.inner.get_latest_snapshot_id()).await
     }
 
+    #[tracing::instrument(skip(self))]
     async fn get_latest_snapshot(&self) -> Result<(Option<SnapshotID>, Vec<ChangelogEntryWithID>), MetadataError> {
         Self::record_metrics("get_latest_snapshot", || self.inner.get_latest_snapshot()).await
     }
 
+    #[tracing::instrument(skip(self))]
     async fn persist_snapshot(&self, snapshot_id: SnapshotID, seq_no: SeqNo) -> Result<(), MetadataError> {
         Self::record_metrics("persist_snapshot", || self.inner.persist_snapshot(snapshot_id, seq_no)).await
     }
 
+    #[tracing::instrument(skip(self))]
     async fn stream_changelog(&self) -> Result<(Option<SnapshotID>, ChangelogStream), MetadataError> {
         Self::record_metrics("stream_changelog", || self.inner.stream_changelog()).await
     }
 
+    #[tracing::instrument(skip(self))]
     async fn get_changelog(&self, from_seq_no: SeqNo) -> Result<Vec<ChangelogEntryWithID>, MetadataError> {
         Self::record_metrics("get_changelog", || self.inner.get_changelog(from_seq_no)).await
     }
 
+    #[tracing::instrument(skip(self))]
     async fn append_wal(&self, run_ids: Vec<(RunId, Stats)>) -> Result<SeqNo, MetadataError> {
         Self::record_metrics("append_wal", || self.inner.append_wal(run_ids)).await
     }
 
+    #[tracing::instrument(skip(self))]
     async fn append_wal_compaction(
         &self,
         job_id: JobID,
@@ -971,6 +978,7 @@ impl MetadataStoreTrait for MetricsMetadataStore {
         .await
     }
 
+    #[tracing::instrument(skip(self))]
     async fn append_table_compaction(
         &self,
         job_id: JobID,
@@ -983,46 +991,57 @@ impl MetadataStoreTrait for MetricsMetadataStore {
         .await
     }
 
+    #[tracing::instrument(skip(self))]
     async fn get_run_metadata_batch(&self, run_ids: Vec<RunId>) -> Result<HashMap<RunId, RunMetadata>, MetadataError> {
         Self::record_metrics("get_run_metadata_batch", || self.inner.get_run_metadata_batch(run_ids)).await
     }
 
+    #[tracing::instrument(skip(self))]
     async fn schedule_job(&self, job_params: JobParams) -> Result<JobID, MetadataError> {
         Self::record_metrics("schedule_job", || self.inner.schedule_job(job_params)).await
     }
 
+    #[tracing::instrument(skip(self))]
     async fn get_pending_jobs(&self) -> Result<Vec<(JobID, JobParams)>, MetadataError> {
         Self::record_metrics("get_pending_jobs", || self.inner.get_pending_jobs()).await
     }
 
+    #[tracing::instrument(skip(self))]
     async fn get_job(&self, job_id: JobID) -> Result<Job, MetadataError> {
         Self::record_metrics("get_job", || self.inner.get_job(job_id)).await
     }
 
+    #[tracing::instrument(skip(self))]
     async fn list_jobs(&self, limit: i64) -> Result<Vec<Job>, MetadataError> {
         Self::record_metrics("list_jobs", || self.inner.list_jobs(limit)).await
     }
 
+    #[tracing::instrument(skip(self))]
     async fn mark_job_failed(&self, job_id: JobID) -> Result<(), MetadataError> {
         Self::record_metrics("mark_job_failed", || self.inner.mark_job_failed(job_id)).await
     }
 
+    #[tracing::instrument(skip(self))]
     async fn create_table(&self, config: TableConfig) -> Result<SeqNo, MetadataError> {
         Self::record_metrics("create_table", || self.inner.create_table(config)).await
     }
 
+    #[tracing::instrument(skip(self))]
     async fn drop_table(&self, table_name: TableName) -> Result<SeqNo, MetadataError> {
         Self::record_metrics("drop_table", || self.inner.drop_table(table_name)).await
     }
 
+    #[tracing::instrument(skip(self))]
     async fn list_tables(&self) -> Result<Vec<TableConfig>, MetadataError> {
         Self::record_metrics("list_tables", || self.inner.list_tables()).await
     }
 
+    #[tracing::instrument(skip(self))]
     async fn get_table(&self, table_name: TableName) -> Result<TableConfig, MetadataError> {
         Self::record_metrics("get_table", || self.inner.get_table(table_name)).await
     }
 
+    #[tracing::instrument(skip(self))]
     async fn get_table_by_id(&self, table_id: TableID) -> Result<TableConfig, MetadataError> {
         Self::record_metrics("get_table_by_id", || self.inner.get_table_by_id(table_id)).await
     }

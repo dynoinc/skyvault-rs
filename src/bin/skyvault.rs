@@ -12,6 +12,10 @@ use clap::{
     ValueEnum,
 };
 use rustls::crypto::aws_lc_rs;
+use sentry_tower::{
+    NewSentryLayer,
+    SentryHttpLayer,
+};
 use skyvault::{
     cache_service,
     config::{
@@ -121,7 +125,13 @@ async fn main() -> Result<()> {
         .build_v1()
         .expect("Failed to build reflection service");
 
+    let tower_layer = tower::ServiceBuilder::new()
+        .layer(NewSentryLayer::new_from_top())
+        .layer(SentryHttpLayer::new().enable_transaction())
+        .into_inner();
+
     let mut builder = Server::builder()
+        .layer(tower_layer)
         .layer(observability::ObservabilityLayer)
         .add_service(reflection_service)
         .add_service(health_service);

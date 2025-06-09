@@ -178,6 +178,7 @@ impl S3ObjectStore {
 
 #[async_trait]
 impl ObjectStoreTrait for S3ObjectStore {
+    #[tracing::instrument(skip(self), fields(snapshot_id = %snapshot_id, data_len = data.len()))]
     async fn put_snapshot(&self, snapshot_id: SnapshotID, data: Bytes) -> Result<(), StorageError> {
         let byte_stream = ByteStream::from(data);
 
@@ -195,6 +196,7 @@ impl ObjectStoreTrait for S3ObjectStore {
         .map_err(|err| StorageError::PutObjectError(Box::new(err)))
     }
 
+    #[tracing::instrument(skip(self), fields(run_id = %run_id, data_len = data.len()))]
     async fn put_run(&self, run_id: RunId, data: Bytes) -> Result<(), StorageError> {
         let byte_stream = ByteStream::from(data);
 
@@ -213,6 +215,7 @@ impl ObjectStoreTrait for S3ObjectStore {
         .map_err(|err| StorageError::PutObjectError(Box::new(err)))
     }
 
+    #[tracing::instrument(skip(self), fields(snapshot_id = %snapshot_id))]
     async fn get_snapshot(&self, snapshot_id: SnapshotID) -> Result<Bytes, StorageError> {
         let key = format!("snapshots/{snapshot_id}");
 
@@ -238,6 +241,7 @@ impl ObjectStoreTrait for S3ObjectStore {
         Ok(bytes)
     }
 
+    #[tracing::instrument(skip(self), fields(run_id = %run_id))]
     async fn get_run(&self, run_id: RunId) -> Result<ByteStream, StorageError> {
         let key = format!("runs/{run_id}");
 
@@ -314,6 +318,7 @@ impl StorageCache {
     }
 
     /// Get run data from cache or storage if not cached
+    #[tracing::instrument(skip(self), fields(run_id = %run_id))]
     pub async fn get_run(&self, run_id: RunId) -> Result<CacheData, StorageCacheError> {
         // First check if the run is in the cache
         {

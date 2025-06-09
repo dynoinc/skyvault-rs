@@ -23,6 +23,7 @@ use tonic::{
     Request,
     Response,
     Status,
+    service::Interceptor,
     transport::Channel,
 };
 use tracing::{
@@ -59,7 +60,6 @@ use crate::{
 };
 
 #[derive(Debug, Parser, Clone)]
-
 pub struct ReaderConfig {
     #[arg(
         long,
@@ -87,10 +87,29 @@ pub enum ReaderServiceError {
     ForestError(#[from] ForestError),
 }
 
+#[derive(Clone)]
+pub struct SentryTracingInterceptor;
+
+impl Interceptor for SentryTracingInterceptor {
+    fn call(&mut self, mut request: tonic::Request<()>) -> Result<tonic::Request<()>, Status> {
+        // Get current Sentry span and inject tracing headers
+        if let Some(span) = sentry::configure_scope(|scope| scope.get_span()) {
+            for (key, value) in span.iter_headers() {
+                request.metadata_mut().insert(key, value.parse().unwrap());
+            }
+        }
+        Ok(request)
+    }
+}
+
+type InterceptedCacheClient = proto::cache_service_client::CacheServiceClient<
+    tonic::service::interceptor::InterceptedService<Channel, SentryTracingInterceptor>,
+>;
+
 struct PodManager {
     pods: HashMap<String, IpAddr>,
     consistent_hashring: ConsistentHashRing<String>,
-    connections: HashMap<IpAddr, proto::cache_service_client::CacheServiceClient<Channel>>,
+    connections: HashMap<IpAddr, InterceptedCacheClient>,
 }
 
 #[derive(Clone)]
@@ -147,10 +166,7 @@ impl ConsistentHashCM {
         Ok(connection_manager)
     }
 
-    async fn get_connection(
-        &self,
-        routing_key: &str,
-    ) -> Result<proto::cache_service_client::CacheServiceClient<Channel>, Status> {
+    async fn get_connection(&self, routing_key: &str) -> Result<InterceptedCacheClient, Status> {
         let (pod_name, pod_ip) = {
             let pod_manager = self.pod_manager.lock().unwrap();
             let pod_name = match pod_manager.consistent_hashring.get_node(routing_key) {
@@ -171,10 +187,16 @@ impl ConsistentHashCM {
 
         let port = self.port;
         let addr = format!("http://{pod_ip}:{port}");
-        let conn = match proto::cache_service_client::CacheServiceClient::connect(addr).await {
-            Ok(conn) => conn,
+        let channel = match Channel::from_shared(addr)
+            .map_err(|e| Status::internal(format!("Invalid URI: {e}")))?
+            .connect()
+            .await
+        {
+            Ok(channel) => channel,
             Err(e) => return Err(Status::internal(format!("Failed to connect to {pod_ip}: {e}"))),
         };
+
+        let conn = proto::cache_service_client::CacheServiceClient::with_interceptor(channel, SentryTracingInterceptor);
 
         // Now acquire the lock again to insert the new connection
         let conn_clone = conn.clone();
@@ -559,6 +581,7 @@ impl MyReader {
 
 #[tonic::async_trait]
 impl proto::reader_service_server::ReaderService for MyReader {
+    #[tracing::instrument(skip(self, request))]
     async fn get_batch(
         &self,
         request: Request<proto::GetBatchRequest>,
@@ -603,6 +626,7 @@ impl proto::reader_service_server::ReaderService for MyReader {
         Ok(Response::new(response))
     }
 
+    #[tracing::instrument(skip(self, request))]
     async fn scan(&self, request: Request<proto::ScanRequest>) -> Result<Response<proto::ScanResponse>, Status> {
         let max_results_val = request.get_ref().max_results;
         if !(1..=10_000).contains(&max_results_val) {
