@@ -98,9 +98,13 @@ pub fn init_otel_metrics(otel_config: OtelConfig) -> Result<(), Box<dyn std::err
         },
     };
 
-    // Create a meter provider with the OTLP exporter
+    // Create a meter provider with the OTLP exporter and 10-second export interval
+    let reader = opentelemetry_sdk::metrics::PeriodicReader::builder(exporter)
+        .with_interval(std::time::Duration::from_secs(10))
+        .build();
+    
     let provider = opentelemetry_sdk::metrics::SdkMeterProvider::builder()
-        .with_periodic_exporter(exporter)
+        .with_reader(reader)
         .with_resource(
             Resource::builder()
                 .with_attributes(vec![KeyValue::new("service.name", "skyvault")])
@@ -110,7 +114,7 @@ pub fn init_otel_metrics(otel_config: OtelConfig) -> Result<(), Box<dyn std::err
 
     global::set_meter_provider(provider);
     tracing::info!(
-        "OpenTelemetry metrics initialized with OTLP exporter endpoint: {}, protocol: {}",
+        "OpenTelemetry metrics initialized with OTLP exporter endpoint: {}, protocol: {}, export_interval: 10s",
         otel_config.endpoint,
         otel_config.protocol
     );

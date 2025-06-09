@@ -195,7 +195,7 @@ otelCollector:
   
   image:
     repository: otel/opentelemetry-collector
-    tag: "0.115.0"
+    tag: "0.128.0"
     pullPolicy: IfNotPresent
   
   service:
