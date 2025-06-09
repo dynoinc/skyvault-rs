@@ -80,8 +80,6 @@ impl MyWriter {
         mut rx: tokio::sync::mpsc::Receiver<WriteReq>,
         dynamic_config: SharedAppConfig,
     ) {
-        tracing::info!("Writer service started with dynamic concurrent uploads limit");
-
         while let Some(item) = rx.recv().await {
             let mut ops_count = item.ops.len();
             let mut ops = vec![item.ops];

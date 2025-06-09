@@ -158,7 +158,7 @@ where
 
     fn call(&mut self, req: http::Request<ReqBody>) -> Self::Future {
         // Skip observability for health and reflection services
-        if should_skip_observability(req.uri().path()) {
+        if req.uri().path().starts_with("/grpc") {
             return Box::pin(self.inner.call(req));
         }
 
@@ -171,14 +171,23 @@ where
             let result = fut.await;
             let elapsed = start.elapsed();
 
-            let grpc_status = match &result {
-                Ok(response) => response
-                    .headers()
-                    .get("grpc-status")
-                    .and_then(|v| v.to_str().ok())
-                    .unwrap_or("0")
-                    .to_string(),
-                Err(_) => "unknown".to_string(),
+            let (grpc_status, grpc_message) = match &result {
+                Ok(response) => {
+                    let status = response
+                        .headers()
+                        .get("grpc-status")
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or("0")
+                        .to_string();
+                    let message = response
+                        .headers()
+                        .get("grpc-message")
+                        .and_then(|v| v.to_str().ok())
+                        .and_then(|s| urlencoding::decode(s).ok())
+                        .map(|s| s.to_string());
+                    (status, message)
+                },
+                Err(_) => ("unknown".to_string(), None),
             };
 
             let key = MetricsKey {
@@ -230,8 +239,18 @@ where
                 error!(
                     path = %path,
                     grpc_status = %grpc_status_to_name(&grpc_status),
+                    grpc_message = %grpc_message.as_deref().unwrap_or(""),
                     duration_ms = elapsed.as_millis(),
                     "gRPC request failed"
+                );
+            } else if grpc_status != "0" {
+                // Log client errors at warn level with error message
+                tracing::warn!(
+                    path = %path,
+                    grpc_status = %grpc_status_to_name(&grpc_status),
+                    grpc_message = %grpc_message.as_deref().unwrap_or(""),
+                    duration_ms = elapsed.as_millis(),
+                    "gRPC request completed with error"
                 );
             } else {
                 debug!(
@@ -245,20 +264,6 @@ where
             result
         })
     }
-}
-
-fn should_skip_observability(path: &str) -> bool {
-    // Skip health check service
-    if path.contains("/grpc.health.v1.Health/") {
-        return true;
-    }
-
-    // Skip reflection service
-    if path.contains("/grpc.reflection.v1alpha.ServerReflection/") {
-        return true;
-    }
-
-    false
 }
 
 fn parse_method(path: &str) -> Option<(String, String)> {
@@ -315,30 +320,6 @@ fn grpc_status_to_category(code: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_should_skip_observability() {
-        // Health check service should be skipped
-        assert!(should_skip_observability("/grpc.health.v1.Health/Check"));
-        assert!(should_skip_observability("/grpc.health.v1.Health/Watch"));
-
-        // Reflection service should be skipped
-        assert!(should_skip_observability(
-            "/grpc.reflection.v1alpha.ServerReflection/ServerReflectionInfo"
-        ));
-
-        // Business services should not be skipped
-        assert!(!should_skip_observability("/skyvault.v1.ReaderService/Get"));
-        assert!(!should_skip_observability("/skyvault.v1.WriterService/Put"));
-        assert!(!should_skip_observability("/skyvault.v1.CacheService/Get"));
-        assert!(!should_skip_observability(
-            "/skyvault.v1.OrchestratorService/DumpSnapshot"
-        ));
-
-        // Random paths should not be skipped
-        assert!(!should_skip_observability("/some/random/path"));
-        assert!(!should_skip_observability("/api/v1/users"));
-    }
 
     #[test]
     fn test_grpc_status_to_name() {

@@ -330,7 +330,7 @@ impl MyOrchestrator {
             }
 
             // If we get here, the stream has ended or failed - wait and reconnect
-            tracing::info!("Job watcher terminated, restarting in 10 seconds");
+            tracing::error!("Job watcher terminated, restarting in 10 seconds");
             tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
         }
     }
