@@ -38,7 +38,7 @@ use tower::{
     Layer,
     Service,
 };
-use tracing::debug;
+use tracing::{debug, error};
 use tracing_subscriber::{
     layer::SubscriberExt,
     util::SubscriberInitExt,
@@ -218,12 +218,21 @@ where
                 handles.request_counter.increment(1);
             }
 
-            debug!(
-                path = %path,
-                grpc_status = %grpc_status_to_name(&grpc_status),
-                duration_ms = elapsed.as_millis(),
-                "gRPC request completed"
-            );
+            if grpc_status_to_name(&grpc_status) == "server_error" {
+                error!(
+                    path = %path,
+                    grpc_status = %grpc_status_to_name(&grpc_status),
+                    duration_ms = elapsed.as_millis(),
+                    "gRPC request failed"
+                );
+            } else {
+                debug!(
+                    path = %path,
+                    grpc_status = %grpc_status_to_name(&grpc_status),
+                    duration_ms = elapsed.as_millis(),
+                    "gRPC request completed"
+                );
+            }
 
             result
         })
