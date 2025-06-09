@@ -33,7 +33,10 @@ use skyvault::{
     storage,
     writer_service,
 };
-use tonic::transport::Server;
+use tonic::{
+    service::LayerExt,
+    transport::Server,
+};
 use tonic_health::ServingStatus;
 use tracing::info;
 
@@ -125,14 +128,12 @@ async fn main() -> Result<()> {
         .build_v1()
         .expect("Failed to build reflection service");
 
-    let tower_layer = tower::ServiceBuilder::new()
+    let observability_layers = tower::ServiceBuilder::new()
         .layer(NewSentryLayer::new_from_top())
         .layer(SentryHttpLayer::new().enable_transaction())
-        .into_inner();
+        .layer(observability::ObservabilityLayer);
 
     let mut builder = Server::builder()
-        .layer(tower_layer)
-        .layer(observability::ObservabilityLayer)
         .add_service(reflection_service)
         .add_service(health_service);
 
@@ -144,7 +145,9 @@ async fn main() -> Result<()> {
                 .set_service_status(proto::writer_service_server::SERVICE_NAME, ServingStatus::Serving)
                 .await;
 
-            builder = builder.add_service(proto::writer_service_server::WriterServiceServer::new(writer));
+            let writer_service =
+                observability_layers.named_layer(proto::writer_service_server::WriterServiceServer::new(writer));
+            builder = builder.add_service(writer_service);
         },
         Service::Reader => {
             let reader = reader_service::MyReader::new(
@@ -159,7 +162,9 @@ async fn main() -> Result<()> {
                 .set_service_status(proto::reader_service_server::SERVICE_NAME, ServingStatus::Serving)
                 .await;
 
-            builder = builder.add_service(proto::reader_service_server::ReaderServiceServer::new(reader));
+            let reader_service =
+                observability_layers.named_layer(proto::reader_service_server::ReaderServiceServer::new(reader));
+            builder = builder.add_service(reader_service);
         },
         Service::Cache => {
             let cache = cache_service::MyCache::new(storage.clone(), config.cache_config.clone()).await?;
@@ -167,7 +172,9 @@ async fn main() -> Result<()> {
                 .set_service_status(proto::cache_service_server::SERVICE_NAME, ServingStatus::Serving)
                 .await;
 
-            builder = builder.add_service(proto::cache_service_server::CacheServiceServer::new(cache));
+            let cache_service =
+                observability_layers.named_layer(proto::cache_service_server::CacheServiceServer::new(cache));
+            builder = builder.add_service(cache_service);
         },
         Service::Orchestrator => {
             let orchestrator = orchestrator_service::MyOrchestrator::new(
@@ -182,9 +189,10 @@ async fn main() -> Result<()> {
                 .set_service_status(proto::orchestrator_service_server::SERVICE_NAME, ServingStatus::Serving)
                 .await;
 
-            builder = builder.add_service(proto::orchestrator_service_server::OrchestratorServiceServer::new(
-                orchestrator,
-            ));
+            let orchestrator_service = observability_layers.named_layer(
+                proto::orchestrator_service_server::OrchestratorServiceServer::new(orchestrator),
+            );
+            builder = builder.add_service(orchestrator_service);
         },
     }
 

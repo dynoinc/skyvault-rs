@@ -158,11 +158,6 @@ where
     }
 
     fn call(&mut self, req: http::Request<ReqBody>) -> Self::Future {
-        // Skip observability for health and reflection services
-        if req.uri().path().starts_with("/grpc") {
-            return Box::pin(self.inner.call(req));
-        }
-
         let start = Instant::now();
         let path = req.uri().path().to_string();
         let fut = self.inner.call(req);

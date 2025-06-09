@@ -2,13 +2,15 @@ use std::time::Duration;
 
 use anyhow::Result;
 use skyvault::proto;
-use tokio::{
-    process::Child,
-    time::sleep,
-};
+use tokio::process::Child;
+use tokio_retry::strategy::FixedInterval;
 use tonic::transport::Channel;
 
 mod common;
+
+fn retry_strategy() -> impl Iterator<Item = Duration> {
+    FixedInterval::from_millis(100).take(50) // 50 attempts * 100ms = 5 seconds max
+}
 
 struct TestStubs {
     writer: proto::writer_service_client::WriterServiceClient<Channel>,
@@ -77,12 +79,11 @@ async fn perform_write(
         tables: vec![table_request],
     };
 
-    // Retry up to 5 times with 1 second delay
-    for _ in 0..5 {
+    for delay in retry_strategy() {
         match writer.write_batch(request.clone()).await {
             Ok(response) => return Ok(response.into_inner().seq_no),
             Err(e) if e.code() == tonic::Code::NotFound => {
-                sleep(Duration::from_millis(100)).await;
+                tokio::time::sleep(delay).await;
                 continue;
             },
             Err(e) => return Err(e.into()),
@@ -95,11 +96,9 @@ async fn perform_write(
 async fn perform_read_with_retry(
     reader: &mut proto::reader_service_client::ReaderServiceClient<Channel>,
     table_name: &str,
-    _seq_no: i64,
+    seq_no: i64,
     key: &str,
     expected_value_bytes: &[u8],
-    retries: u32,
-    delay: Duration,
 ) -> Result<bool> {
     let table_request = proto::TableGetBatchRequest {
         table_name: table_name.to_string(),
@@ -107,11 +106,11 @@ async fn perform_read_with_retry(
     };
 
     let request = proto::GetBatchRequest {
-        seq_no: 0, // Use 0 to get latest data
+        seq_no,
         tables: vec![table_request],
     };
 
-    for _ in 0..retries {
+    for delay in retry_strategy() {
         match reader.get_batch(request.clone()).await {
             Ok(response) => {
                 let response_inner = response.into_inner();
@@ -126,12 +125,10 @@ async fn perform_read_with_retry(
                 }
             },
             Err(e) if e.code() == tonic::Code::FailedPrecondition => {
-                // Continue retrying for seq_no mismatch
+                tokio::time::sleep(delay).await;
             },
             Err(e) => return Err(e.into()),
         }
-
-        sleep(delay).await;
     }
 
     Ok(false)
@@ -149,9 +146,8 @@ async fn trigger_wal_compaction(
     let response = orchestrator.kick_off_job(request).await?;
     let job_id = response.into_inner().job_id;
 
-    // Wait for compaction job to complete with timeout
-    let start_time = std::time::Instant::now();
-    while start_time.elapsed() < Duration::from_secs(5) {
+    // Wait for compaction job to complete with retry
+    for delay in retry_strategy() {
         let status_request = proto::GetJobStatusRequest { job_id };
         let status_response = orchestrator.get_job_status(status_request).await?;
         let status = status_response.into_inner().status;
@@ -159,7 +155,7 @@ async fn trigger_wal_compaction(
         if let Some(status) = status {
             match status.status {
                 Some(proto::job_status::Status::Pending(_)) => {
-                    sleep(Duration::from_millis(500)).await;
+                    tokio::time::sleep(delay).await;
                     continue;
                 },
                 Some(proto::job_status::Status::SeqNo(seq_no)) => {
@@ -175,7 +171,7 @@ async fn trigger_wal_compaction(
         }
     }
 
-    Err(anyhow::anyhow!("Compaction job did not complete within 5 seconds"))
+    Err(anyhow::anyhow!("Compaction job did not complete within timeout"))
 }
 
 async fn persist_snapshot(
@@ -201,16 +197,7 @@ async fn test_simple_write_and_read() -> Result<()> {
     let seq_no = perform_write(&mut stubs.writer, table_name, key, value.clone()).await?;
 
     // Verify read works
-    let read_success = perform_read_with_retry(
-        &mut stubs.reader,
-        table_name,
-        seq_no,
-        key,
-        &value,
-        30,
-        Duration::from_millis(100),
-    )
-    .await?;
+    let read_success = perform_read_with_retry(&mut stubs.reader, table_name, seq_no, key, &value).await?;
 
     assert!(read_success, "Failed to read back key '{key}' after writing");
 
@@ -235,16 +222,7 @@ async fn test_write_compact_read() -> Result<()> {
     let seq_no = perform_write(&mut stubs.writer, table_name, key_two, value_two.clone()).await?;
 
     // Verify second key is readable before compaction
-    let read_success = perform_read_with_retry(
-        &mut stubs.reader,
-        table_name,
-        seq_no,
-        key_two,
-        &value_two,
-        30,
-        Duration::from_millis(100),
-    )
-    .await?;
+    let read_success = perform_read_with_retry(&mut stubs.reader, table_name, seq_no, key_two, &value_two).await?;
 
     assert!(read_success, "Failed to read back key '{key_two}' before compaction");
 
@@ -252,30 +230,12 @@ async fn test_write_compact_read() -> Result<()> {
     let seq_no = trigger_wal_compaction(&mut stubs.orchestrator).await?;
 
     // Verify second key is still readable after compaction
-    let read_success = perform_read_with_retry(
-        &mut stubs.reader,
-        table_name,
-        seq_no,
-        key_two,
-        &value_two,
-        30,
-        Duration::from_millis(100),
-    )
-    .await?;
+    let read_success = perform_read_with_retry(&mut stubs.reader, table_name, seq_no, key_two, &value_two).await?;
 
     assert!(read_success, "Failed to read back key '{key_two}' after compaction");
 
     // Verify first key is also still readable after compaction
-    let read_success = perform_read_with_retry(
-        &mut stubs.reader,
-        table_name,
-        seq_no,
-        key_one,
-        &value_one,
-        30,
-        Duration::from_millis(100),
-    )
-    .await?;
+    let read_success = perform_read_with_retry(&mut stubs.reader, table_name, seq_no, key_one, &value_one).await?;
 
     assert!(read_success, "Failed to read back key '{key_one}' after compaction");
 
@@ -300,16 +260,7 @@ async fn test_snapshot_persistence() -> Result<()> {
     persist_snapshot(&mut stubs.orchestrator).await?;
 
     // Verify snapshot is persisted
-    let read_success = perform_read_with_retry(
-        &mut stubs.reader,
-        table_name,
-        seq_no,
-        key,
-        &value,
-        30,
-        Duration::from_millis(100),
-    )
-    .await?;
+    let read_success = perform_read_with_retry(&mut stubs.reader, table_name, seq_no, key, &value).await?;
 
     assert!(
         read_success,
