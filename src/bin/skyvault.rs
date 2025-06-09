@@ -122,7 +122,7 @@ async fn main() -> Result<()> {
         .expect("Failed to build reflection service");
 
     let mut builder = Server::builder()
-        .layer(observability::MetricsLayer)
+        .layer(observability::ObservabilityLayer)
         .add_service(reflection_service)
         .add_service(health_service);
 

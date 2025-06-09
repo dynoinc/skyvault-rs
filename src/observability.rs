@@ -106,23 +106,23 @@ struct MetricsHandles {
 }
 
 #[derive(Clone, Copy)]
-pub struct MetricsLayer;
+pub struct ObservabilityLayer;
 
-impl<S> Layer<S> for MetricsLayer {
-    type Service = MetricsService<S>;
+impl<S> Layer<S> for ObservabilityLayer {
+    type Service = ObservabilityService<S>;
 
     fn layer(&self, inner: S) -> Self::Service {
-        MetricsService::new(inner)
+        ObservabilityService::new(inner)
     }
 }
 
 #[derive(Clone)]
-pub struct MetricsService<S> {
+pub struct ObservabilityService<S> {
     inner: S,
     metrics_cache: Arc<Mutex<HashMap<MetricsKey, MetricsHandles>>>,
 }
 
-impl<S> MetricsService<S> {
+impl<S> ObservabilityService<S> {
     fn new(inner: S) -> Self {
         Self {
             inner,
@@ -131,7 +131,7 @@ impl<S> MetricsService<S> {
     }
 }
 
-impl<S, ReqBody, ResBody> Service<http::Request<ReqBody>> for MetricsService<S>
+impl<S, ReqBody, ResBody> Service<http::Request<ReqBody>> for ObservabilityService<S>
 where
     S: Service<http::Request<ReqBody>, Response = http::Response<ResBody>> + Clone + Send + 'static,
     S::Future: Send + 'static,
