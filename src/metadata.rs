@@ -921,10 +921,7 @@ impl InstrumentedMetadataStore {
             .build();
 
         req_counter.add(1, &attributes);
-        duration_hist.record(
-            duration.as_secs_f64(),
-            &[KeyValue::new("method", method.to_string())],
-        );
+        duration_hist.record(duration.as_secs_f64(), &[KeyValue::new("method", method.to_string())]);
 
         debug!(
             method = method,

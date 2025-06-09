@@ -16,6 +16,7 @@ use opentelemetry::{
         Histogram,
     },
 };
+use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::Resource;
 use sentry::ClientInitGuard;
 use sentry_tracing::EventFilter;
@@ -78,15 +79,27 @@ pub fn init_otel_metrics(otel_config: OtelConfig) -> Result<(), Box<dyn std::err
         return Ok(());
     }
 
-    // For now, just create a basic no-op meter provider
-    // This allows the code to compile and run without errors
-    // Metrics will be collected but not exported
+    // Create OTLP metrics exporter
+    let exporter = opentelemetry_otlp::MetricExporter::builder()
+        .with_http()
+        .with_endpoint(&otel_config.endpoint)
+        .build()?;
+
+    // Create a meter provider with the OTLP exporter
     let provider = opentelemetry_sdk::metrics::SdkMeterProvider::builder()
-        .with_resource(Resource::builder().with_attributes(vec![KeyValue::new("service.name", "skyvault")]).build())
+        .with_periodic_exporter(exporter)
+        .with_resource(
+            Resource::builder()
+                .with_attributes(vec![KeyValue::new("service.name", "skyvault")])
+                .build(),
+        )
         .build();
 
     global::set_meter_provider(provider);
-    tracing::info!("OpenTelemetry metrics initialized (no-op until OTLP endpoint is properly configured)");
+    tracing::info!(
+        "OpenTelemetry metrics initialized with OTLP exporter endpoint: {}",
+        otel_config.endpoint
+    );
     Ok(())
 }
 
@@ -113,7 +126,9 @@ impl<S> ObservabilityService<S> {
     fn new(inner: S) -> Self {
         Self {
             inner,
-            request_counter: global::meter("skyvault").u64_counter("skyvault_server_grpc_requests_total").build(),
+            request_counter: global::meter("skyvault")
+                .u64_counter("skyvault_server_grpc_requests_total")
+                .build(),
             duration_histogram: global::meter("skyvault")
                 .f64_histogram("skyvault_server_grpc_request_duration_seconds")
                 .build(),
@@ -174,7 +189,9 @@ where
                 KeyValue::new("grpc_status", grpc_status_to_name(&grpc_status)),
                 KeyValue::new("status", grpc_status_to_category(&grpc_status).to_string()),
             ];
-            service_clone.duration_histogram.record(elapsed.as_secs_f64(), &attributes);
+            service_clone
+                .duration_histogram
+                .record(elapsed.as_secs_f64(), &attributes);
             service_clone.request_counter.add(1, &attributes);
 
             match grpc_status_to_category(&grpc_status) {
