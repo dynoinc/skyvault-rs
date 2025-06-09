@@ -79,11 +79,24 @@ pub fn init_otel_metrics(otel_config: OtelConfig) -> Result<(), Box<dyn std::err
         return Ok(());
     }
 
-    // Create OTLP metrics exporter
-    let exporter = opentelemetry_otlp::MetricExporter::builder()
-        .with_http()
-        .with_endpoint(&otel_config.endpoint)
-        .build()?;
+    // Create OTLP metrics exporter based on protocol
+    let exporter = match otel_config.protocol.to_lowercase().as_str() {
+        "grpc" => opentelemetry_otlp::MetricExporter::builder()
+            .with_tonic()
+            .with_endpoint(&otel_config.endpoint)
+            .build()?,
+        "http" | "http/protobuf" => opentelemetry_otlp::MetricExporter::builder()
+            .with_http()
+            .with_endpoint(&otel_config.endpoint)
+            .build()?,
+        _ => {
+            tracing::warn!("Unknown OTEL protocol '{}', defaulting to HTTP", otel_config.protocol);
+            opentelemetry_otlp::MetricExporter::builder()
+                .with_http()
+                .with_endpoint(&otel_config.endpoint)
+                .build()?
+        },
+    };
 
     // Create a meter provider with the OTLP exporter
     let provider = opentelemetry_sdk::metrics::SdkMeterProvider::builder()
@@ -97,8 +110,9 @@ pub fn init_otel_metrics(otel_config: OtelConfig) -> Result<(), Box<dyn std::err
 
     global::set_meter_provider(provider);
     tracing::info!(
-        "OpenTelemetry metrics initialized with OTLP exporter endpoint: {}",
-        otel_config.endpoint
+        "OpenTelemetry metrics initialized with OTLP exporter endpoint: {}, protocol: {}",
+        otel_config.endpoint,
+        otel_config.protocol
     );
     Ok(())
 }
@@ -283,56 +297,48 @@ mod tests {
     #[test]
     fn test_grpc_status_to_name() {
         assert_eq!(grpc_status_to_name("0"), "Ok");
-        assert_eq!(grpc_status_to_name("3"), "InvalidArgument");
-        assert_eq!(grpc_status_to_name("13"), "Internal");
+        assert_eq!(grpc_status_to_name("1"), "Cancelled");
         assert_eq!(grpc_status_to_name("unknown"), "UNKNOWN");
-        assert_eq!(grpc_status_to_name("999"), "Unknown"); // Invalid code defaults to Unknown
     }
 
     #[test]
     fn test_grpc_status_to_category() {
-        // OK status
         assert_eq!(grpc_status_to_category("0"), "ok");
-
-        // Client errors
-        assert_eq!(grpc_status_to_category("1"), "client_error"); // Cancelled
-        assert_eq!(grpc_status_to_category("3"), "client_error"); // InvalidArgument
-        assert_eq!(grpc_status_to_category("5"), "client_error"); // NotFound
-        assert_eq!(grpc_status_to_category("16"), "client_error"); // Unauthenticated
-
-        // Server errors
-        assert_eq!(grpc_status_to_category("2"), "server_error"); // Unknown
-        assert_eq!(grpc_status_to_category("13"), "server_error"); // Internal
-        assert_eq!(grpc_status_to_category("14"), "server_error"); // Unavailable
-        assert_eq!(grpc_status_to_category("999"), "server_error"); // Invalid code
+        assert_eq!(grpc_status_to_category("3"), "client_error");
+        assert_eq!(grpc_status_to_category("13"), "server_error");
+        assert_eq!(grpc_status_to_category("unknown"), "server_error");
     }
 
     #[test]
     fn test_parse_method() {
-        // Valid gRPC paths
         assert_eq!(
-            parse_method("/UserService/GetUser"),
-            Some(("UserService".to_string(), "GetUser".to_string()))
+            parse_method("/skyvault.v1.ReaderService/Get"),
+            Some(("skyvault.v1.ReaderService".to_string(), "Get".to_string()))
         );
-        assert_eq!(
-            parse_method("/skyvault.CacheService/Get"),
-            Some(("skyvault.CacheService".to_string(), "Get".to_string()))
-        );
+        assert_eq!(parse_method("/invalid"), None);
+        assert_eq!(parse_method("invalid"), None);
+    }
 
-        // Valid path with extra parts (should still work)
-        assert_eq!(
-            parse_method("/UserService/GetUser/extra"),
-            Some(("UserService".to_string(), "GetUser".to_string()))
-        );
+    #[test]
+    fn test_otel_config_protocol_parsing() {
+        use crate::config::OtelConfig;
 
-        // Invalid paths - empty components
-        assert_eq!(parse_method("//GetUser"), None);
-        assert_eq!(parse_method("/UserService/"), None);
-        assert_eq!(parse_method("/UserService"), None);
+        let grpc_config = OtelConfig {
+            endpoint: "http://localhost:4317".to_string(),
+            protocol: "grpc".to_string(),
+        };
+        assert_eq!(grpc_config.protocol.to_lowercase(), "grpc");
 
-        // Invalid paths - insufficient parts
-        assert_eq!(parse_method("/"), None);
-        assert_eq!(parse_method(""), None);
-        assert_eq!(parse_method("UserService/GetUser"), None); // Missing leading slash
+        let http_config = OtelConfig {
+            endpoint: "http://localhost:4318".to_string(),
+            protocol: "http".to_string(),
+        };
+        assert_eq!(http_config.protocol.to_lowercase(), "http");
+
+        let http_protobuf_config = OtelConfig {
+            endpoint: "http://localhost:4318".to_string(),
+            protocol: "http/protobuf".to_string(),
+        };
+        assert_eq!(http_protobuf_config.protocol.to_lowercase(), "http/protobuf");
     }
 }

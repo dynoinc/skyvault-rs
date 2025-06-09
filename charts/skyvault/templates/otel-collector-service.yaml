@@ -1,0 +1,23 @@
+{{- if .Values.otelCollector.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: skyvault-otel-collector
+  labels:
+    {{- include "skyvault.labels" . | nindent 4 }}
+    app.kubernetes.io/component: otel-collector
+spec:
+  type: {{ .Values.otelCollector.service.type }}
+  ports:
+    - port: 4317
+      targetPort: otlp-grpc
+      protocol: TCP
+      name: otlp-grpc
+    - port: 4318
+      targetPort: otlp-http
+      protocol: TCP
+      name: otlp-http
+  selector:
+    {{- include "skyvault.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: otel-collector
+{{- end }} 

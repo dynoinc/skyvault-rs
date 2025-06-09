@@ -1,0 +1,44 @@
+{{- if .Values.otelCollector.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: skyvault-otel-collector
+  labels:
+    {{- include "skyvault.labels" . | nindent 4 }}
+    app.kubernetes.io/component: otel-collector
+spec:
+  replicas: {{ .Values.otelCollector.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "skyvault.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: otel-collector
+  template:
+    metadata:
+      labels:
+        {{- include "skyvault.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: otel-collector
+    spec:
+      containers:
+        - name: otel-collector
+          image: "{{ .Values.otelCollector.image.repository }}:{{ .Values.otelCollector.image.tag }}"
+          imagePullPolicy: {{ .Values.otelCollector.image.pullPolicy }}
+          args:
+            - "--config=/etc/otelcol-contrib/otel-config.yaml"
+          ports:
+            - name: otlp-grpc
+              containerPort: 4317
+              protocol: TCP
+            - name: otlp-http
+              containerPort: 4318
+              protocol: TCP
+          resources:
+            {{- toYaml .Values.otelCollector.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/otelcol-contrib
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: skyvault-otel-config
+{{- end }} 

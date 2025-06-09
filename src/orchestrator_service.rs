@@ -416,6 +416,7 @@ impl MyOrchestrator {
                                     "KUBERNETES_SERVICE_PORT",
                                     // OpenTelemetry
                                     "OTEL_EXPORTER_OTLP_ENDPOINT",
+                                    "OTEL_EXPORTER_OTLP_PROTOCOL",
                                     // Sentry
                                     "SENTRY_DSN",
                                     "SENTRY_SAMPLE_RATE",

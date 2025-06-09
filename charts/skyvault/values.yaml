@@ -33,6 +33,12 @@ common:
     SKYVAULT_POSTGRES_PORT: 5432
     SKYVAULT_POSTGRES_SSLMODE: allow
 
+    # OpenTelemetry
+    # For HTTP: use port 4318 with protocol "http"
+    # For gRPC: use port 4317 with protocol "grpc"
+    OTEL_EXPORTER_OTLP_ENDPOINT: http://skyvault-otel-collector:4318
+    OTEL_EXPORTER_OTLP_PROTOCOL: http
+
     # Rust
     RUST_BACKTRACE: 1
     RUST_LOG: "skyvault=debug"
@@ -181,3 +187,24 @@ postgres:
   service:
     port: 5432
     type: ClusterIP
+
+# Values for the OpenTelemetry Collector
+otelCollector:
+  enabled: true
+  replicaCount: 1
+  
+  image:
+    repository: otel/opentelemetry-collector
+    tag: "0.115.0"
+    pullPolicy: IfNotPresent
+  
+  service:
+    type: ClusterIP
+  
+  resources:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi

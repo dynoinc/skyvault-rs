@@ -1,0 +1,29 @@
+{{- if .Values.otelCollector.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: skyvault-otel-config
+  labels:
+    {{- include "skyvault.labels" . | nindent 4 }}
+    app.kubernetes.io/component: otel-collector
+data:
+  otel-config.yaml: |
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+    exporters:
+      debug:
+        verbosity: detailed
+    service:
+      pipelines:
+        metrics:
+          receivers: [otlp]
+          exporters: [debug]
+        traces:
+          receivers: [otlp]
+          exporters: [debug]
+{{- end }} 

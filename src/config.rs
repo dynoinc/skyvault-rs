@@ -20,6 +20,9 @@ pub struct SentryConfig {
 pub struct OtelConfig {
     #[arg(long, env = "OTEL_EXPORTER_OTLP_ENDPOINT", default_value = "")]
     pub endpoint: String,
+
+    #[arg(long, env = "OTEL_EXPORTER_OTLP_PROTOCOL", default_value = "http")]
+    pub protocol: String,
 }
 
 #[derive(Debug, Parser, Clone)]
