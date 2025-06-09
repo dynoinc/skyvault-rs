@@ -17,7 +17,7 @@ data:
             endpoint: 0.0.0.0:4318
     exporters:
       debug:
-        verbosity: detailed
+        verbosity: basic
         sampling_initial: 2
         sampling_thereafter: 5
     service:
