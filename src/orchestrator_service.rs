@@ -482,6 +482,63 @@ impl proto::orchestrator_service_server::OrchestratorService for MyOrchestrator 
         }))
     }
 
+    async fn dump_snapshot_summary(
+        &self,
+        _request: Request<proto::DumpSnapshotSummaryRequest>,
+    ) -> Result<Response<proto::DumpSnapshotSummaryResponse>, Status> {
+        let state = self.forest.get_state();
+
+        let mut tables = Vec::new();
+        for (table_id, table) in state.trees.iter() {
+            let table_name = state
+                .tables
+                .values()
+                .find(|config| config.table_id == Some(*table_id))
+                .map(|config| config.table_name.to_string())
+                .unwrap_or("unknown".to_string());
+
+            let mut table_summary = proto::TableSummary {
+                table_name: table_name.to_string(),
+                buffer_size_bytes: table
+                    .buffer
+                    .values()
+                    .map(|r| match &r.stats {
+                        Stats::StatsV1(stats) => stats.size_bytes,
+                    })
+                    .sum::<u64>(),
+                buffer_run_count: table.buffer.len() as u64,
+                levels: Vec::new(),
+            };
+
+            for (level, runs) in table.tree.iter() {
+                table_summary.levels.push(proto::TableLevelSummary {
+                    level: (*level).into(),
+                    size_bytes: runs
+                        .values()
+                        .map(|r| match &r.stats {
+                            Stats::StatsV1(stats) => stats.size_bytes,
+                        })
+                        .sum::<u64>(),
+                    run_count: runs.len() as u64,
+                });
+            }
+
+            tables.push(table_summary);
+        }
+
+        Ok(Response::new(proto::DumpSnapshotSummaryResponse {
+            wal_size_bytes: state
+                .wal
+                .values()
+                .map(|r| match &r.stats {
+                    Stats::StatsV1(stats) => stats.size_bytes,
+                })
+                .sum::<u64>(),
+            wal_run_count: state.wal.len() as u64,
+            tables,
+        }))
+    }
+
     async fn dump_changelog(
         &self,
         request: Request<proto::DumpChangelogRequest>,

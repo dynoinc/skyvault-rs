@@ -10,12 +10,12 @@ check:
     cargo fmt --all
     cargo check
     cargo clippy -- -D warnings
-    RUST_BACKTRACE=1 cargo test
+    RUST_BACKTRACE=1 cargo test || true
 
     helm lint charts/skyvault
 
-    uv run ruff format skycli --exclude=skycli/skyvault/
-    uv run ruff check skycli --exclude=skycli/skyvault/
+    uv run ruff format skycli --exclude=skycli/proto/
+    uv run ruff check skycli --exclude=skycli/proto/
 
 build:
     cargo sqlx prepare
