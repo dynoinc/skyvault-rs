@@ -37,6 +37,9 @@ common:
     RUST_BACKTRACE: 1
     RUST_LOG: "skyvault=debug"
 
+    # Sentry
+    SENTRY_SAMPLE_RATE: 1.0
+
 deployments:
   reader:
     enabled: false

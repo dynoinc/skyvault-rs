@@ -31,6 +31,7 @@ use metrics_exporter_prometheus::{
     PrometheusHandle,
 };
 use sentry::ClientInitGuard;
+use sentry_tracing::EventFilter;
 use tokio::net::TcpListener;
 use tonic::Code;
 use tower::{
@@ -64,10 +65,15 @@ pub fn init_tracing_and_sentry(sentry_config: SentryConfig) -> Option<ClientInit
         .with_line_number(true)
         .with_thread_ids(true);
 
+    let sentry_layer = sentry_tracing::layer().event_filter(|md| match md.level() {
+        &tracing::Level::ERROR => EventFilter::Event,
+        _ => EventFilter::Ignore,
+    });
+
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::from_default_env())
         .with(fmt_layer)
-        .with(sentry_tracing::layer())
+        .with(sentry_layer)
         .init();
 
     guard
