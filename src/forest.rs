@@ -261,8 +261,16 @@ impl ForestImpl {
         Ok(forest.get_state())
     }
 
-    /// Creates a new Forest instance and starts the changelog stream processor.
-    pub async fn watch(metadata_store: MetadataStore, object_store: ObjectStore) -> Result<Forest, ForestError> {
+    /// Creates a new Forest instance with a custom changelog stream processor.
+    pub async fn watch<F, S>(
+        metadata_store: MetadataStore,
+        object_store: ObjectStore,
+        stream_transformer: F,
+    ) -> Result<Forest, ForestError>
+    where
+        F: FnOnce(Box<dyn Stream<Item = Result<ChangelogEntryWithID, MetadataError>> + Send + Unpin>) -> S,
+        S: Stream<Item = Result<ChangelogEntryWithID, MetadataError>> + Send + 'static,
+    {
         let (snapshot_id, stream) = metadata_store.stream_changelog().await?;
         let state = match snapshot_id {
             Some(snapshot_id) => {
@@ -277,10 +285,13 @@ impl ForestImpl {
             state: Arc::new(Mutex::new(Arc::new(state))),
         };
 
-        // Start processing changelog in a background task
+        // Transform the stream
+        let transformed_stream = stream_transformer(Box::new(stream));
+
+        // Start processing in a background task
         let processor = forest.clone();
         tokio::spawn(async move {
-            if let Err(e) = processor.process_changelog_stream(stream).await {
+            if let Err(e) = processor.process_changelog_stream(transformed_stream).await {
                 panic!("Changelog processor terminated: {e}");
             }
         });

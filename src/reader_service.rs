@@ -234,6 +234,17 @@ impl ConnectionManager for ConsistentHashCM {
             Err(e) => return Err(e),
         }
     }
+
+    async fn prefetch(
+        &self,
+        routing_key: String,
+        request: Request<proto::PrefetchRequest>,
+    ) -> Result<Response<proto::PrefetchResponse>, Status> {
+        match self.get_connection(&routing_key).await {
+            Ok(mut conn) => conn.prefetch(request).await,
+            Err(e) => return Err(e),
+        }
+    }
 }
 
 #[tonic::async_trait]
@@ -250,6 +261,12 @@ pub trait ConnectionManager {
         routing_key: String,
         request: Request<proto::ScanFromRunRequest>,
     ) -> Result<Response<proto::ScanFromRunResponse>, Status>;
+
+    async fn prefetch(
+        &self,
+        routing_key: String,
+        request: Request<proto::PrefetchRequest>,
+    ) -> Result<Response<proto::PrefetchResponse>, Status>;
 }
 
 #[derive(Clone)]
@@ -266,8 +283,8 @@ impl MyReader {
         k8s_client: kube::Client,
         namespace: String,
     ) -> Result<Self, ReaderServiceError> {
-        let forest = ForestImpl::watch(metadata, object_store).await?;
         let connection_manager = ConsistentHashCM::new(reader_config, k8s_client, namespace).await?;
+        let forest = ForestImpl::watch(metadata, object_store, |stream| stream).await?;
 
         Ok(Self {
             forest,

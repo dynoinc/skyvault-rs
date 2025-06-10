@@ -16,7 +16,10 @@ use crate::{
         ForestImpl,
     },
     metadata,
-    metadata::TableName,
+    metadata::{
+        ChangelogEntry,
+        TableName,
+    },
     proto::{
         self,
     },
@@ -64,7 +67,15 @@ impl MyWriter {
         dynamic_config: SharedAppConfig,
     ) -> Result<Self, WriterServiceError> {
         let (tx, rx) = tokio::sync::mpsc::channel(100);
-        let forest = ForestImpl::watch(metadata.clone(), storage.clone()).await?;
+        let forest = ForestImpl::watch(metadata.clone(), storage.clone(), |stream| {
+            stream.try_filter_map(|entry| async move {
+                match entry.changes {
+                    ChangelogEntry::TablesV1(_) => Ok(Some(entry)),
+                    _ => Ok(None),
+                }
+            })
+        })
+        .await?;
 
         let task_config = dynamic_config.clone();
         tokio::spawn(async move {

@@ -91,7 +91,7 @@ impl MyOrchestrator {
         namespace: String,
         dynamic_config: dynamic_config::SharedAppConfig,
     ) -> Result<Self, OrchestratorError> {
-        let forest = ForestImpl::watch(metadata.clone(), storage.clone()).await?;
+        let forest = ForestImpl::watch(metadata.clone(), storage.clone(), |stream| stream).await?;
         let known_jobs = Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
 
         let orchestrator = Self {

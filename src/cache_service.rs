@@ -174,6 +174,24 @@ impl proto::cache_service_server::CacheService for MyCache {
 
         Ok(Response::new(response))
     }
+
+    #[tracing::instrument(skip(self, request))]
+    async fn prefetch(
+        &self,
+        request: Request<proto::PrefetchRequest>,
+    ) -> Result<Response<proto::PrefetchResponse>, Status> {
+        let request = request.into_inner();
+        let run_id = RunId(request.run_id);
+
+        match self.storage_cache.get_run(run_id.clone()).await {
+            Ok(_) => {},
+            Err(e) => {
+                tracing::error!(error = %e, "Error getting run {run_id}");
+            },
+        }
+
+        Ok(Response::new(proto::PrefetchResponse {}))
+    }
 }
 
 #[cfg(test)]

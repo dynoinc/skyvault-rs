@@ -33,6 +33,7 @@ message WriteBatchResponse {
 service CacheService {
   rpc GetFromRun (GetFromRunRequest) returns (GetFromRunResponse);
   rpc ScanFromRun (ScanFromRunRequest) returns (ScanFromRunResponse);
+  rpc Prefetch (PrefetchRequest) returns (PrefetchResponse);
 }
 
 message GetFromRunRequest {
@@ -60,6 +61,13 @@ message ScanFromRunRequest {
 
 message ScanFromRunResponse {
   repeated GetFromRunItem items = 1;
+}
+
+message PrefetchRequest {
+  string run_id = 1;
+}
+
+message PrefetchResponse {
 }
 
 // READER
