@@ -140,6 +140,7 @@ deployments:
       nodePort: 30053
     env:
       SKYVAULT_SERVICE: "orchestrator"
+      SENTRY_SAMPLE_RATE: 0.0
     # Dynamic configuration specific to orchestrator
     dynamicConfig:
       orchestratorJobRetryLimit: "3"

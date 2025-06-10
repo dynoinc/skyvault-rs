@@ -32,6 +32,14 @@ deploy:
         --set deployments.cache.enabled=true \
         --set common.env.SENTRY_DSN=$SENTRY_DSN
 
+diff:
+    helm diff upgrade --install dev ./charts/skyvault \
+        --set deployments.reader.enabled=true \
+        --set deployments.writer.enabled=true \
+        --set deployments.orchestrator.enabled=true \
+        --set deployments.cache.enabled=true \
+        --set common.env.SENTRY_DSN=$SENTRY_DSN
+
 pgshell:
     kubectl exec -it $(kubectl get pods -l app.kubernetes.io/component=postgres -o jsonpath="{.items[0].metadata.name}") -- psql -U postgres -d skyvault
 

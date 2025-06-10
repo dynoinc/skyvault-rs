@@ -64,14 +64,15 @@ spec:
           resources:
             {{- toYaml $deployment.resources | nindent 12 }}
           env:
-            # Common environment variables
-            {{- range $key, $value := $.Values.common.env }}
+            {{- $commonEnv := $.Values.common.env | default dict }}
+            {{- $deploymentEnv := $deployment.env | default dict }}
+            {{- range $key, $value := $commonEnv }}
+            {{- if not (hasKey $deploymentEnv $key) }}
             - name: {{ $key }}
               value: {{ $value | quote }}
             {{- end }}
-            
-            # Instance-specific environment variables
-            {{- range $key, $value := $deployment.env }}
+            {{- end }}
+            {{- range $key, $value := $deploymentEnv }}
             - name: {{ $key }}
               value: {{ $value | quote }}
             {{- end }}
