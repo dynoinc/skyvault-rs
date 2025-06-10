@@ -15,7 +15,7 @@ RUN cargo build --release
 FROM public.ecr.aws/lts/ubuntu:24.04_stable
 
 RUN apt-get update && \
-    apt-get install -y ca-certificates --no-install-recommends \
+    apt-get install -y ca-certificates libudev1=255.4-1ubuntu8.8 libsystemd0=255.4-1ubuntu8.8 --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
