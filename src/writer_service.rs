@@ -176,7 +176,7 @@ impl MyWriter {
             .collect::<BTreeMap<_, _>>();
 
         let ops_stream = futures::stream::iter(sorted_ops.into_values().map(Ok));
-        let wal_runs: Vec<_> = runs::build_runs(ops_stream).try_collect().await?;
+        let wal_runs: Vec<_> = runs::build_runs(ops_stream, 4 * 1024 * 1024).try_collect().await?;
 
         let mut wal_run_ids = Vec::new();
         for (run_data, stats) in wal_runs {

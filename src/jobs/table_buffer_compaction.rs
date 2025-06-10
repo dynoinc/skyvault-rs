@@ -113,7 +113,7 @@ pub async fn execute(
     }
 
     let merged_stream = k_way::merge(run_streams);
-    let run_stream = runs::build_runs(merged_stream);
+    let run_stream = runs::build_runs(merged_stream, 4 * 1024 * 1024);
 
     let mut new_runs = Vec::new();
 

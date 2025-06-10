@@ -140,7 +140,10 @@ pub async fn execute(
             let task = tokio::spawn(async move {
                 // Build run from stream
                 // build_runs returns a stream. For now, collect it and expect exactly one run.
-                let results: Vec<_> = runs::build_runs(rx_stream).try_collect().await.map_err(JobError::Run)?;
+                let results: Vec<_> = runs::build_runs(rx_stream, 4 * 1024 * 1024)
+                    .try_collect()
+                    .await
+                    .map_err(JobError::Run)?;
 
                 if results.len() != 1 {
                     // This might indicate an issue with compaction logic or an unexpected large run

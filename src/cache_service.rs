@@ -227,7 +227,7 @@ mod tests {
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let ops_stream = stream::iter(operations.into_iter().map(Ok::<_, RunError>));
 
-        let mut run_items: Vec<(Bytes, Stats)> = runs::build_runs(ops_stream).try_collect().await?;
+        let mut run_items: Vec<(Bytes, Stats)> = runs::build_runs(ops_stream, 1024 * 1024).try_collect().await?;
 
         if run_items.len() != 1 {
             return Err(format!("Expected 1 run, got {}. Ensure operations are sorted.", run_items.len()).into());

@@ -102,7 +102,6 @@ pub enum RunError {
     EmptyInput,
 }
 
-pub const MAX_RUN_SIZE_BYTES: u64 = 10 * 1024 * 1024; // 10 MB
 pub const CURRENT_VERSION: u8 = 1;
 
 const MARKER_PUT: u8 = 1;
@@ -163,7 +162,7 @@ impl From<proto::run_metadata::Stats> for Stats {
 }
 
 /// Builds multiple runs from a stream of sorted write operations, splitting
-/// runs when they reach approximately MAX_RUN_SIZE_BYTES.
+/// runs when they reach approximately max_run_size_bytes.
 ///
 /// Returns a stream yielding tuples of (serialized run data, stats)
 ///
@@ -172,7 +171,7 @@ impl From<proto::run_metadata::Stats> for Stats {
 /// Yields an error if:
 /// - The operations are not sorted by key
 /// - There's an I/O error during serialization or reading the input stream
-pub fn build_runs<S>(mut operations: S) -> impl Stream<Item = Result<(Bytes, Stats), RunError>>
+pub fn build_runs<S>(mut operations: S, max_run_size_bytes: u64) -> impl Stream<Item = Result<(Bytes, Stats), RunError>>
 where
     S: Stream<Item = Result<WriteOperation, RunError>> + Unpin + Send + 'static,
 {
@@ -225,7 +224,7 @@ where
             };
 
             // Check if adding this operation exceeds the size limit AND we have items already
-            if !first_op_in_run && size_with_op > MAX_RUN_SIZE_BYTES {
+            if !first_op_in_run && size_with_op > max_run_size_bytes {
                 // Finalize and yield the current run
                 let stats = Stats::StatsV1(StatsV1 {
                     min_key: min_key.take().unwrap(), // Should always have a value if item_count > 0
@@ -702,13 +701,17 @@ mod tests {
 
                 if original_ops.is_empty() {
                     // build_runs on empty input yields an empty stream, which is valid.
-                    let results: Vec<_> = build_runs(stream::iter(vec![])).collect().await;
+                    let results: Vec<_> = build_runs(stream::iter(vec![]), 1024 * 1024).collect().await;
                     prop_assert!(results.is_empty());
                     return Ok(());
                 }
 
-                let run_results: Vec<Result<(Bytes, Stats), RunError>> =
-                    build_runs(stream::iter(original_ops.clone().into_iter().map(Ok))).collect().await;
+                let run_results: Vec<Result<(Bytes, Stats), RunError>> = build_runs(
+                    stream::iter(original_ops.clone().into_iter().map(Ok)),
+                    10 * 1024 * 1024,
+                )
+                .collect()
+                .await;
 
                 // Ensure no errors during run building
                 for result in &run_results {
@@ -787,7 +790,7 @@ mod tests {
         ];
 
         let results: Vec<Result<(Bytes, Stats), RunError>> =
-            build_runs(stream::iter(ops.into_iter().map(Ok))).collect().await;
+            build_runs(stream::iter(ops.into_iter().map(Ok)), 1024).collect().await;
 
         // Assert exactly one run was produced for this small input
         assert_eq!(results.len(), 1);
@@ -815,7 +818,7 @@ mod tests {
             WriteOperation::Put("apple".to_string(), value("green")),
             WriteOperation::Put("apple".to_string(), value("red")),
         ];
-        let results: Vec<_> = build_runs(stream::iter(ops.into_iter().map(Ok))).collect().await;
+        let results: Vec<_> = build_runs(stream::iter(ops.into_iter().map(Ok)), 1024).collect().await;
         assert_eq!(results.len(), 1); // Expect one item, which is an error
         assert!(matches!(results[0], Err(RunError::Format(_))));
     }
@@ -823,7 +826,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_run_empty_input() {
         let ops: Vec<WriteOperation> = vec![];
-        let results: Vec<_> = build_runs(stream::iter(ops.into_iter().map(Ok))).collect().await;
+        let results: Vec<_> = build_runs(stream::iter(ops.into_iter().map(Ok)), 1024).collect().await;
         assert!(results.is_empty());
     }
 
@@ -834,7 +837,7 @@ mod tests {
             WriteOperation::Put("banana".to_string(), value("yellow")),
             WriteOperation::Put("cherry".to_string(), value("red")),
         ];
-        let results: Vec<_> = build_runs(stream::iter(ops.into_iter().map(Ok))).collect().await;
+        let results: Vec<_> = build_runs(stream::iter(ops.into_iter().map(Ok)), 1024).collect().await;
         assert_eq!(results.len(), 1);
         let (data, _) = results.into_iter().next().unwrap().unwrap();
 
@@ -850,7 +853,7 @@ mod tests {
             WriteOperation::Delete("banana".to_string()),
             WriteOperation::Put("cherry".to_string(), value("red")),
         ];
-        let results: Vec<_> = build_runs(stream::iter(ops.into_iter().map(Ok))).collect().await;
+        let results: Vec<_> = build_runs(stream::iter(ops.into_iter().map(Ok)), 1024).collect().await;
         assert_eq!(results.len(), 1);
         let (data, _) = results.into_iter().next().unwrap().unwrap();
 
@@ -864,7 +867,7 @@ mod tests {
             WriteOperation::Put("banana".to_string(), value("yellow")),
             WriteOperation::Put("date".to_string(), value("brown")),
         ];
-        let results: Vec<_> = build_runs(stream::iter(ops.into_iter().map(Ok))).collect().await;
+        let results: Vec<_> = build_runs(stream::iter(ops.into_iter().map(Ok)), 1024).collect().await;
         assert_eq!(results.len(), 1);
         let (data, _) = results.into_iter().next().unwrap().unwrap();
 
@@ -897,7 +900,9 @@ mod tests {
             WriteOperation::Put("banana".to_string(), value("yellow")),
         ];
         let ops_copy = ops.clone();
-        let results1: Vec<_> = build_runs(stream::iter(ops_copy.into_iter().map(Ok))).collect().await;
+        let results1: Vec<_> = build_runs(stream::iter(ops_copy.into_iter().map(Ok)), 1024)
+            .collect()
+            .await;
         assert_eq!(results1.len(), 1);
         let (data1, _) = results1.into_iter().next().unwrap().unwrap();
 
@@ -906,7 +911,9 @@ mod tests {
             WriteOperation::Put("apple".to_string(), value("red")),
             WriteOperation::Put("banana".to_string(), value("yellow")),
         ];
-        let results2: Vec<_> = build_runs(stream::iter(array_ops.into_iter().map(Ok))).collect().await;
+        let results2: Vec<_> = build_runs(stream::iter(array_ops.into_iter().map(Ok)), 1024)
+            .collect()
+            .await;
         assert_eq!(results2.len(), 1);
         let (data2, _) = results2.into_iter().next().unwrap().unwrap();
 
@@ -938,8 +945,8 @@ mod tests {
             WriteOperation::Put(key, value)
         }
 
-        const OP_SIZE: usize = 1024 * 1024; // ~1MB per operation value
-        const OPS_PER_RUN_APPROX: usize = (MAX_RUN_SIZE_BYTES as usize) / OP_SIZE;
+        const OP_SIZE: usize = 1024 * 1024;
+        const OPS_PER_RUN_APPROX: usize = (2 * 1024 * 1024) / OP_SIZE;
 
         let mut large_ops = Vec::new();
         // Generate enough ops to create at least two runs
@@ -950,7 +957,7 @@ mod tests {
         }
 
         let stream = stream::iter(large_ops.into_iter().map(Ok));
-        let results: Vec<Result<(Bytes, Stats), RunError>> = build_runs(stream).collect().await;
+        let results: Vec<Result<(Bytes, Stats), RunError>> = build_runs(stream, 2 * 1024 * 1024).collect().await;
 
         // Assert that more than one run was produced
         assert!(results.len() > 1, "Expected multiple runs, got {}", results.len());
@@ -969,23 +976,18 @@ mod tests {
                             // Check size is close to the limit (except maybe the last one)
                             if i < results.len() - 1 {
                                 assert!(
-                                    s.size_bytes <= MAX_RUN_SIZE_BYTES,
+                                    s.size_bytes <= 2 * 1024 * 1024,
                                     "Run {} size {} exceeded limit {}",
                                     i,
                                     s.size_bytes,
-                                    MAX_RUN_SIZE_BYTES
+                                    2 * 1024 * 1024
                                 );
-                                // Check it's reasonably full (e.g., > 90%? -
-                                // this might be too
-                                // strict depending on op sizes)
-                                // assert!(s.size_bytes > (MAX_RUN_SIZE_BYTES *
-                                // 9 / 10));
                             } else {
                                 assert!(
-                                    s.size_bytes <= MAX_RUN_SIZE_BYTES,
+                                    s.size_bytes <= 2 * 1024 * 1024,
                                     "Last run size {} exceeded limit {}",
                                     s.size_bytes,
-                                    MAX_RUN_SIZE_BYTES
+                                    2 * 1024 * 1024
                                 );
                             }
 
