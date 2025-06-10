@@ -42,8 +42,8 @@ pub async fn execute(
         None => return Ok((vec![], vec![])),
     };
 
-    let count = table.buffer.len();
-    let run_data = stream::iter(table.buffer.clone())
+    let count = std::cmp::min(16, table.buffer.len());
+    let run_data = stream::iter(table.buffer.clone().into_iter().take(count))
         .map(|(seq_no, metadata)| {
             let store = object_store.clone();
             async move {

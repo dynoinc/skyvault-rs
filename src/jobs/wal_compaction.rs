@@ -32,8 +32,8 @@ pub async fn execute(
         return Ok((vec![], vec![]));
     }
 
-    let count = state.wal.len();
-    let run_data = stream::iter(state.wal.clone())
+    let count = std::cmp::min(16, state.wal.len());
+    let run_data = stream::iter(state.wal.clone().into_iter().take(count))
         .map(|(seq_no, metadata)| {
             let store = object_store.clone();
             async move {
@@ -175,9 +175,7 @@ pub async fn execute(
         }
     }
 
-    // Close final state if any
     if let Some((old_table, sender, task)) = current_state.take() {
-        // Close channel
         drop(sender);
 
         // Wait for task to complete
@@ -185,7 +183,6 @@ pub async fn execute(
             .await
             .map_err(|e| JobError::Internal(format!("Table task failed: {e}")))?
         {
-            // Add the completed run to our results
             table_runs.push((run_id, old_table, stats));
         }
     }
