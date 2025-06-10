@@ -105,7 +105,7 @@ pub fn init_otel_metrics(otel_config: OtelConfig) -> Result<(), Box<dyn std::err
     let reader = opentelemetry_sdk::metrics::PeriodicReader::builder(exporter)
         .with_interval(std::time::Duration::from_secs(10))
         .build();
-    
+
     let provider = opentelemetry_sdk::metrics::SdkMeterProvider::builder()
         .with_reader(reader)
         .with_resource(

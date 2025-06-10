@@ -77,7 +77,29 @@ async fn main() -> Result<()> {
     let s3_config = config.s3.to_config(k8s_client.clone(), &current_namespace).await?;
     let storage = Arc::new(storage::S3ObjectStore::new(s3_config, &config.s3.bucket_name).await?);
 
-    jobs::execute(metadata_store, storage, config.job_id).await?;
-    tracing::info!("Complete!");
-    Ok(())
+    // Start a trace for the whole job execution
+    let tx_ctx = sentry::TransactionContext::new(&format!("job-execution-{}", config.job_id), "job.execute");
+    let transaction = sentry::start_transaction(tx_ctx);
+
+    // Set transaction as current span and add metadata
+    sentry::configure_scope(|scope| scope.set_span(Some(transaction.clone().into())));
+    transaction.set_data("job_id", sentry::protocol::Value::String(config.job_id.to_string()));
+    transaction.set_data("worker_version", sentry::protocol::Value::String(version.to_string()));
+
+    let result = jobs::execute(metadata_store, storage, config.job_id).await;
+
+    match &result {
+        Ok(_) => {
+            transaction.set_status(sentry::protocol::SpanStatus::Ok);
+            tracing::info!("Job completed successfully");
+        },
+        Err(e) => {
+            transaction.set_status(sentry::protocol::SpanStatus::InternalError);
+            transaction.set_data("error", sentry::protocol::Value::String(e.to_string()));
+            tracing::error!(error = %e, "Job failed");
+        },
+    }
+
+    transaction.finish();
+    Ok(result?)
 }

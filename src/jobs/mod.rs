@@ -53,6 +53,19 @@ pub async fn execute(
         )));
     }
 
+    // Add job information to Sentry transaction
+    sentry::configure_scope(|scope| {
+        if let Some(span) = scope.get_span() {
+            span.set_data(
+                "job_type",
+                sentry::protocol::Value::String(job.params.job_type().to_string()),
+            );
+            if let Ok(params_json) = serde_json::to_value(&job.params) {
+                span.set_data("job_params", params_json);
+            }
+        }
+    });
+
     match job.params {
         JobParams::WALCompaction => {
             let (compacted, table_runs) = wal_compaction::execute(metadata_store.clone(), object_store.clone()).await?;
