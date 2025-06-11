@@ -28,6 +28,7 @@ WORKDIR /app
 
 COPY --from=builder /app/target/debug/skyvault /app/skyvault
 COPY --from=builder /app/target/debug/worker /app/worker
+COPY --from=builder /app/target/debug/reset-cluster /app/reset-cluster
 
 EXPOSE 50051
 CMD ["/app/skyvault"]

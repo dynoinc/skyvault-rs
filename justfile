@@ -45,3 +45,9 @@ pgshell:
 
 smoke:
     RUST_BACKTRACE=1 cargo test --test smoke_tests -- --ignored --nocapture --test-threads=1
+
+reset-db-dry:
+    kubectl get configmap skyvault-reset-db-dry-job-spec -o jsonpath='{.data.job\.yaml}' | kubectl create -f -
+
+reset-db:
+    kubectl get configmap skyvault-reset-db-job-spec -o jsonpath='{.data.job\.yaml}' | kubectl create -f -

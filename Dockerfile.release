@@ -22,6 +22,7 @@ WORKDIR /app
 
 COPY --from=builder /app/target/release/skyvault /app/skyvault
 COPY --from=builder /app/target/release/worker /app/worker
+COPY --from=builder /app/target/release/reset-cluster /app/reset-cluster
 
 LABEL org.opencontainers.image.source="https://github.com/dynoinc/skyvault-rs"
 LABEL org.opencontainers.image.description="Skyvault - high-performance, scalable object-store backed key-value store"

@@ -1,0 +1,60 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: skyvault-reset-db-dry-job-spec
+  labels:
+    {{- include "skyvault.labels" . | nindent 4 }}
+data:
+  job.yaml: |
+    apiVersion: batch/v1
+    kind: Job
+    metadata:
+      generateName: skyvault-reset-db-dry-
+      labels:
+        {{- include "skyvault.labels" . | nindent 8 }}
+        app.kubernetes.io/component: reset-db-dry
+    spec:
+      ttlSecondsAfterFinished: 300
+      template:
+        metadata:
+          labels:
+            {{- include "skyvault.labels" . | nindent 12 }}
+            app.kubernetes.io/component: reset-db-dry
+        spec:
+          restartPolicy: Never
+          serviceAccountName: skyvault-serviceaccount
+          containers:
+          - name: reset-cluster
+            image: {{ .Values.common.image.id }}
+            imagePullPolicy: {{ .Values.common.image.pullPolicy }}
+            command: ["/app/reset-cluster", "--dry-run"]
+            env:
+            - name: RUST_BACKTRACE
+              value: "full"
+            - name: RUST_LOG
+              value: "info"
+            - name: SKYVAULT_POSTGRES_USER
+              value: {{ .Values.common.env.SKYVAULT_POSTGRES_USER | quote }}
+            - name: SKYVAULT_POSTGRES_HOST
+              value: {{ .Values.common.env.SKYVAULT_POSTGRES_HOST | quote }}
+            - name: SKYVAULT_POSTGRES_PORT
+              value: {{ .Values.common.env.SKYVAULT_POSTGRES_PORT | quote }}
+            - name: SKYVAULT_POSTGRES_DB
+              value: {{ .Values.common.env.SKYVAULT_POSTGRES_DB | quote }}
+            - name: SKYVAULT_POSTGRES_SSLMODE
+              value: {{ .Values.common.env.SKYVAULT_POSTGRES_SSLMODE | quote }}
+            {{- if .Values.common.env.SENTRY_DSN }}
+            - name: SENTRY_DSN
+              value: {{ .Values.common.env.SENTRY_DSN | quote }}
+            {{- end }}
+            {{- if .Values.common.env.SENTRY_SAMPLE_RATE }}
+            - name: SENTRY_SAMPLE_RATE
+              value: {{ .Values.common.env.SENTRY_SAMPLE_RATE | quote }}
+            {{- end }}
+            resources:
+              limits:
+                cpu: 200m
+                memory: 256Mi
+              requests:
+                cpu: 100m
+                memory: 128Mi 
