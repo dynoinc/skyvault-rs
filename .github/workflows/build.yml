@@ -37,7 +37,7 @@ jobs:
     - name: Install Protoc
       run: |
         sudo apt-get update
-        sudo apt-get install -y protobuf-compiler --no-install-recommends
+        sudo apt-get install -y protobuf-compiler libprotobuf-dev --no-install-recommends
         sudo apt-get clean
         sudo rm -rf /var/lib/apt/lists/*
         protoc --version
