@@ -1,0 +1,69 @@
+{{- if .Values.walCompactor.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: skyvault-{{ .Values.walCompactor.instanceName }}
+  labels:
+    {{- include "skyvault.labels" . | nindent 4 }}
+    app.kubernetes.io/component: skyvault-{{ .Values.walCompactor.instanceName }}
+spec:
+  replicas: {{ .Values.walCompactor.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "skyvault.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: skyvault-{{ .Values.walCompactor.instanceName }}
+  template:
+    metadata:
+      labels:
+        {{- include "skyvault.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: skyvault-{{ .Values.walCompactor.instanceName }}
+        batch.skyvault.io/type: "wal-compaction"
+        {{- with .Values.common.extraLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- with .Values.walCompactor.extraLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: skyvault-serviceaccount
+      containers:
+        - name: {{ .Chart.Name }}
+          image: "{{ .Values.common.image.id }}"
+          imagePullPolicy: {{ .Values.common.image.pullPolicy }}
+          command: ["./worker"]
+          args: 
+            - "--mode=wal-compactor"
+          readinessProbe:
+            exec:
+              command: ["/bin/sh", "-c", "echo 'Ready'"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            exec:
+              command: ["/bin/sh", "-c", "echo 'Alive'"]
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.walCompactor.resources | nindent 12 }}
+          env:
+            {{- $commonEnv := .Values.common.env | default dict }}
+            {{- $walCompactorEnv := .Values.walCompactor.env | default dict }}
+            {{- range $key, $value := $commonEnv }}
+            {{- if not (hasKey $walCompactorEnv $key) }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+            {{- end }}
+            {{- range $key, $value := $walCompactorEnv }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+            
+            - name: SKYVAULT_IMAGE_ID
+              value: "{{ .Values.common.image.id }}"
+{{- end }} 

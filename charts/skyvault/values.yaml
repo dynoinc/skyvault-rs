@@ -145,6 +145,21 @@ deployments:
     dynamicConfig:
       orchestratorJobRetryLimit: "3"
 
+# WAL Compactor - continuously compacts WAL runs
+walCompactor:
+  enabled: true
+  instanceName: "wal-compactor"
+  replicaCount: 1
+  resources:
+    limits:
+      cpu: 500m
+      memory: 1Gi
+    requests:
+      cpu: 100m
+      memory: 512Mi
+  env: {}
+  extraLabels: {}
+
 # Service account configuration
 serviceAccount:
   create: true

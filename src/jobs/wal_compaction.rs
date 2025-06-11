@@ -7,14 +7,11 @@ use tokio::sync::mpsc;
 
 use super::JobError;
 use crate::{
-    forest::ForestImpl,
+    forest::Snapshot,
     k_way,
-    metadata::{
-        MetadataStore,
-        TableID,
-    },
-    runs,
+    metadata::TableID,
     runs::{
+        self,
         RunError,
         RunId,
         Stats,
@@ -24,14 +21,9 @@ use crate::{
 };
 
 pub async fn execute(
-    metadata_store: MetadataStore,
     object_store: ObjectStore,
+    state: &Snapshot,
 ) -> Result<(Vec<RunId>, Vec<(RunId, TableID, Stats)>), JobError> {
-    let state = ForestImpl::latest(metadata_store.clone(), object_store.clone()).await?;
-    if state.wal.is_empty() {
-        return Ok((vec![], vec![]));
-    }
-
     let count = std::cmp::min(16, state.wal.len());
     let run_data = stream::iter(state.wal.clone().into_iter().take(count))
         .map(|(seq_no, metadata)| {

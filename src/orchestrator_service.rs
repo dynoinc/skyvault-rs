@@ -147,27 +147,6 @@ impl MyOrchestrator {
                 }
             }
 
-            // If total size of WALs exceeds 100MB, schedule a job to compact the WALs
-            let total_wal_size = state
-                .wal
-                .values()
-                .map(|r| match &r.stats {
-                    Stats::StatsV1(stats) => stats.size_bytes,
-                })
-                .sum::<u64>();
-
-            if total_wal_size > 100_000_000 || state.wal.len() > 25 {
-                tracing::info!(
-                    "Total size of WALs {total_wal_size} exceeds 100MB or number of WALs {} exceeds 25, scheduling \
-                     compaction",
-                    state.wal.len()
-                );
-
-                if let Err(e) = self.metadata.schedule_job(JobParams::WALCompaction).await {
-                    tracing::error!(error = %e, "Failed to schedule WAL compaction");
-                }
-            }
-
             for (table_id, table) in state.trees.iter() {
                 let total_buffer_size = table
                     .buffer
