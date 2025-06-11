@@ -22,7 +22,8 @@ use crate::proto;
 pub type Key = String;
 pub type Value = Vec<u8>;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, sqlx::Type)]
+#[sqlx(transparent)]
 pub struct RunId(pub String);
 
 impl<T: Into<String>> From<T> for RunId {

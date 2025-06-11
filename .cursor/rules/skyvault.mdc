@@ -1,0 +1,38 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+## Code generation guidelines
+- Avoid adding unnecessary comments. Keep the code consice. Only add comments if logic is not obviously clear from the code. 
+- Think hard about the changes. 
+- If applicable, always add a small unit-test for the new functionality. Make sure the new unit-tests passes and is fast (use mocks wherever possible). 
+
+## Formatting and Linting
+
+- Format Rust code before committing:
+  ```bash
+  cargo fmt --all
+  ```
+- Run the linter before committing:
+  ```bash
+  cargo check --all-targets
+  cargo clippy -- -D warnings
+  cargo clippy --all-targets -- -D warnings
+  ```
+
+## Helm changes
+
+To test helm changes use commands defined in [justfile](mdc:justfile).
+
+## Tests
+
+Run the full test suite locally before opening a pull request:
+```bash
+RUST_BACKTRACE=1 cargo test
+```
+
+## Commit Style
+
+Use the [Conventional Commits](https://www.conventionalcommits.org/) style for
+commit messages, for example `feat: add new feature` or `fix: correct issue`.

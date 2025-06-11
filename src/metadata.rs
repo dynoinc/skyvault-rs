@@ -673,7 +673,6 @@ impl PostgresMetadataStore {
     ) -> Result<SeqNo, MetadataError> {
         let mut transaction = self.pg_pool.begin().await?;
 
-        let compacted_strings: Vec<String> = compacted.iter().map(|id| id.to_string()).collect();
         let deleted_count_result = sqlx::query!(
             r#"
             WITH updated_runs AS (
@@ -685,7 +684,7 @@ impl PostgresMetadataStore {
             )
             SELECT COUNT(*) FROM updated_runs
             "#,
-            &compacted_strings
+            compacted as &[RunId]
         )
         .fetch_one(&mut *transaction) // Deref
         .await?;
@@ -798,7 +797,6 @@ impl PostgresMetadataStore {
         compacted: &[RunId],
         new_runs: &[RunMetadata],
     ) -> Result<SeqNo, MetadataError> {
-        let compacted_strings: Vec<String> = compacted.iter().map(ToString::to_string).collect();
         let result = sqlx::query!(
             r#"
             WITH updated_runs AS (
@@ -810,7 +808,7 @@ impl PostgresMetadataStore {
             )
             SELECT COUNT(*) FROM updated_runs
             "#,
-            &compacted_strings
+            compacted as &[RunId]
         )
         .fetch_one(&mut **transaction)
         .await?;
@@ -1214,33 +1212,37 @@ impl MetadataStoreTrait for PostgresMetadataStore {
     }
 
     async fn get_run_metadata_batch(&self, run_ids: Vec<RunId>) -> Result<HashMap<RunId, RunMetadata>, MetadataError> {
-        let run_ids_strings: Vec<String> = run_ids.iter().map(|id| id.to_string()).collect();
-        let rows = sqlx::query!(
-            r#"
-            SELECT id, belongs_to, stats
-            FROM runs WHERE id = ANY($1)
-            "#,
-            &run_ids_strings
-        )
-        .fetch_all(&self.pg_pool)
-        .await?;
+        let mut result = HashMap::new();
+        for chunk in run_ids.chunks(1000) {
+            let rows = sqlx::query!(
+                r#"
+                SELECT id, belongs_to, stats
+                FROM runs WHERE id = ANY($1)
+                "#,
+                &chunk as &[RunId]
+            )
+            .fetch_all(&self.pg_pool)
+            .await?;
 
-        let run_metadatas = rows
-            .into_iter()
-            .map(|row| {
-                let belongs_to: BelongsTo =
-                    serde_json::from_value(row.belongs_to).map_err(MetadataError::JsonSerdeError)?;
-                let stats: Stats = serde_json::from_value(row.stats).map_err(MetadataError::JsonSerdeError)?;
+            let run_metadatas = rows
+                .into_iter()
+                .map(|row| {
+                    let belongs_to: BelongsTo =
+                        serde_json::from_value(row.belongs_to).map_err(MetadataError::JsonSerdeError)?;
+                    let stats: Stats = serde_json::from_value(row.stats).map_err(MetadataError::JsonSerdeError)?;
 
-                Ok(RunMetadata {
-                    id: RunId(row.id),
-                    belongs_to,
-                    stats,
+                    Ok(RunMetadata {
+                        id: RunId(row.id),
+                        belongs_to,
+                        stats,
+                    })
                 })
-            })
-            .collect::<Result<Vec<RunMetadata>, MetadataError>>()?;
+                .collect::<Result<Vec<RunMetadata>, MetadataError>>()?;
 
-        Ok(run_metadatas.into_iter().map(|m| (m.id.clone(), m)).collect())
+            result.extend(run_metadatas.into_iter().map(|m| (m.id.clone(), m)));
+        }
+
+        Ok(result)
     }
 
     async fn schedule_job(&self, job_params: JobParams) -> Result<JobID, MetadataError> {

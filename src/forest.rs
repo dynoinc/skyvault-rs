@@ -30,7 +30,6 @@ use crate::{
         Level,
         MetadataError,
         MetadataStore,
-        RunsChangelogEntryV1,
         SeqNo,
         TableChangelogEntryV1,
         TableConfig,
@@ -60,13 +59,13 @@ pub enum ForestError {
     BadSnapshot(#[from] prost::DecodeError),
 }
 
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Debug)]
 pub struct TableTree {
     pub buffer: BTreeMap<metadata::SeqNo, metadata::RunMetadata>,
     pub tree: BTreeMap<metadata::Level, BTreeMap<runs::Key, metadata::RunMetadata>>,
 }
 
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Debug)]
 pub struct Snapshot {
     pub seq_no: metadata::SeqNo,
 
@@ -254,10 +253,7 @@ impl ForestImpl {
             state: Arc::new(Mutex::new(Arc::new(snapshot))),
         };
 
-        for entry in entries {
-            forest.process_changelog_entry(entry).await?;
-        }
-
+        forest.apply_changelog_entries(entries).await?;
         Ok(forest.get_state())
     }
 
@@ -310,109 +306,134 @@ impl ForestImpl {
 
         while let Some(result) = stream.next().await {
             debug!("Received changelog entry: {:?}", result);
-            self.process_changelog_entry(result?).await?;
+            self.apply_changelog_entries(vec![result?]).await?;
         }
 
         Err(ForestError::Internal("Changelog stream ended unexpectedly".to_string()))
     }
 
-    /// Process a single changelog entry and update the live runs map.
-    async fn process_changelog_entry(&self, entry: ChangelogEntryWithID) -> Result<(), ForestError> {
-        let seq_no = entry.id;
-        match entry.changes {
-            ChangelogEntry::RunsV1(v1) => self.process_runs_changelog_entry(seq_no, v1).await,
-            ChangelogEntry::TablesV1(v1) => self.process_tables_changelog_entry(seq_no, v1).await,
+    /// Apply multiple changelog entries efficiently with batched database calls
+    async fn apply_changelog_entries(&self, entries: Vec<ChangelogEntryWithID>) -> Result<(), ForestError> {
+        if entries.is_empty() {
+            return Ok(());
         }
-    }
 
-    async fn process_runs_changelog_entry(
-        &self,
-        seq_no: SeqNo,
-        entry: RunsChangelogEntryV1,
-    ) -> Result<(), ForestError> {
-        let runs_added = entry.runs_added;
-        let runs_removed = entry.runs_removed;
+        // Collect all run IDs that need to be fetched across all entries
+        let mut all_runs_to_add = Vec::new();
+        let mut all_runs_to_remove = Vec::new();
+        let mut table_ids_to_fetch = Vec::new();
 
-        let new_runs = self.metadata_store.get_run_metadata_batch(runs_added).await?;
-
-        let mut state = self.state.lock().unwrap();
-        let new_state = Arc::make_mut(&mut state);
-
-        // Remove runs that are no longer present
-        new_state.wal.retain(|_, m| !runs_removed.contains(&m.id));
-        for table in new_state.trees.values_mut() {
-            table.buffer.retain(|_, m| !runs_removed.contains(&m.id));
-            for table_entries in table.tree.values_mut() {
-                table_entries.retain(|_, m| !runs_removed.contains(&m.id));
-            }
-            table.tree.retain(|_, table_entries| !table_entries.is_empty());
-        }
-        new_state
-            .trees
-            .retain(|_, table| !table.buffer.is_empty() || !table.tree.is_empty());
-
-        // Add new runs
-        for new_run in new_runs.into_values() {
-            match new_run.belongs_to {
-                metadata::BelongsTo::WalSeqNo(seq_no) => {
-                    new_state.wal.insert(seq_no, new_run);
+        for entry in &entries {
+            match &entry.changes {
+                ChangelogEntry::RunsV1(v1) => {
+                    all_runs_to_add.extend(v1.runs_added.iter().cloned());
+                    all_runs_to_remove.extend(v1.runs_removed.iter().cloned());
                 },
-                metadata::BelongsTo::TableBuffer(table_id, seq_no) => {
-                    new_state
-                        .trees
-                        .entry(table_id)
-                        .or_default()
-                        .buffer
-                        .insert(seq_no, new_run);
-                },
-                metadata::BelongsTo::TableTreeLevel(table_id, level) => {
-                    let min_key = match new_run.stats {
-                        runs::Stats::StatsV1(ref stats) => stats.min_key.clone(),
+                ChangelogEntry::TablesV1(v1) => {
+                    let table_id = match v1 {
+                        TableChangelogEntryV1::TableCreated(table_id) => *table_id,
+                        TableChangelogEntryV1::TableDropped(table_id) => *table_id,
                     };
-
-                    new_state
-                        .trees
-                        .entry(table_id)
-                        .or_default()
-                        .tree
-                        .entry(level)
-                        .or_default()
-                        .insert(min_key, new_run);
+                    table_ids_to_fetch.push(table_id);
                 },
             }
         }
 
-        new_state.seq_no = seq_no;
-        Ok(())
-    }
+        // Optimize: only fetch runs that aren't immediately removed
+        // Remove runs that are both added and removed in the same batch
+        all_runs_to_add.retain(|run_id| !all_runs_to_remove.contains(run_id));
 
-    async fn process_tables_changelog_entry(
-        &self,
-        seq_no: SeqNo,
-        entry: TableChangelogEntryV1,
-    ) -> Result<(), ForestError> {
-        let table_id = match entry {
-            TableChangelogEntryV1::TableCreated(table_id) => table_id,
-            TableChangelogEntryV1::TableDropped(table_id) => table_id,
+        // Fetch all data in parallel batches - only if there are runs to fetch
+        let all_run_metadata = if !all_runs_to_add.is_empty() {
+            self.metadata_store.get_run_metadata_batch(all_runs_to_add).await?
+        } else {
+            HashMap::new()
         };
-        let table_config = self.metadata_store.get_table_by_id(table_id).await?;
 
+        let mut table_configs = HashMap::new();
+        for table_id in table_ids_to_fetch {
+            let config = self.metadata_store.get_table_by_id(table_id).await?;
+            table_configs.insert(table_id, config);
+        }
+
+        // Apply all updates atomically without holding lock across async operations
         let mut state = self.state.lock().unwrap();
         let new_state = Arc::make_mut(&mut state);
 
-        match entry {
-            TableChangelogEntryV1::TableCreated(_) => {
-                tracing::debug!("Table created: {:?}", table_config);
-                new_state.tables.insert(table_config.table_name.clone(), table_config);
-            },
-            TableChangelogEntryV1::TableDropped(_) => {
-                tracing::debug!("Table removed: {:?}", table_config);
-                new_state.tables.remove(&table_config.table_name);
-                new_state.trees.remove(&table_id);
-            },
+        // First apply all run removals in batch
+        if !all_runs_to_remove.is_empty() {
+            new_state.wal.retain(|_, m| !all_runs_to_remove.contains(&m.id));
+            for table in new_state.trees.values_mut() {
+                table.buffer.retain(|_, m| !all_runs_to_remove.contains(&m.id));
+                for table_entries in table.tree.values_mut() {
+                    table_entries.retain(|_, m| !all_runs_to_remove.contains(&m.id));
+                }
+                table.tree.retain(|_, table_entries| !table_entries.is_empty());
+            }
         }
 
-        new_state.seq_no = seq_no;
+        // Then apply all other changes
+        for entry in entries {
+            let seq_no = entry.id;
+            match entry.changes {
+                ChangelogEntry::RunsV1(v1) => {
+                    // Add new runs using pre-fetched metadata
+                    for run_id in v1.runs_added {
+                        if let Some(new_run) = all_run_metadata.get(&run_id).cloned() {
+                            match new_run.belongs_to {
+                                metadata::BelongsTo::WalSeqNo(seq_no) => {
+                                    new_state.wal.insert(seq_no, new_run);
+                                },
+                                metadata::BelongsTo::TableBuffer(table_id, seq_no) => {
+                                    new_state
+                                        .trees
+                                        .entry(table_id)
+                                        .or_default()
+                                        .buffer
+                                        .insert(seq_no, new_run);
+                                },
+                                metadata::BelongsTo::TableTreeLevel(table_id, level) => {
+                                    let min_key = match new_run.stats {
+                                        runs::Stats::StatsV1(ref stats) => stats.min_key.clone(),
+                                    };
+
+                                    new_state
+                                        .trees
+                                        .entry(table_id)
+                                        .or_default()
+                                        .tree
+                                        .entry(level)
+                                        .or_default()
+                                        .insert(min_key, new_run);
+                                },
+                            }
+                        }
+                    }
+                },
+                ChangelogEntry::TablesV1(v1) => {
+                    let table_id = match v1 {
+                        TableChangelogEntryV1::TableCreated(table_id) => table_id,
+                        TableChangelogEntryV1::TableDropped(table_id) => table_id,
+                    };
+                    let table_config = table_configs.get(&table_id).unwrap().clone();
+
+                    // Apply table changes directly
+                    match v1 {
+                        TableChangelogEntryV1::TableCreated(_) => {
+                            debug!("Table created: {:?}", table_config);
+                            new_state.tables.insert(table_config.table_name.clone(), table_config);
+                        },
+                        TableChangelogEntryV1::TableDropped(_) => {
+                            debug!("Table removed: {:?}", table_config);
+                            new_state.tables.remove(&table_config.table_name);
+                            new_state.trees.remove(&table_id);
+                        },
+                    }
+                },
+            }
+            new_state.seq_no = seq_no;
+        }
+
         Ok(())
     }
 }
@@ -426,37 +447,382 @@ impl ForestTrait for ForestImpl {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        requires_docker,
-        test_utils::{
-            setup_test_db,
-            setup_test_object_store,
-        },
-    };
 
     #[tokio::test]
     async fn test_forest_handles_table_create_and_drop() {
-        requires_docker!();
+        use std::sync::Arc;
 
-        // Setup test database and object store
-        let metadata_store = setup_test_db().await.unwrap();
-        let object_store = setup_test_object_store().await.unwrap();
+        use crate::{
+            metadata::{
+                ChangelogEntry,
+                ChangelogEntryWithID,
+                MockMetadataStoreTrait,
+                SeqNo,
+                TableChangelogEntryV1,
+                TableID,
+            },
+            storage::MockObjectStoreTrait,
+        };
 
-        // Create a test table
+        // Create mock metadata store
+        let mut mock_metadata_store = MockMetadataStoreTrait::new();
+
+        // Mock get_latest_snapshot to return some table changelog entries
+        let table_id = TableID::from(1);
         let table_config = TableConfig {
-            table_id: None,
+            table_id: Some(table_id),
             table_name: TableName::from("test_forest_table"),
         };
 
-        metadata_store.create_table(table_config.clone()).await.unwrap();
-        metadata_store
-            .drop_table(table_config.table_name.clone())
-            .await
-            .unwrap();
+        mock_metadata_store
+            .expect_get_latest_snapshot()
+            .once()
+            .returning(move || {
+                let entries = vec![
+                    ChangelogEntryWithID {
+                        id: SeqNo::from(1),
+                        changes: ChangelogEntry::TablesV1(TableChangelogEntryV1::TableCreated(table_id)),
+                    },
+                    ChangelogEntryWithID {
+                        id: SeqNo::from(2),
+                        changes: ChangelogEntry::TablesV1(TableChangelogEntryV1::TableDropped(table_id)),
+                    },
+                ];
+                Box::pin(async { Ok((None, entries)) })
+            });
+
+        // Mock get_table_by_id calls for both create and drop operations
+        let table_config_clone = table_config.clone();
+        mock_metadata_store
+            .expect_get_table_by_id()
+            .with(mockall::predicate::eq(table_id))
+            .times(2) // Called once for create, once for drop
+            .returning(move |_| {
+                let config = table_config_clone.clone();
+                Box::pin(async move { Ok(config) })
+            });
+
+        let metadata_store = Arc::new(mock_metadata_store);
+
+        // Create mock object store (no snapshot to load)
+        let mock_object_store = MockObjectStoreTrait::new();
+        // No expectations set since get_latest_snapshot returns None for snapshot_id
+
+        let object_store = Arc::new(mock_object_store);
+
+        // Test ForestImpl::latest processes the changelog entries correctly
+        let result = ForestImpl::latest(metadata_store, object_store).await;
         assert!(
-            ForestImpl::latest(metadata_store.clone(), object_store.clone())
-                .await
-                .is_ok()
+            result.is_ok(),
+            "Forest should handle table create and drop: {result:?}"
         );
+
+        let snapshot = result.unwrap();
+        assert_eq!(snapshot.seq_no, SeqNo::from(2));
+        // Table should not be present since it was created then dropped
+        assert!(
+            snapshot.tables.is_empty(),
+            "Tables should be empty after create and drop"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_batched_changelog_processing() {
+        use std::sync::Arc;
+
+        use crate::{
+            metadata::{
+                ChangelogEntry,
+                ChangelogEntryWithID,
+                MockMetadataStoreTrait,
+                SeqNo,
+                TableChangelogEntryV1,
+                TableID,
+            },
+            storage::MockObjectStoreTrait,
+        };
+
+        // Create mock metadata store
+        let mut mock_metadata_store = MockMetadataStoreTrait::new();
+
+        // Mock get_latest_snapshot to return multiple table creation entries
+        let table_ids = [TableID::from(1), TableID::from(2), TableID::from(3)];
+        let table_configs = [
+            TableConfig {
+                table_id: Some(table_ids[0]),
+                table_name: TableName::from("test_batch_table_0"),
+            },
+            TableConfig {
+                table_id: Some(table_ids[1]),
+                table_name: TableName::from("test_batch_table_1"),
+            },
+            TableConfig {
+                table_id: Some(table_ids[2]),
+                table_name: TableName::from("test_batch_table_2"),
+            },
+        ];
+
+        mock_metadata_store
+            .expect_get_latest_snapshot()
+            .once()
+            .returning(move || {
+                let entries = vec![
+                    ChangelogEntryWithID {
+                        id: SeqNo::from(1),
+                        changes: ChangelogEntry::TablesV1(TableChangelogEntryV1::TableCreated(table_ids[0])),
+                    },
+                    ChangelogEntryWithID {
+                        id: SeqNo::from(2),
+                        changes: ChangelogEntry::TablesV1(TableChangelogEntryV1::TableCreated(table_ids[1])),
+                    },
+                    ChangelogEntryWithID {
+                        id: SeqNo::from(3),
+                        changes: ChangelogEntry::TablesV1(TableChangelogEntryV1::TableCreated(table_ids[2])),
+                    },
+                ];
+                Box::pin(async { Ok((None, entries)) })
+            });
+
+        // Mock get_table_by_id calls for all three table creations
+        for (i, &table_id) in table_ids.iter().enumerate() {
+            let config = table_configs[i].clone();
+            mock_metadata_store
+                .expect_get_table_by_id()
+                .with(mockall::predicate::eq(table_id))
+                .once()
+                .returning(move |_| {
+                    let config = config.clone();
+                    Box::pin(async move { Ok(config) })
+                });
+        }
+
+        let metadata_store = Arc::new(mock_metadata_store);
+
+        // Create mock object store
+        let mock_object_store = MockObjectStoreTrait::new();
+        let object_store = Arc::new(mock_object_store);
+
+        // Test ForestImpl::latest processes multiple changelog entries correctly
+        let result = ForestImpl::latest(metadata_store, object_store).await;
+        assert!(
+            result.is_ok(),
+            "Forest should handle multiple table creations: {result:?}"
+        );
+
+        let snapshot = result.unwrap();
+        assert_eq!(snapshot.seq_no, SeqNo::from(3));
+        assert_eq!(snapshot.tables.len(), 3);
+        assert!(snapshot.tables.contains_key(&TableName::from("test_batch_table_0")));
+        assert!(snapshot.tables.contains_key(&TableName::from("test_batch_table_1")));
+        assert!(snapshot.tables.contains_key(&TableName::from("test_batch_table_2")));
+    }
+
+    #[tokio::test]
+    async fn test_batched_processing_optimizes_cancelled_runs() {
+        use std::sync::Arc;
+
+        use crate::{
+            metadata::{
+                ChangelogEntry,
+                ChangelogEntryWithID,
+                MockMetadataStoreTrait,
+                RunsChangelogEntryV1,
+                SeqNo,
+            },
+            runs::RunId,
+        };
+
+        // Create a mock metadata store
+        let mut mock_metadata_store = MockMetadataStoreTrait::new();
+
+        // Set expectation that get_run_metadata_batch should NEVER be called
+        // because the optimization should filter out all runs that are cancelled
+        mock_metadata_store
+            .expect_get_run_metadata_batch()
+            .never()
+            .returning(|_| Box::pin(async { Ok(HashMap::new()) }));
+
+        let metadata_store = Arc::new(mock_metadata_store);
+
+        let cancelled_run_1 = RunId::from("cancelled_run_1");
+        let cancelled_run_2 = RunId::from("cancelled_run_2");
+
+        // Create entries where runs are added and then removed (cancelled out)
+        let entries_with_cancellations = vec![
+            ChangelogEntryWithID {
+                id: SeqNo::from(1),
+                changes: ChangelogEntry::RunsV1(RunsChangelogEntryV1 {
+                    runs_added: vec![cancelled_run_1.clone(), cancelled_run_2.clone()],
+                    runs_removed: vec![],
+                }),
+            },
+            ChangelogEntryWithID {
+                id: SeqNo::from(2),
+                changes: ChangelogEntry::RunsV1(RunsChangelogEntryV1 {
+                    runs_added: vec![],
+                    runs_removed: vec![cancelled_run_1.clone(), cancelled_run_2.clone()],
+                }),
+            },
+        ];
+
+        // Create a forest instance with the mock
+        let forest = ForestImpl {
+            metadata_store,
+            state: Arc::new(Mutex::new(Arc::new(Snapshot::default()))),
+        };
+
+        // This should succeed and the mock will verify that get_run_metadata_batch
+        // was never called, proving the optimization worked
+        let result = forest.apply_changelog_entries(entries_with_cancellations).await;
+
+        // Should succeed because no runs actually need to be fetched
+        assert!(result.is_ok(), "Should succeed when runs are cancelled out: {result:?}");
+
+        // Verify the final state has the correct sequence number and no runs
+        let state = forest.get_state();
+        assert_eq!(state.seq_no, SeqNo::from(2));
+        assert!(state.wal.is_empty(), "WAL should be empty after cancellation");
+
+        // Mock expectations are automatically verified when the mock is dropped
+    }
+
+    #[tokio::test]
+    async fn test_batched_processing_calls_metadata_for_non_cancelled_runs() {
+        use std::sync::Arc;
+
+        use crate::{
+            metadata::{
+                ChangelogEntry,
+                ChangelogEntryWithID,
+                MockMetadataStoreTrait,
+                RunsChangelogEntryV1,
+                SeqNo,
+            },
+            runs::RunId,
+        };
+
+        // Create a mock metadata store
+        let mut mock_metadata_store = MockMetadataStoreTrait::new();
+
+        let persistent_run = RunId::from("persistent_run");
+
+        // Set expectation that get_run_metadata_batch SHOULD be called exactly once
+        // for the non-cancelled run
+        mock_metadata_store
+            .expect_get_run_metadata_batch()
+            .once()
+            .withf(move |run_ids| run_ids.len() == 1 && run_ids.contains(&persistent_run))
+            .returning(|_| Box::pin(async { Ok(HashMap::new()) })); // Return empty to simulate missing run
+
+        let metadata_store = Arc::new(mock_metadata_store);
+
+        let cancelled_run = RunId::from("cancelled_run");
+        let persistent_run = RunId::from("persistent_run");
+
+        // Create entries where one run is cancelled but another persists
+        let entries_with_partial_cancellation = vec![
+            ChangelogEntryWithID {
+                id: SeqNo::from(1),
+                changes: ChangelogEntry::RunsV1(RunsChangelogEntryV1 {
+                    runs_added: vec![cancelled_run.clone(), persistent_run.clone()],
+                    runs_removed: vec![],
+                }),
+            },
+            ChangelogEntryWithID {
+                id: SeqNo::from(2),
+                changes: ChangelogEntry::RunsV1(RunsChangelogEntryV1 {
+                    runs_added: vec![],
+                    runs_removed: vec![cancelled_run.clone()], // Only remove one run
+                }),
+            },
+        ];
+
+        // Create a forest instance with the mock
+        let forest = ForestImpl {
+            metadata_store,
+            state: Arc::new(Mutex::new(Arc::new(Snapshot::default()))),
+        };
+
+        // This should call get_run_metadata_batch exactly once for the persistent run
+        let result = forest.apply_changelog_entries(entries_with_partial_cancellation).await;
+
+        // Should succeed (the mock returns empty HashMap, so no runs get added)
+        assert!(
+            result.is_ok(),
+            "Should succeed when processing non-cancelled runs: {result:?}"
+        );
+
+        // Verify the final state has the correct sequence number
+        let state = forest.get_state();
+        assert_eq!(state.seq_no, SeqNo::from(2));
+
+        // Mock expectations are automatically verified when the mock is dropped
+    }
+
+    #[tokio::test]
+    async fn test_batched_processing_with_empty_runs() {
+        use std::sync::Arc;
+
+        use crate::{
+            metadata::{
+                ChangelogEntry,
+                ChangelogEntryWithID,
+                MockMetadataStoreTrait,
+                RunsChangelogEntryV1,
+                SeqNo,
+            },
+            runs::RunId,
+        };
+
+        // Create mock metadata store
+        let mut mock_metadata_store = MockMetadataStoreTrait::new();
+
+        // Set expectation that get_run_metadata_batch should NEVER be called
+        // because all runs are cancelled out
+        mock_metadata_store
+            .expect_get_run_metadata_batch()
+            .never()
+            .returning(|_| Box::pin(async { Ok(HashMap::new()) }));
+
+        let metadata_store = Arc::new(mock_metadata_store);
+
+        // Create changelog entries where all runs are cancelled out
+        let cancelled_run_1 = RunId::from("cancelled_run_1");
+        let cancelled_run_2 = RunId::from("cancelled_run_2");
+
+        let entries = vec![
+            // First entry adds runs
+            ChangelogEntryWithID {
+                id: SeqNo::from(1),
+                changes: ChangelogEntry::RunsV1(RunsChangelogEntryV1 {
+                    runs_added: vec![cancelled_run_1.clone(), cancelled_run_2.clone()],
+                    runs_removed: vec![],
+                }),
+            },
+            // Second entry removes all the runs
+            ChangelogEntryWithID {
+                id: SeqNo::from(2),
+                changes: ChangelogEntry::RunsV1(RunsChangelogEntryV1 {
+                    runs_added: vec![],
+                    runs_removed: vec![cancelled_run_1.clone(), cancelled_run_2.clone()],
+                }),
+            },
+        ];
+
+        let forest = ForestImpl {
+            metadata_store,
+            state: Arc::new(Mutex::new(Arc::new(Snapshot::default()))),
+        };
+
+        // This should succeed because all runs are cancelled out, so no metadata
+        // fetching is needed
+        let result = forest.apply_changelog_entries(entries).await;
+        assert!(result.is_ok(), "Should succeed when all runs are cancelled out");
+
+        // Verify the state is updated with the correct sequence number
+        let state = forest.get_state();
+        assert_eq!(state.seq_no, SeqNo::from(2));
+
+        // Mock expectations are automatically verified when the mock is dropped
     }
 }
