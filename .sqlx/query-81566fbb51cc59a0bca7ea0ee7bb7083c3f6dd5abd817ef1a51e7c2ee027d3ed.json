@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            SELECT id, belongs_to, stats\n            FROM runs WHERE id = ANY($1)\n            ",
+  "query": "\n                SELECT id, belongs_to, stats\n                FROM runs WHERE id = ANY($1)\n                ",
   "describe": {
     "columns": [
       {
@@ -30,5 +30,5 @@
       false
     ]
   },
-  "hash": "9234f56a7596ee69d49434fd7b31b3fb0c883ec0539a0b46d2ed76e99c8785fa"
+  "hash": "81566fbb51cc59a0bca7ea0ee7bb7083c3f6dd5abd817ef1a51e7c2ee027d3ed"
 }

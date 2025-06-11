@@ -7,6 +7,7 @@ sqlx:
 
 check:
     cargo fmt --all
+    cargo sqlx prepare
     cargo check --all-targets
     cargo clippy --all-targets -- -D warnings
     RUST_BACKTRACE=1 cargo test

@@ -512,10 +512,7 @@ mod tests {
 
         // Test ForestImpl::latest processes the changelog entries correctly
         let result = ForestImpl::latest(metadata_store, object_store).await;
-        assert!(
-            result.is_ok(),
-            "Forest should handle table create and drop: {result:?}"
-        );
+        assert!(result.is_ok(), "Forest should handle table create and drop: {result:?}");
 
         let snapshot = result.unwrap();
         assert_eq!(snapshot.seq_no, SeqNo::from(2));
