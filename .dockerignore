@@ -1,10 +1,31 @@
+# Git and version control
 .git/
-charts/
-clippy.toml
-Dockerfile
+.gitignore
+
+# GitHub workflows and configs
+.github/
+
+# Documentation and project files
 docs/
+charts/
 LICENSE
 README.md
+SECURITY.md
+
+# Rust development files
+.rustfmt.toml
 target/
-.idea/
-skycli/
+tests/
+
+# Development tools and configs
+.env
+justfile
+
+# Docker files
+Dockerfile
+.dockerignore
+
+# Bazel build files
+.bazelrc
+MODULE.bazel
+MODULE.bazel.lock
