@@ -1,17 +1,36 @@
-# Builder stage
-FROM rust:slim AS builder
+# syntax=docker/dockerfile:1.7
 
+# Base stage with tools
+FROM rust:slim AS base
 RUN apt-get update && \
     apt-get install -y protobuf-compiler libprotobuf-dev pkg-config libssl-dev --no-install-recommends && \
     rm -rf /var/lib/apt/lists/*
 
+# Install cargo-chef for dependency caching (most important for CI)
+RUN cargo install cargo-chef
+
+# Planner stage - generates recipe for dependencies
+FROM base AS planner
+WORKDIR /app
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+# Builder stage - builds dependencies and application
+FROM base AS builder
 WORKDIR /app
 
+# Copy the recipe from planner stage
+COPY --from=planner /app/recipe.json recipe.json
+
+# Build dependencies first (this layer gets cached by GitHub Actions)
+RUN cargo chef cook --release --recipe-path recipe.json
+
+# Copy source code and build application
 COPY . .
 ENV SQLX_OFFLINE=true
 RUN cargo build --release
 
-# Final stage
+# Final runtime stage
 FROM public.ecr.aws/lts/ubuntu:24.04_stable
 
 RUN apt-get update && \
@@ -20,6 +39,7 @@ RUN apt-get update && \
 
 WORKDIR /app
 
+# Copy binaries from builder stage
 COPY --from=builder /app/target/release/skyvault /app/skyvault
 COPY --from=builder /app/target/release/worker /app/worker
 COPY --from=builder /app/target/release/reset-cluster /app/reset-cluster
