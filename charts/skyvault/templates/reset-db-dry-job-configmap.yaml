@@ -29,27 +29,10 @@ data:
             imagePullPolicy: {{ .Values.common.image.pullPolicy }}
             command: ["/app/reset-cluster", "--dry-run"]
             env:
-            - name: RUST_BACKTRACE
-              value: "full"
-            - name: RUST_LOG
-              value: "info"
-            - name: SKYVAULT_POSTGRES_USER
-              value: {{ .Values.common.env.SKYVAULT_POSTGRES_USER | quote }}
-            - name: SKYVAULT_POSTGRES_HOST
-              value: {{ .Values.common.env.SKYVAULT_POSTGRES_HOST | quote }}
-            - name: SKYVAULT_POSTGRES_PORT
-              value: {{ .Values.common.env.SKYVAULT_POSTGRES_PORT | quote }}
-            - name: SKYVAULT_POSTGRES_DB
-              value: {{ .Values.common.env.SKYVAULT_POSTGRES_DB | quote }}
-            - name: SKYVAULT_POSTGRES_SSLMODE
-              value: {{ .Values.common.env.SKYVAULT_POSTGRES_SSLMODE | quote }}
-            {{- if .Values.common.env.SENTRY_DSN }}
-            - name: SENTRY_DSN
-              value: {{ .Values.common.env.SENTRY_DSN | quote }}
-            {{- end }}
-            {{- if .Values.common.env.SENTRY_SAMPLE_RATE }}
-            - name: SENTRY_SAMPLE_RATE
-              value: {{ .Values.common.env.SENTRY_SAMPLE_RATE | quote }}
+            {{- $commonEnv := .Values.common.env | default dict }}
+            {{- range $key, $value := $commonEnv }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
             {{- end }}
             resources:
               limits:
