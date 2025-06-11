@@ -98,8 +98,9 @@ spec:
     - metadata:
         name: cache-volume
         labels:
-          {{- include "skyvault.labels" $ | nindent 10 }}
+          {{- include "skyvault.selectorLabels" $ | nindent 10 }}
           app.kubernetes.io/component: skyvault-{{ $deployment.instanceName }}
+          app.kubernetes.io/managed-by: {{ $.Release.Service }}
           {{- with $.Values.common.extraLabels }}
           {{- toYaml . | nindent 10 }}
           {{- end }}
