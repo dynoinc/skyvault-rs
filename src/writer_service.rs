@@ -285,8 +285,8 @@ mod tests {
     #[tokio::test]
     async fn test_writer_service() {
         requires_docker!();
-        let (metadata, _postgres) = setup_test_db().await.unwrap();
-        let (storage, _minio) = setup_test_object_store().await.unwrap();
+        let metadata = setup_test_db().await.unwrap();
+        let storage = setup_test_object_store().await.unwrap();
 
         // Create a table
         let table_name = "test_table";

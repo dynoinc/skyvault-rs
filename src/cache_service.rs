@@ -242,7 +242,7 @@ mod tests {
     #[tokio::test]
     async fn test_my_cache_new() {
         requires_docker!();
-        let (object_store, _container) = setup_test_object_store().await.unwrap();
+        let object_store = setup_test_object_store().await.unwrap();
         let cache = MyCache::new(object_store, CacheConfig::default()).await;
         assert!(cache.is_ok());
     }
@@ -250,7 +250,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_from_run_simple() {
         requires_docker!();
-        let (object_store, _container) = setup_test_object_store().await.unwrap();
+        let object_store = setup_test_object_store().await.unwrap();
         let cache_service = MyCache::new(object_store.clone(), CacheConfig::default())
             .await
             .unwrap();
@@ -307,7 +307,7 @@ mod tests {
     #[tokio::test]
     async fn test_scan_from_run_simple() {
         requires_docker!();
-        let (object_store, _container) = setup_test_object_store().await.unwrap();
+        let object_store = setup_test_object_store().await.unwrap();
         let cache_service = MyCache::new(object_store.clone(), CacheConfig::default())
             .await
             .unwrap();
@@ -382,7 +382,7 @@ mod tests {
     #[tokio::test]
     async fn test_scan_from_run_multiple_runs() {
         requires_docker!();
-        let (object_store, _container) = setup_test_object_store().await.unwrap();
+        let object_store = setup_test_object_store().await.unwrap();
         let cache_service = MyCache::new(object_store.clone(), CacheConfig::default())
             .await
             .unwrap();

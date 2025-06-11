@@ -557,7 +557,11 @@ static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 
 impl PostgresMetadataStore {
     pub async fn from_url(metadata_url: String) -> Result<MetadataStore, MetadataError> {
-        let pg_pool = PgPoolOptions::new().max_connections(5).connect(&metadata_url).await?;
+        let pg_pool = PgPoolOptions::new()
+            .max_connections(2)  // Reduce connections for tests to avoid exhaustion
+            .acquire_timeout(std::time::Duration::from_secs(30))
+            .connect(&metadata_url)
+            .await?;
 
         MIGRATOR.run(&pg_pool).await?;
 
@@ -1537,7 +1541,7 @@ mod tests {
     async fn test_tables() {
         requires_docker!();
         // Setup test database
-        let (metadata_store, _container) = setup_test_db().await.unwrap();
+        let metadata_store = setup_test_db().await.unwrap();
 
         let result = metadata_store.get_table(TableName::from("test_table")).await;
         assert!(result.is_err());
@@ -1569,7 +1573,7 @@ mod tests {
     async fn test_schedule_and_get_wal_compaction_job() {
         requires_docker!();
         // Setup test database
-        let (metadata_store, _container) = setup_test_db().await.unwrap();
+        let metadata_store = setup_test_db().await.unwrap();
 
         // Schedule a WAL compaction job
         metadata_store.schedule_job(JobParams::WALCompaction).await.unwrap();

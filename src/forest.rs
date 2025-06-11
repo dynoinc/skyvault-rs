@@ -439,8 +439,8 @@ mod tests {
         requires_docker!();
 
         // Setup test database and object store
-        let (metadata_store, _db_container) = setup_test_db().await.unwrap();
-        let (object_store, _store_container) = setup_test_object_store().await.unwrap();
+        let metadata_store = setup_test_db().await.unwrap();
+        let object_store = setup_test_object_store().await.unwrap();
 
         // Create a test table
         let table_config = TableConfig {
