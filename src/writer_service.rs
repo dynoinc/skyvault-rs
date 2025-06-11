@@ -206,10 +206,6 @@ impl proto::writer_service_server::WriterService for MyWriter {
         let mut ops: Vec<WriteOperation> = Vec::new();
         for mut table in req.into_inner().tables.drain(..) {
             let table_name = TableName::from(table.table_name.clone());
-            tracing::info!(
-                "table_name: {table_name}, known tables: {:?}",
-                forest_state.tables.keys().collect::<Vec<_>>()
-            );
             let table_id = forest_state
                 .tables
                 .get(&table_name)
