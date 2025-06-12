@@ -36,7 +36,7 @@ jobs:
     - name: Run tests
       run: |
         export SQLX_OFFLINE=true
-        cargo test
+        RUST_BACKTRACE=1 cargo test -- --nocapture
 
   lint-helm:
     name: Lint Helm Charts
