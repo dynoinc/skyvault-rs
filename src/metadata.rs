@@ -1092,8 +1092,8 @@ impl MetadataStoreTrait for PostgresMetadataStore {
     }
 
     /// Returns a snapshot of existing changelog entries and a stream of new
-    /// entries. The stream continuously polls for new entries after
-    /// reaching the end of the snapshot.
+    /// entries. The stream uses PostgreSQL LISTEN/NOTIFY for immediate updates
+    /// with a 1-second fallback polling to handle missed notifications.
     async fn stream_changelog(&self) -> Result<(Option<SnapshotID>, ChangelogStream), MetadataError> {
         let latest_persisted_snapshot = sqlx::query!("SELECT id, seq_no FROM snapshots ORDER BY seq_no DESC LIMIT 1")
             .fetch_optional(&self.pg_pool)
@@ -1103,7 +1103,18 @@ impl MetadataStoreTrait for PostgresMetadataStore {
 
         let pg_pool = self.pg_pool.clone();
         let mut last_id = snapshot.clone().map(|(_, seq_no)| seq_no).unwrap_or(SeqNo::zero());
+
         let stream = stream! {
+            // Set up PostgreSQL LISTEN for changelog notifications
+            let mut listener = sqlx::postgres::PgListener::connect_with(&pg_pool)
+                .await
+                .map_err(MetadataError::DatabaseError)?;
+
+            listener
+                .listen("changelog_update")
+                .await
+                .map_err(MetadataError::DatabaseError)?;
+
             loop {
                 let new_entries = sqlx::query_as!(
                     ChangelogEntryWithID,
@@ -1114,13 +1125,33 @@ impl MetadataStoreTrait for PostgresMetadataStore {
                 .await?;
 
                 let found_new_entries = !new_entries.is_empty();
-                for entry in new_entries {  
+                for entry in new_entries {
                     last_id = entry.id;
                     yield Ok(entry);
                 }
 
                 if !found_new_entries {
-                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    match tokio::time::timeout(Duration::from_secs(1), listener.recv()).await {
+                        Ok(Ok(_notification)) => {
+                            // Received notification, loop back to check for new entries
+                            continue;
+                        }
+                        Ok(Err(e)) => {
+                            tracing::warn!("PostgreSQL listener error: {e}, re-establishing connection");
+                            listener = sqlx::postgres::PgListener::connect_with(&pg_pool)
+                                .await
+                                .map_err(MetadataError::DatabaseError)?;
+                            listener
+                                .listen("changelog_update")
+                                .await
+                                .map_err(MetadataError::DatabaseError)?;
+                            continue;
+                        }
+                        Err(_timeout) => {
+                            // Timeout, loop back to check for new entries
+                            continue;
+                        }
+                    }
                 }
             }
         };

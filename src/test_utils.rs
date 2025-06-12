@@ -3,8 +3,13 @@ use std::{
         Command,
         Stdio,
     },
-    sync::{Arc, Weak, OnceLock},
+    sync::{
+        Arc,
+        OnceLock,
+        Weak,
+    },
 };
+
 use aws_config::{
     BehaviorVersion,
     Region,
@@ -32,7 +37,10 @@ use crate::{
         MetadataStoreTrait,
         PostgresMetadataStore,
     },
-    runs::{RunID, Stats},
+    runs::{
+        RunID,
+        Stats,
+    },
     storage::{
         ObjectStore,
         ObjectStoreTrait,
@@ -41,13 +49,15 @@ use crate::{
     },
 };
 
-// Global shared PostgreSQL container using weak references for automatic cleanup
+// Global shared PostgreSQL container using weak references for automatic
+// cleanup
 static SHARED_PG_CONTAINER: OnceLock<Mutex<Weak<ContainerAsync<Postgres>>>> = OnceLock::new();
 
 // Global shared MinIO container using weak references for automatic cleanup
 static SHARED_MINIO_CONTAINER: OnceLock<Mutex<Weak<ContainerAsync<minio::MinIO>>>> = OnceLock::new();
 
-/// Wrapper that holds both the container (to keep it alive) and the metadata store
+/// Wrapper that holds both the container (to keep it alive) and the metadata
+/// store
 pub struct TestMetadataStore {
     _container: Arc<ContainerAsync<Postgres>>,
     inner: MetadataStore,
@@ -64,23 +74,54 @@ impl TestMetadataStore {
 
 #[async_trait::async_trait]
 impl MetadataStoreTrait for TestMetadataStore {
-    async fn get_latest_snapshot_id(&self) -> Result<Option<(crate::metadata::SnapshotID, crate::metadata::SeqNo)>, MetadataError> {
+    async fn get_latest_snapshot_id(
+        &self,
+    ) -> Result<Option<(crate::metadata::SnapshotID, crate::metadata::SeqNo)>, MetadataError> {
         self.inner.get_latest_snapshot_id().await
     }
 
-    async fn get_latest_snapshot(&self) -> Result<(Option<crate::metadata::SnapshotID>, Vec<crate::metadata::ChangelogEntryWithID>), MetadataError> {
+    async fn get_latest_snapshot(
+        &self,
+    ) -> Result<
+        (
+            Option<crate::metadata::SnapshotID>,
+            Vec<crate::metadata::ChangelogEntryWithID>,
+        ),
+        MetadataError,
+    > {
         self.inner.get_latest_snapshot().await
     }
 
-    async fn persist_snapshot(&self, snapshot_id: crate::metadata::SnapshotID, seq_no: crate::metadata::SeqNo) -> Result<(), MetadataError> {
+    async fn persist_snapshot(
+        &self,
+        snapshot_id: crate::metadata::SnapshotID,
+        seq_no: crate::metadata::SeqNo,
+    ) -> Result<(), MetadataError> {
         self.inner.persist_snapshot(snapshot_id, seq_no).await
     }
 
-    async fn stream_changelog(&self) -> Result<(Option<crate::metadata::SnapshotID>, std::pin::Pin<std::boxed::Box<dyn futures::Stream<Item = Result<crate::metadata::ChangelogEntryWithID, MetadataError>> + Send + 'static>>), MetadataError> {
+    async fn stream_changelog(
+        &self,
+    ) -> Result<
+        (
+            Option<crate::metadata::SnapshotID>,
+            std::pin::Pin<
+                std::boxed::Box<
+                    dyn futures::Stream<Item = Result<crate::metadata::ChangelogEntryWithID, MetadataError>>
+                        + Send
+                        + 'static,
+                >,
+            >,
+        ),
+        MetadataError,
+    > {
         self.inner.stream_changelog().await
     }
 
-    async fn get_changelog(&self, from_seq_no: crate::metadata::SeqNo) -> Result<Vec<crate::metadata::ChangelogEntryWithID>, MetadataError> {
+    async fn get_changelog(
+        &self,
+        from_seq_no: crate::metadata::SeqNo,
+    ) -> Result<Vec<crate::metadata::ChangelogEntryWithID>, MetadataError> {
         self.inner.get_changelog(from_seq_no).await
     }
 
@@ -94,7 +135,9 @@ impl MetadataStoreTrait for TestMetadataStore {
         compacted: Vec<RunID>,
         new_table_runs: Vec<(RunID, crate::metadata::TableID, Stats)>,
     ) -> Result<crate::metadata::SeqNo, MetadataError> {
-        self.inner.append_wal_compaction(job_id, compacted, new_table_runs).await
+        self.inner
+            .append_wal_compaction(job_id, compacted, new_table_runs)
+            .await
     }
 
     async fn append_table_compaction(
@@ -106,15 +149,23 @@ impl MetadataStoreTrait for TestMetadataStore {
         self.inner.append_table_compaction(job_id, compacted, new_runs).await
     }
 
-    async fn get_run_metadata_batch(&self, run_ids: Vec<RunID>) -> Result<std::collections::HashMap<RunID, crate::metadata::RunMetadata>, MetadataError> {
+    async fn get_run_metadata_batch(
+        &self,
+        run_ids: Vec<RunID>,
+    ) -> Result<std::collections::HashMap<RunID, crate::metadata::RunMetadata>, MetadataError> {
         self.inner.get_run_metadata_batch(run_ids).await
     }
 
-    async fn schedule_job(&self, job_params: crate::metadata::JobParams) -> Result<crate::metadata::JobID, MetadataError> {
+    async fn schedule_job(
+        &self,
+        job_params: crate::metadata::JobParams,
+    ) -> Result<crate::metadata::JobID, MetadataError> {
         self.inner.schedule_job(job_params).await
     }
 
-    async fn get_pending_jobs(&self) -> Result<Vec<(crate::metadata::JobID, crate::metadata::JobParams)>, MetadataError> {
+    async fn get_pending_jobs(
+        &self,
+    ) -> Result<Vec<(crate::metadata::JobID, crate::metadata::JobParams)>, MetadataError> {
         self.inner.get_pending_jobs().await
     }
 
@@ -130,11 +181,17 @@ impl MetadataStoreTrait for TestMetadataStore {
         self.inner.mark_job_failed(job_id).await
     }
 
-    async fn create_table(&self, config: crate::metadata::TableConfig) -> Result<crate::metadata::SeqNo, MetadataError> {
+    async fn create_table(
+        &self,
+        config: crate::metadata::TableConfig,
+    ) -> Result<crate::metadata::SeqNo, MetadataError> {
         self.inner.create_table(config).await
     }
 
-    async fn drop_table(&self, table_name: crate::metadata::TableName) -> Result<crate::metadata::SeqNo, MetadataError> {
+    async fn drop_table(
+        &self,
+        table_name: crate::metadata::TableName,
+    ) -> Result<crate::metadata::SeqNo, MetadataError> {
         self.inner.drop_table(table_name).await
     }
 
@@ -142,16 +199,23 @@ impl MetadataStoreTrait for TestMetadataStore {
         self.inner.list_tables().await
     }
 
-    async fn get_table(&self, table_name: crate::metadata::TableName) -> Result<crate::metadata::TableConfig, MetadataError> {
+    async fn get_table(
+        &self,
+        table_name: crate::metadata::TableName,
+    ) -> Result<crate::metadata::TableConfig, MetadataError> {
         self.inner.get_table(table_name).await
     }
 
-    async fn get_table_by_id(&self, table_id: crate::metadata::TableID) -> Result<crate::metadata::TableConfig, MetadataError> {
+    async fn get_table_by_id(
+        &self,
+        table_id: crate::metadata::TableID,
+    ) -> Result<crate::metadata::TableConfig, MetadataError> {
         self.inner.get_table_by_id(table_id).await
     }
 }
 
-/// Wrapper that holds both the container (to keep it alive) and the object store
+/// Wrapper that holds both the container (to keep it alive) and the object
+/// store
 pub struct TestObjectStore {
     _container: Arc<ContainerAsync<minio::MinIO>>,
     inner: ObjectStore,
@@ -176,7 +240,11 @@ impl ObjectStoreTrait for TestObjectStore {
         self.inner.get_run(run_id).await
     }
 
-    async fn put_snapshot(&self, snapshot_id: crate::metadata::SnapshotID, data: bytes::Bytes) -> Result<(), StorageError> {
+    async fn put_snapshot(
+        &self,
+        snapshot_id: crate::metadata::SnapshotID,
+        data: bytes::Bytes,
+    ) -> Result<(), StorageError> {
         self.inner.put_snapshot(snapshot_id, data).await
     }
 
@@ -207,9 +275,10 @@ macro_rules! requires_docker {
     };
 }
 
-/// Sets up a test PostgreSQL instance using shared container with automatic cleanup.
-/// Creates a unique database for each test to avoid conflicts.
-/// Returns a wrapper that keeps the container alive and delegates to the metadata store.
+/// Sets up a test PostgreSQL instance using shared container with automatic
+/// cleanup. Creates a unique database for each test to avoid conflicts.
+/// Returns a wrapper that keeps the container alive and delegates to the
+/// metadata store.
 pub async fn setup_test_db() -> Result<MetadataStore, MetadataError> {
     let container_lock = SHARED_PG_CONTAINER.get_or_init(|| Mutex::new(Weak::new()));
     let mut guard = container_lock.lock().await;
@@ -223,7 +292,7 @@ pub async fn setup_test_db() -> Result<MetadataStore, MetadataError> {
             Postgres::default()
                 .start()
                 .await
-                .expect("Failed to start PostgreSQL container")
+                .expect("Failed to start PostgreSQL container"),
         );
         *guard = Arc::downgrade(&new_container);
         new_container
@@ -261,7 +330,8 @@ pub async fn setup_test_db() -> Result<MetadataStore, MetadataError> {
 
 /// Sets up a test MinIO instance using shared container with automatic cleanup.
 /// Creates a unique bucket for each test to avoid conflicts.
-/// Returns a wrapper that keeps the container alive and delegates to the object store.
+/// Returns a wrapper that keeps the container alive and delegates to the object
+/// store.
 pub async fn setup_test_object_store() -> Result<ObjectStore, StorageError> {
     let container_lock = SHARED_MINIO_CONTAINER.get_or_init(|| Mutex::new(Weak::new()));
     let mut guard = container_lock.lock().await;
@@ -275,7 +345,7 @@ pub async fn setup_test_object_store() -> Result<ObjectStore, StorageError> {
             minio::MinIO::default()
                 .start()
                 .await
-                .expect("Failed to start Minio container")
+                .expect("Failed to start Minio container"),
         );
         *guard = Arc::downgrade(&new_container);
         new_container
@@ -312,5 +382,5 @@ pub async fn setup_test_object_store() -> Result<ObjectStore, StorageError> {
     // Create the S3ObjectStore
     let inner_store = S3ObjectStore::from(s3_config, &bucket_name).await?;
 
-    Ok(Arc::new(TestObjectStore::new(container, inner_store)    ))
+    Ok(Arc::new(TestObjectStore::new(container, inner_store)))
 }

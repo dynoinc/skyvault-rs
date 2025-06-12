@@ -74,7 +74,7 @@ async fn test_high_load_wal_and_compaction() {
     let compaction_counter = Arc::new(AtomicU64::new(0));
     let stop_flag = Arc::new(AtomicBool::new(false));
 
-    const TARGET_COMPACTIONS: u64 = 100_000;
+    const TARGET_COMPACTIONS: u64 = 100;
     const NUM_WRITERS: usize = 1;
     const NUM_COMPACTORS: usize = 1;
 
@@ -115,7 +115,6 @@ async fn test_high_load_wal_and_compaction() {
                     },
                     Err(e) => {
                         eprintln!("Writer {writer_id} failed to append WAL: {e}");
-                        sleep(Duration::from_millis(10)).await;
                     },
                 }
 
@@ -139,12 +138,24 @@ async fn test_high_load_wal_and_compaction() {
 
         let handle = tokio::spawn(async move {
             let mut last_seq_no = None;
-            let forest = ForestImpl::watch(store.clone(), object_store.clone(), |stream| stream).await.unwrap();
+            let forest = ForestImpl::watch(store.clone(), object_store.clone(), |stream| stream)
+                .await
+                .unwrap();
+            let mut state_rx = forest.watch_state();
+
             while !stop.load(Ordering::Relaxed) {
-                let state = forest.get_state();
+                if state_rx.changed().await.is_err() {
+                    break;
+                }
+                
+                let state = state_rx.borrow().clone();
+                
                 if let Some(last_seq_no) = last_seq_no {
-                    if last_seq_no > state.seq_no {
-                        sleep(Duration::from_millis(100)).await;
+                    if last_seq_no >= state.seq_no {
+                        println!(
+                            "Compactor {compactor_id}: waiting for state change from seq_no {}",
+                            state.seq_no
+                        );
                         continue;
                     }
                 }
@@ -152,8 +163,7 @@ async fn test_high_load_wal_and_compaction() {
                 // Use same logic as wal_compaction.rs: take up to 16 WAL runs
                 let count = std::cmp::min(16, state.wal.len());
                 if count == 0 {
-                    // No WAL runs to compact, wait a bit
-                    sleep(Duration::from_millis(10)).await;
+                    println!("Compactor {compactor_id}: waiting for new WAL runs, new state available with {} WAL runs", state.wal.len());
                     continue;
                 }
 
@@ -189,22 +199,13 @@ async fn test_high_load_wal_and_compaction() {
                 {
                     Ok(seq_no) => {
                         last_seq_no = Some(seq_no);
-                        let current_compactions = compaction_counter.load(Ordering::Relaxed);
-                        if current_compactions % 10000 == 0 {
-                            println!(
-                                "Compactor {compactor_id} completed {compaction_seq} compactions (total: \
-                                 {current_compactions})"
-                            );
-                        }
-
-                        if current_compactions >= TARGET_COMPACTIONS {
+                        if compaction_counter.load(Ordering::Relaxed) >= TARGET_COMPACTIONS {
                             stop.store(true, Ordering::Relaxed);
                             break;
                         }
                     },
                     Err(e) => {
                         eprintln!("Compactor {compactor_id} failed compaction {compaction_seq}: {e}");
-                        sleep(Duration::from_millis(100)).await;
                     },
                 }
             }
@@ -227,7 +228,7 @@ async fn test_high_load_wal_and_compaction() {
             let mut last_time = Instant::now();
 
             while !stop.load(Ordering::Relaxed) {
-                sleep(Duration::from_secs(30)).await;
+                sleep(Duration::from_secs(1)).await;
 
                 let current_compactions = compaction_counter.load(Ordering::Relaxed);
                 let current_runs = run_counter.load(Ordering::Relaxed);

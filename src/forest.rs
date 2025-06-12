@@ -9,6 +9,7 @@ use std::{
     },
 };
 
+use async_trait::async_trait;
 use bytes::Bytes;
 use futures::{
     Stream,
@@ -17,6 +18,7 @@ use futures::{
 };
 use prost::Message;
 use thiserror::Error;
+use tokio::sync::watch;
 use tracing::{
     debug,
     error,
@@ -219,8 +221,10 @@ impl Snapshot {
 }
 
 #[cfg_attr(test, mockall::automock)]
+#[async_trait]
 pub trait ForestTrait: Send + Sync + 'static {
     fn get_state(&self) -> Arc<Snapshot>;
+    fn watch_state(&self) -> watch::Receiver<Arc<Snapshot>>;
 }
 
 pub type Forest = Arc<dyn ForestTrait>;
@@ -232,6 +236,8 @@ pub type Forest = Arc<dyn ForestTrait>;
 pub struct ForestImpl {
     metadata_store: MetadataStore,
     state: Arc<Mutex<Arc<Snapshot>>>,
+    state_tx: watch::Sender<Arc<Snapshot>>,
+    state_rx: watch::Receiver<Arc<Snapshot>>,
 }
 
 impl ForestImpl {
@@ -248,9 +254,14 @@ impl ForestImpl {
             None => Snapshot::default(),
         };
 
+        let initial_state = Arc::new(snapshot);
+        let (state_tx, state_rx) = watch::channel(initial_state.clone());
+
         let forest = Self {
             metadata_store,
-            state: Arc::new(Mutex::new(Arc::new(snapshot))),
+            state: Arc::new(Mutex::new(initial_state.clone())),
+            state_tx,
+            state_rx,
         };
 
         forest.apply_changelog_entries(entries).await?;
@@ -276,9 +287,14 @@ impl ForestImpl {
             None => Snapshot::default(),
         };
 
+        let initial_state = Arc::new(state);
+        let (state_tx, state_rx) = watch::channel(initial_state.clone());
+
         let forest = Self {
             metadata_store,
-            state: Arc::new(Mutex::new(Arc::new(state))),
+            state: Arc::new(Mutex::new(initial_state.clone())),
+            state_tx,
+            state_rx,
         };
 
         // Transform the stream
@@ -349,82 +365,96 @@ impl ForestImpl {
         }
 
         // Apply all updates atomically without holding lock across async operations
-        let mut state = self.state.lock().unwrap();
-        let new_state = Arc::make_mut(&mut state);
+        let updated_state = {
+            let mut state = self.state.lock().unwrap();
+            let new_state = Arc::make_mut(&mut state);
 
-        // First apply all run removals in batch
-        if !all_runs_to_remove.is_empty() {
-            new_state.wal.retain(|_, m| !all_runs_to_remove.contains(&m.id));
-            for table in new_state.trees.values_mut() {
-                table.buffer.retain(|_, m| !all_runs_to_remove.contains(&m.id));
-                for table_entries in table.tree.values_mut() {
-                    table_entries.retain(|_, m| !all_runs_to_remove.contains(&m.id));
+            // First apply all run removals in batch
+            if !all_runs_to_remove.is_empty() {
+                new_state.wal.retain(|_, m| !all_runs_to_remove.contains(&m.id));
+                for table in new_state.trees.values_mut() {
+                    table.buffer.retain(|_, m| !all_runs_to_remove.contains(&m.id));
+                    for table_entries in table.tree.values_mut() {
+                        table_entries.retain(|_, m| !all_runs_to_remove.contains(&m.id));
+                    }
                 }
             }
-        }
 
-        // Then apply all other changes
-        for entry in entries {
-            let seq_no = entry.id;
-            match entry.changes {
-                ChangelogEntry::RunsV1(v1) => {
-                    // Add new runs using pre-fetched metadata
-                    for run_id in v1.runs_added {
-                        if let Some(new_run) = all_run_metadata.get(&run_id).cloned() {
-                            match new_run.belongs_to {
-                                metadata::BelongsTo::WalSeqNo(seq_no) => {
-                                    new_state.wal.insert(seq_no, new_run);
-                                },
-                                metadata::BelongsTo::TableBuffer(table_id, seq_no) => {
-                                    if let Some(table) = new_state.trees.get_mut(&table_id) {
-                                        table.buffer.insert(seq_no, new_run);
-                                    }
-                                },
-                                metadata::BelongsTo::TableTreeLevel(table_id, level) => {
-                                    let min_key = match new_run.stats {
-                                        runs::Stats::StatsV1(ref stats) => stats.min_key.clone(),
-                                    };
+            // Then apply all other changes
+            for entry in entries {
+                let seq_no = entry.id;
+                match entry.changes {
+                    ChangelogEntry::RunsV1(v1) => {
+                        // Add new runs using pre-fetched metadata
+                        for run_id in v1.runs_added {
+                            if let Some(new_run) = all_run_metadata.get(&run_id).cloned() {
+                                match new_run.belongs_to {
+                                    metadata::BelongsTo::WalSeqNo(seq_no) => {
+                                        new_state.wal.insert(seq_no, new_run);
+                                    },
+                                    metadata::BelongsTo::TableBuffer(table_id, seq_no) => {
+                                        if let Some(table) = new_state.trees.get_mut(&table_id) {
+                                            table.buffer.insert(seq_no, new_run);
+                                        }
+                                    },
+                                    metadata::BelongsTo::TableTreeLevel(table_id, level) => {
+                                        let min_key = match new_run.stats {
+                                            runs::Stats::StatsV1(ref stats) => stats.min_key.clone(),
+                                        };
 
-                                    if let Some(table) = new_state.trees.get_mut(&table_id) {
-                                        table.tree.entry(level).or_default().insert(min_key, new_run);
-                                    }
-                                },
+                                        if let Some(table) = new_state.trees.get_mut(&table_id) {
+                                            table.tree.entry(level).or_default().insert(min_key, new_run);
+                                        }
+                                    },
+                                }
                             }
                         }
-                    }
-                },
-                ChangelogEntry::TablesV1(v1) => {
-                    let table_id = match v1 {
-                        TableChangelogEntryV1::TableCreated(table_id) => table_id,
-                        TableChangelogEntryV1::TableDropped(table_id) => table_id,
-                    };
-                    let table_config = table_configs.get(&table_id).unwrap().clone();
+                    },
+                    ChangelogEntry::TablesV1(v1) => {
+                        let table_id = match v1 {
+                            TableChangelogEntryV1::TableCreated(table_id) => table_id,
+                            TableChangelogEntryV1::TableDropped(table_id) => table_id,
+                        };
+                        let table_config = table_configs.get(&table_id).unwrap().clone();
 
-                    match v1 {
-                        TableChangelogEntryV1::TableCreated(_) => {
-                            debug!("Table created: {:?}", table_config);
-                            new_state.tables.insert(table_config.table_name.clone(), table_config);
-                            new_state.trees.insert(table_id, TableTree::default());
-                        },
-                        TableChangelogEntryV1::TableDropped(_) => {
-                            debug!("Table removed: {:?}", table_config);
-                            new_state.tables.remove(&table_config.table_name);
-                            new_state.trees.remove(&table_id);
-                        },
-                    }
-                },
+                        match v1 {
+                            TableChangelogEntryV1::TableCreated(_) => {
+                                debug!("Table created: {:?}", table_config);
+                                new_state.tables.insert(table_config.table_name.clone(), table_config);
+                                new_state.trees.insert(table_id, TableTree::default());
+                            },
+                            TableChangelogEntryV1::TableDropped(_) => {
+                                debug!("Table removed: {:?}", table_config);
+                                new_state.tables.remove(&table_config.table_name);
+                                new_state.trees.remove(&table_id);
+                            },
+                        }
+                    },
+                }
+
+                new_state.seq_no = seq_no;
             }
 
-            new_state.seq_no = seq_no;
+            state.clone()
+        };
+
+        // Notify watchers of the state change (outside the lock)
+        if self.state_tx.send(updated_state).is_err() {
+            // Receivers dropped, this is fine
         }
 
         Ok(())
     }
 }
 
+#[async_trait]
 impl ForestTrait for ForestImpl {
     fn get_state(&self) -> Arc<Snapshot> {
         self.state.lock().unwrap().clone()
+    }
+
+    fn watch_state(&self) -> watch::Receiver<Arc<Snapshot>> {
+        self.state_rx.clone()
     }
 }
 
@@ -661,6 +691,8 @@ mod tests {
         let forest = ForestImpl {
             metadata_store,
             state: Arc::new(Mutex::new(Arc::new(Snapshot::default()))),
+            state_tx: watch::channel(Arc::new(Snapshot::default())).0,
+            state_rx: watch::channel(Arc::new(Snapshot::default())).1,
         };
 
         // This should succeed and the mock will verify that get_run_metadata_batch
@@ -733,6 +765,8 @@ mod tests {
         let forest = ForestImpl {
             metadata_store,
             state: Arc::new(Mutex::new(Arc::new(Snapshot::default()))),
+            state_tx: watch::channel(Arc::new(Snapshot::default())).0,
+            state_rx: watch::channel(Arc::new(Snapshot::default())).1,
         };
 
         // This should call get_run_metadata_batch exactly once for the persistent run
@@ -803,6 +837,8 @@ mod tests {
         let forest = ForestImpl {
             metadata_store,
             state: Arc::new(Mutex::new(Arc::new(Snapshot::default()))),
+            state_tx: watch::channel(Arc::new(Snapshot::default())).0,
+            state_rx: watch::channel(Arc::new(Snapshot::default())).1,
         };
 
         // This should succeed because all runs are cancelled out, so no metadata
