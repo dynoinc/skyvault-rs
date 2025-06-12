@@ -134,7 +134,10 @@ pub async fn run_wal_compactor(metadata_store: MetadataStore, storage: ObjectSto
         }
 
         let state = state_rx.borrow().clone();
-        if last_seq_no.map(|last_seq_no| last_seq_no >= state.seq_no).unwrap_or(false) {
+        if last_seq_no
+            .map(|last_seq_no| last_seq_no >= state.seq_no)
+            .unwrap_or(false)
+        {
             continue;
         }
 

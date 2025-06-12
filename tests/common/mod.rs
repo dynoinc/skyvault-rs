@@ -1,4 +1,7 @@
-use std::process::Stdio;
+use std::{
+    process::Stdio,
+    time::Duration,
+};
 
 use anyhow::{
     Result,
@@ -8,64 +11,50 @@ use tokio::process::{
     Child,
     Command,
 };
+use tokio_retry::{
+    Retry,
+    strategy::FixedInterval,
+};
 use tonic::transport::Channel;
 
-/// Set up a gRPC connection to a minikube service.
-/// This function runs `minikube service <service_name> --url
-/// --format={{.IP}}:{{.Port}}` in the background and creates an insecure
-/// gRPC channel. Returns both the channel and a handle to the running process.
+/// Set up a gRPC connection to a service using kubectl port-forward.
+/// Returns both the channel and a handle to the running process.
 pub async fn setup_connection(service_name: &str) -> Result<(Channel, Child)> {
-    let mut command = Command::new("minikube");
-    command
-        .args(["service", service_name, "--url", "--format={{.IP}}:{{.Port}}"])
+    // Get a random available port
+    let listener =
+        std::net::TcpListener::bind("127.0.0.1:0").map_err(|e| anyhow!("Failed to bind to random port: {}", e))?;
+    let local_port = listener
+        .local_addr()
+        .map_err(|e| anyhow!("Failed to get local port: {}", e))?
+        .port();
+    drop(listener);
+
+    // Start port forwarding
+    let child = Command::new("kubectl")
+        .args([
+            "port-forward",
+            &format!("service/{service_name}"),
+            &format!("{local_port}:50051"),
+        ])
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-
-    let mut child = command
+        .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| anyhow!("Failed to spawn minikube command: {}", e))?;
+        .map_err(|e| anyhow!("Failed to spawn kubectl port-forward: {}", e))?;
 
-    // Read the initial output to get the service URL
-    let stdout = child.stdout.take().ok_or_else(|| anyhow!("Failed to capture stdout"))?;
+    // Create channel using the forwarded port
+    let endpoint = format!("http://127.0.0.1:{local_port}");
+    eprintln!("Connecting to {endpoint} (using port-forward)");
 
-    let mut reader = tokio::io::BufReader::new(stdout);
-    let mut service_url = String::new();
-
-    use tokio::io::AsyncBufReadExt;
-    reader
-        .read_line(&mut service_url)
-        .await
-        .map_err(|e| anyhow!("Failed to read service URL: {}", e))?;
-
-    let service_url = service_url.trim();
-
-    // Validate the format matches IP:PORT pattern
-    let ip_port_regex = regex::Regex::new(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}:\d+$")
-        .map_err(|e| anyhow!("Failed to compile regex: {}", e))?;
-
-    if !ip_port_regex.is_match(service_url) {
-        // Kill the child process if URL format is invalid
-        let _ = child.kill().await;
-        return Err(anyhow!(
-            "Unable to get service URL for {}. Got: '{}'",
-            service_name,
-            service_url
-        ));
-    }
-
-    // Create insecure gRPC channel with health check
-    let endpoint = format!("http://{service_url}");
-    eprintln!("Connecting to {endpoint}");
-    let channel = Channel::from_shared(endpoint)
-        .map_err(|e| anyhow!("Failed to create channel endpoint: {}", e))?
-        .connect_timeout(std::time::Duration::from_secs(2))
-        .connect()
-        .await
-        .map_err(|e| {
-            // Kill the child process if connection fails
-            let _ = child.start_kill();
-            anyhow!("Failed to connect to service: {}", e)
-        })?;
+    let retry_strategy = FixedInterval::from_millis(100).take(20);
+    let channel = Retry::spawn(retry_strategy, || async {
+        Channel::from_shared(endpoint.clone())
+            .map_err(|e| anyhow!("Failed to create channel endpoint: {e}"))?
+            .connect_timeout(Duration::from_secs(2))
+            .connect()
+            .await
+            .map_err(|e| anyhow!("Failed to connect to service: {e}"))
+    })
+    .await?;
 
     Ok((channel, child))
 }

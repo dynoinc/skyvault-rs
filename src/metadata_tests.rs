@@ -147,9 +147,9 @@ async fn test_high_load_wal_and_compaction() {
                 if state_rx.changed().await.is_err() {
                     break;
                 }
-                
+
                 let state = state_rx.borrow().clone();
-                
+
                 if let Some(last_seq_no) = last_seq_no {
                     if last_seq_no >= state.seq_no {
                         println!(
@@ -163,7 +163,10 @@ async fn test_high_load_wal_and_compaction() {
                 // Use same logic as wal_compaction.rs: take up to 16 WAL runs
                 let count = std::cmp::min(16, state.wal.len());
                 if count == 0 {
-                    println!("Compactor {compactor_id}: waiting for new WAL runs, new state available with {} WAL runs", state.wal.len());
+                    println!(
+                        "Compactor {compactor_id}: waiting for new WAL runs, new state available with {} WAL runs",
+                        state.wal.len()
+                    );
                     continue;
                 }
 

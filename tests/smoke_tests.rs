@@ -26,9 +26,12 @@ struct TestStubs {
 async fn setup_stubs() -> Result<TestStubs> {
     let ((writer_channel, writer_child), (reader_channel, reader_child), (orchestrator_channel, orchestrator_child)) =
         tokio::try_join!(
-            common::setup_connection("skyvault-writer").map_err(|e| anyhow::anyhow!("Failed to setup writer connection: {e}")),
-            common::setup_connection("skyvault-reader").map_err(|e| anyhow::anyhow!("Failed to setup reader connection: {e}")),
-            common::setup_connection("skyvault-orchestrator").map_err(|e| anyhow::anyhow!("Failed to setup orchestrator connection: {e}"))
+            common::setup_connection("skyvault-writer")
+                .map_err(|e| anyhow::anyhow!("Failed to setup writer connection: {e}")),
+            common::setup_connection("skyvault-reader")
+                .map_err(|e| anyhow::anyhow!("Failed to setup reader connection: {e}")),
+            common::setup_connection("skyvault-orchestrator")
+                .map_err(|e| anyhow::anyhow!("Failed to setup orchestrator connection: {e}"))
         )?;
 
     Ok(TestStubs {
