@@ -45,6 +45,9 @@ diff:
 pgshell:
     kubectl exec -it $(kubectl get pods -l app.kubernetes.io/component=postgres -o jsonpath="{.items[0].metadata.name}") -- psql -U postgres -d skyvault
 
+integration-tests:
+    RUST_BACKTRACE=1 cargo test -- --ignored --nocapture --test-threads=1
+
 smoke:
     RUST_BACKTRACE=1 cargo test --test smoke_tests -- --ignored --nocapture --test-threads=1
 

@@ -124,9 +124,17 @@ pub async fn execute(
 pub async fn run_wal_compactor(metadata_store: MetadataStore, storage: ObjectStore) -> anyhow::Result<()> {
     let forest = ForestImpl::watch(metadata_store.clone(), storage.clone(), |stream| stream).await?;
 
+    let mut last_seq_no = None;
     tracing::info!("Starting WAL compactor daemon");
     loop {
         let state = forest.get_state();
+        if let Some(last_seq_no) = last_seq_no {
+            if last_seq_no > state.seq_no {
+                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                continue;
+            }
+        }
+
         let total_wal_size = state
             .wal
             .values()
@@ -153,15 +161,16 @@ pub async fn run_wal_compactor(metadata_store: MetadataStore, storage: ObjectSto
 
         let result = async {
             let (compacted, table_runs) = wal_compaction::execute(storage.clone(), &state).await?;
-            metadata_store
+            let seq_no = metadata_store
                 .append_wal_compaction(None, compacted, table_runs)
                 .await?;
-            Ok::<(), anyhow::Error>(())
+            Ok::<_, anyhow::Error>(seq_no)
         }
         .await;
 
         match result {
-            Ok(_) => {
+            Ok(seq_no) => {
+                last_seq_no = Some(seq_no);
                 transaction.set_status(sentry::protocol::SpanStatus::Ok);
                 tracing::info!("WAL compaction completed successfully");
             },

@@ -1113,12 +1113,15 @@ impl MetadataStoreTrait for PostgresMetadataStore {
                 .fetch_all(&pg_pool)
                 .await?;
 
-                for entry in new_entries {
+                let found_new_entries = !new_entries.is_empty();
+                for entry in new_entries {  
                     last_id = entry.id;
                     yield Ok(entry);
                 }
 
-                tokio::time::sleep(Duration::from_secs(1)).await;
+                if !found_new_entries {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
             }
         };
 

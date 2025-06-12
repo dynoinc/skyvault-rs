@@ -19,9 +19,12 @@ pub mod observability;
 pub mod orchestrator_service;
 mod pod_watcher;
 pub mod reader_service;
-mod runs;
+pub mod runs;
 pub mod storage;
 pub mod writer_service;
 
 #[cfg(test)]
 pub mod test_utils;
+
+#[cfg(test)]
+mod metadata_tests;
