@@ -1536,7 +1536,9 @@ impl MetadataStoreTrait for PostgresMetadataStore {
 mod tests {
     use super::*;
     use crate::{
-        requires_docker, runs::StatsV1, test_utils::setup_test_db
+        requires_docker,
+        runs::StatsV1,
+        test_utils::setup_test_db,
     };
 
     #[tokio::test]
@@ -1615,7 +1617,7 @@ mod tests {
     #[tokio::test]
     async fn test_wal_compaction_job_without_job_id() {
         requires_docker!();
-        
+
         let metadata_store = setup_test_db().await.unwrap();
 
         // Create some test runs to compact
@@ -1631,8 +1633,14 @@ mod tests {
         });
 
         // Add the runs to WAL first
-        metadata_store.append_wal(vec![(compacted_run_ids[0].clone(), stats.clone())]).await.unwrap();
-        metadata_store.append_wal(vec![(compacted_run_ids[1].clone(), stats.clone())]).await.unwrap();
+        metadata_store
+            .append_wal(vec![(compacted_run_ids[0].clone(), stats.clone())])
+            .await
+            .unwrap();
+        metadata_store
+            .append_wal(vec![(compacted_run_ids[1].clone(), stats.clone())])
+            .await
+            .unwrap();
 
         let new_runs = vec![(new_run_id.clone(), table_id, stats.clone())];
 
@@ -1642,16 +1650,23 @@ mod tests {
             .await
             .unwrap();
 
-        // Verify the compacted runs still exist in metadata (they get marked as deleted, not removed)
+        // Verify the compacted runs still exist in metadata (they get marked as
+        // deleted, not removed)
         for run_id in &compacted_run_ids {
-            let run = metadata_store.get_run_metadata_batch(vec![run_id.clone()]).await.unwrap();
+            let run = metadata_store
+                .get_run_metadata_batch(vec![run_id.clone()])
+                .await
+                .unwrap();
             assert!(run.contains_key(run_id));
         }
 
         // Verify new run was created
-        let new_run_metadata = metadata_store.get_run_metadata_batch(vec![new_run_id.clone()]).await.unwrap();
+        let new_run_metadata = metadata_store
+            .get_run_metadata_batch(vec![new_run_id.clone()])
+            .await
+            .unwrap();
         assert!(new_run_metadata.contains_key(&new_run_id));
-        
+
         // Verify the new run has the correct belongs_to (should be TableBuffer)
         let new_run = &new_run_metadata[&new_run_id];
         match &new_run.belongs_to {
@@ -1659,10 +1674,11 @@ mod tests {
             _ => panic!("Expected new run to belong to TableBuffer"),
         }
 
-        // Verify changelog entries were created (2 from initial WAL appends + 1 from compaction)
+        // Verify changelog entries were created (2 from initial WAL appends + 1 from
+        // compaction)
         let changelog = metadata_store.get_changelog(SeqNo::zero()).await.unwrap();
         assert_eq!(changelog.len(), 3);
-        
+
         // The last changelog entry should be the compaction
         let last_entry = &changelog[2];
         match &last_entry.changes {

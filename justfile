@@ -24,6 +24,7 @@ build:
     kubectl delete pod -l app.kubernetes.io/component=skyvault-writer
     kubectl delete pod -l app.kubernetes.io/component=skyvault-orchestrator
     kubectl delete pod -l app.kubernetes.io/component=skyvault-cache
+    kubectl delete pod -l app.kubernetes.io/component=skyvault-wal-compactor
 
 deploy:
     helm upgrade --install dev ./charts/skyvault \

@@ -123,6 +123,8 @@ async fn perform_read_with_retry(
                         }
                     }
                 }
+
+                tokio::time::sleep(delay).await;
             },
             Err(e) if e.code() == tonic::Code::FailedPrecondition => {
                 tokio::time::sleep(delay).await;

@@ -186,6 +186,7 @@ message GetJobStatusResponse {
 }
 
 message DumpSnapshotSummaryRequest {
+  int64 seq_no = 1;
 }
 
 message DumpSnapshotSummaryResponse {
@@ -199,6 +200,7 @@ message TableSummary {
   uint64 buffer_size_bytes = 2;
   uint64 buffer_run_count = 3;
   repeated TableLevelSummary levels = 4;
+  int64 table_id = 5;
 }
 
 message TableLevelSummary {
@@ -209,6 +211,7 @@ message TableLevelSummary {
 
 
 message DumpSnapshotRequest {
+  int64 seq_no = 1;
 }
 
 message DumpSnapshotResponse {

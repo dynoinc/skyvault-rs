@@ -314,10 +314,6 @@ impl ForestImpl {
 
     /// Apply multiple changelog entries efficiently with batched database calls
     async fn apply_changelog_entries(&self, entries: Vec<ChangelogEntryWithID>) -> Result<(), ForestError> {
-        if entries.is_empty() {
-            return Ok(());
-        }
-
         // Collect all run IDs that need to be fetched across all entries
         let mut all_runs_to_add = Vec::new();
         let mut all_runs_to_remove = Vec::new();
@@ -343,12 +339,8 @@ impl ForestImpl {
         // Remove runs that are both added and removed in the same batch
         all_runs_to_add.retain(|run_id| !all_runs_to_remove.contains(run_id));
 
-        // Fetch all data in parallel batches - only if there are runs to fetch
-        let all_run_metadata = if !all_runs_to_add.is_empty() {
-            self.metadata_store.get_run_metadata_batch(all_runs_to_add).await?
-        } else {
-            HashMap::new()
-        };
+        // Fetch all data in parallel batches
+        let all_run_metadata = self.metadata_store.get_run_metadata_batch(all_runs_to_add).await?;
 
         let mut table_configs = HashMap::new();
         for table_id in table_ids_to_fetch {
@@ -368,7 +360,6 @@ impl ForestImpl {
                 for table_entries in table.tree.values_mut() {
                     table_entries.retain(|_, m| !all_runs_to_remove.contains(&m.id));
                 }
-                table.tree.retain(|_, table_entries| !table_entries.is_empty());
             }
         }
 
@@ -385,26 +376,18 @@ impl ForestImpl {
                                     new_state.wal.insert(seq_no, new_run);
                                 },
                                 metadata::BelongsTo::TableBuffer(table_id, seq_no) => {
-                                    new_state
-                                        .trees
-                                        .entry(table_id)
-                                        .or_default()
-                                        .buffer
-                                        .insert(seq_no, new_run);
+                                    if let Some(table) = new_state.trees.get_mut(&table_id) {
+                                        table.buffer.insert(seq_no, new_run);
+                                    }
                                 },
                                 metadata::BelongsTo::TableTreeLevel(table_id, level) => {
                                     let min_key = match new_run.stats {
                                         runs::Stats::StatsV1(ref stats) => stats.min_key.clone(),
                                     };
 
-                                    new_state
-                                        .trees
-                                        .entry(table_id)
-                                        .or_default()
-                                        .tree
-                                        .entry(level)
-                                        .or_default()
-                                        .insert(min_key, new_run);
+                                    if let Some(table) = new_state.trees.get_mut(&table_id) {
+                                        table.tree.entry(level).or_default().insert(min_key, new_run);
+                                    }
                                 },
                             }
                         }
@@ -417,11 +400,11 @@ impl ForestImpl {
                     };
                     let table_config = table_configs.get(&table_id).unwrap().clone();
 
-                    // Apply table changes directly
                     match v1 {
                         TableChangelogEntryV1::TableCreated(_) => {
                             debug!("Table created: {:?}", table_config);
                             new_state.tables.insert(table_config.table_name.clone(), table_config);
+                            new_state.trees.insert(table_id, TableTree::default());
                         },
                         TableChangelogEntryV1::TableDropped(_) => {
                             debug!("Table removed: {:?}", table_config);
@@ -431,6 +414,7 @@ impl ForestImpl {
                     }
                 },
             }
+
             new_state.seq_no = seq_no;
         }
 

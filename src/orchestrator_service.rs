@@ -453,9 +453,17 @@ impl MyOrchestrator {
 impl proto::orchestrator_service_server::OrchestratorService for MyOrchestrator {
     async fn dump_snapshot(
         &self,
-        _request: Request<proto::DumpSnapshotRequest>,
+        request: Request<proto::DumpSnapshotRequest>,
     ) -> Result<Response<proto::DumpSnapshotResponse>, Status> {
+        let requested_seq_no = SeqNo::from(request.into_inner().seq_no);
         let state = self.forest.get_state();
+
+        if requested_seq_no != SeqNo::zero() && requested_seq_no > state.seq_no {
+            return Err(Status::failed_precondition(format!(
+                "Requested seq_no {requested_seq_no} is greater than current seq_no {}",
+                state.seq_no
+            )));
+        }
 
         Ok(Response::new(proto::DumpSnapshotResponse {
             snapshot: Some(Arc::unwrap_or_clone(state).into()),
@@ -464,9 +472,17 @@ impl proto::orchestrator_service_server::OrchestratorService for MyOrchestrator 
 
     async fn dump_snapshot_summary(
         &self,
-        _request: Request<proto::DumpSnapshotSummaryRequest>,
+        request: Request<proto::DumpSnapshotSummaryRequest>,
     ) -> Result<Response<proto::DumpSnapshotSummaryResponse>, Status> {
+        let requested_seq_no = SeqNo::from(request.into_inner().seq_no);
         let state = self.forest.get_state();
+
+        if requested_seq_no != SeqNo::zero() && requested_seq_no > state.seq_no {
+            return Err(Status::failed_precondition(format!(
+                "Requested seq_no {requested_seq_no} is greater than current seq_no {}",
+                state.seq_no
+            )));
+        }
 
         let mut tables = Vec::new();
         for (table_id, table) in state.trees.iter() {
@@ -478,6 +494,7 @@ impl proto::orchestrator_service_server::OrchestratorService for MyOrchestrator 
                 .unwrap_or("unknown".to_string());
 
             let mut table_summary = proto::TableSummary {
+                table_id: (*table_id).into(),
                 table_name: table_name.to_string(),
                 buffer_size_bytes: table
                     .buffer
