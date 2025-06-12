@@ -6,7 +6,7 @@ import "google/protobuf/empty.proto";
 
 // WRITER
 service WriterService {
-  rpc WriteBatch (WriteBatchRequest) returns (WriteBatchResponse);
+  rpc WriteBatch(WriteBatchRequest) returns (WriteBatchResponse);
 }
 
 message WriteBatchRequest {
@@ -31,9 +31,9 @@ message WriteBatchResponse {
 
 // CACHE
 service CacheService {
-  rpc GetFromRun (GetFromRunRequest) returns (GetFromRunResponse);
-  rpc ScanFromRun (ScanFromRunRequest) returns (ScanFromRunResponse);
-  rpc Prefetch (PrefetchRequest) returns (PrefetchResponse);
+  rpc GetFromRun(GetFromRunRequest) returns (GetFromRunResponse);
+  rpc ScanFromRun(ScanFromRunRequest) returns (ScanFromRunResponse);
+  rpc Prefetch(PrefetchRequest) returns (PrefetchResponse);
 }
 
 message GetFromRunRequest {
@@ -117,20 +117,20 @@ message ScanItem {
 
 // ORCHESTRATOR
 service OrchestratorService {
-  rpc DumpSnapshot (DumpSnapshotRequest) returns (DumpSnapshotResponse);
-  rpc DumpSnapshotSummary (DumpSnapshotSummaryRequest) returns (DumpSnapshotSummaryResponse);
-  rpc DumpChangelog (DumpChangelogRequest) returns (DumpChangelogResponse);
+  rpc DumpSnapshot(DumpSnapshotRequest) returns (DumpSnapshotResponse);
+  rpc DumpSnapshotSummary(DumpSnapshotSummaryRequest) returns (DumpSnapshotSummaryResponse);
+  rpc DumpChangelog(DumpChangelogRequest) returns (DumpChangelogResponse);
 
-  rpc KickOffJob (KickOffJobRequest) returns (KickOffJobResponse);
-  rpc ListJobs (ListJobsRequest) returns (ListJobsResponse);
-  rpc GetJobStatus (GetJobStatusRequest) returns (GetJobStatusResponse);
+  rpc KickOffJob(KickOffJobRequest) returns (KickOffJobResponse);
+  rpc ListJobs(ListJobsRequest) returns (ListJobsResponse);
+  rpc GetJobStatus(GetJobStatusRequest) returns (GetJobStatusResponse);
 
-  rpc CreateTable (CreateTableRequest) returns (CreateTableResponse);
-  rpc ListTables (ListTablesRequest) returns (ListTablesResponse);
-  rpc DropTable (DropTableRequest) returns (DropTableResponse);
-  rpc GetTable (GetTableRequest) returns (GetTableResponse);
+  rpc CreateTable(CreateTableRequest) returns (CreateTableResponse);
+  rpc ListTables(ListTablesRequest) returns (ListTablesResponse);
+  rpc DropTable(DropTableRequest) returns (DropTableResponse);
+  rpc GetTable(GetTableRequest) returns (GetTableResponse);
 
-  rpc PersistSnapshot (PersistSnapshotRequest) returns (PersistSnapshotResponse);
+  rpc PersistSnapshot(PersistSnapshotRequest) returns (PersistSnapshotResponse);
 }
 
 message TableTreeCompaction {
@@ -176,7 +176,6 @@ message ListJobsResponse {
   repeated Job jobs = 1;
 }
 
-
 message GetJobStatusRequest {
   int64 job_id = 1;
 }
@@ -208,7 +207,6 @@ message TableLevelSummary {
   uint64 size_bytes = 2;
   uint64 run_count = 3;
 }
-
 
 message DumpSnapshotRequest {
   int64 seq_no = 1;
@@ -349,6 +347,6 @@ message GetTableResponse {
 }
 
 message TableConfig {
-  int64 table_id = 1; // assigned after table is created
+  int64 table_id = 1;  // assigned after table is created
   string table_name = 2;
 }
