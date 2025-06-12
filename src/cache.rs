@@ -24,6 +24,7 @@ use schnellru::{
 use tokio::{
     fs,
     sync::RwLock,
+    task::JoinHandle,
 };
 use tracing::{
     debug,
@@ -31,24 +32,16 @@ use tracing::{
     warn,
 };
 
+/// On Unix-like systems, deleting a file only removes its directory entry; the
+/// file's data remains accessible via open file handles or memory maps (mmap)
+/// until all references are closed. This ensures that even after cache eviction
+/// and file deletion, any reader holding an mmap can safely access the data
+/// until it is dropped.
 #[derive(Debug)]
 pub struct OnDiskData {
     path: PathBuf,
     _file: File,
     mmap: Mmap,
-}
-
-impl Drop for OnDiskData {
-    fn drop(&mut self) {
-        let path = self.path.clone();
-        tokio::spawn(async move {
-            if let Err(e) = fs::remove_file(&path).await {
-                warn!("Failed to delete cache file {:?}: {}", path, e);
-            } else {
-                debug!("Deleted cache file: {:?}", path);
-            }
-        });
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -307,13 +300,24 @@ impl DiskCache {
         state.insert(key.clone(), entry);
 
         while state.limiter().is_over_the_limit(state.len()) {
-            state.pop_oldest();
+            if let Some((_key, value)) = state.pop_oldest() {
+                if let CacheData::OnDisk(data) = value.data {
+                    let path = data.path.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = fs::remove_file(&path).await {
+                            warn!("Failed to delete evicted cache file {:?}: {}", path, e);
+                        } else {
+                            debug!("Deleted evicted cache file: {:?}", path);
+                        }
+                    });
+                }
+            }
         }
 
         Ok(())
     }
 
-    pub async fn put(&self, key: String, data: CacheData) -> Result<()> {
+    pub async fn put(&self, key: String, data: CacheData) -> Result<JoinHandle<()>> {
         let size = data.len() as u64;
         let bytes_data = Bytes::copy_from_slice(data.as_bytes());
 
@@ -330,7 +334,7 @@ impl DiskCache {
         let state = self.state.clone();
         let key_clone = key.clone();
 
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             if let Err(e) = Self::write_to_disk(&file_path, &bytes_data).await {
                 warn!("Failed to write cache entry to disk: {}", e);
                 return;
@@ -373,7 +377,7 @@ impl DiskCache {
             }
         });
 
-        Ok(())
+        Ok(handle)
     }
 
     async fn write_to_disk(file_path: &PathBuf, data: &Bytes) -> Result<()> {
@@ -448,7 +452,7 @@ mod tests {
         let key = "test_key".to_string();
         let data = b"Hello, World!";
 
-        cache.put(key.clone(), data.into()).await.unwrap();
+        cache.put(key.clone(), data.into()).await.unwrap().await.unwrap();
 
         let mmap_view = cache.get_mmap(&key).await.unwrap();
         assert_eq!(mmap_view.as_bytes(), data);
@@ -461,9 +465,24 @@ mod tests {
         let (cache, _temp_dir) = create_test_cache().await;
 
         // Add data that exceeds the 1KB limit
-        cache.put("key1".to_string(), vec![0u8; 400].into()).await.unwrap(); // 400 bytes
-        cache.put("key2".to_string(), vec![1u8; 400].into()).await.unwrap(); // 400 bytes
-        cache.put("key3".to_string(), vec![2u8; 400].into()).await.unwrap(); // 400 bytes - should evict key1
+        cache
+            .put("key1".to_string(), vec![0u8; 400].into())
+            .await
+            .unwrap()
+            .await
+            .unwrap(); // 400 bytes
+        cache
+            .put("key2".to_string(), vec![1u8; 400].into())
+            .await
+            .unwrap()
+            .await
+            .unwrap(); // 400 bytes
+        cache
+            .put("key3".to_string(), vec![2u8; 400].into())
+            .await
+            .unwrap()
+            .await
+            .unwrap(); // 400 bytes - should evict key1
 
         // key1 should be evicted due to size limit
         assert!(!cache.contains_key("key1").await);
@@ -477,26 +496,24 @@ mod tests {
     #[tokio::test]
     async fn test_cache_persistence() {
         let temp_dir = TempDir::new().unwrap();
-        let cache = DiskCache::new_with_max_size(temp_dir.path().to_path_buf(), 2048)
+        let cache_dir = temp_dir.path().to_path_buf();
+        let cache = DiskCache::new_with_max_size(cache_dir.clone(), 2048).await.unwrap();
+
+        // Create cache and add some data
+        cache
+            .put("persistent_key".to_string(), b"persistent_data".into())
+            .await
+            .unwrap()
             .await
             .unwrap();
 
-        // Create cache and add some data
-        {
-            cache
-                .put("persistent_key".to_string(), b"persistent_data".into())
-                .await
-                .unwrap();
-        }
+        // Drop the first cache instance to ensure it's closed.
+        drop(cache);
 
         // Create new cache instance and verify data persists
-        {
-            let cache = DiskCache::new_with_max_size(temp_dir.path().to_path_buf(), 2048)
-                .await
-                .unwrap();
-            let mmap_view = cache.get_mmap("persistent_key").await.unwrap();
-            assert_eq!(mmap_view.as_bytes(), b"persistent_data");
-        }
+        let cache = DiskCache::new_with_max_size(cache_dir, 2048).await.unwrap();
+        let mmap_view = cache.get_mmap("persistent_key").await.unwrap();
+        assert_eq!(mmap_view.as_bytes(), b"persistent_data");
     }
 
     #[tokio::test]
