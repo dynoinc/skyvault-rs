@@ -32,7 +32,7 @@ use tracing::debug;
 use crate::{
     proto,
     runs::{
-        RunId,
+        RunID,
         Stats,
     },
 };
@@ -52,7 +52,7 @@ pub enum MetadataError {
     AlreadyDeleted(String),
 
     #[error("Job is not in pending state")]
-    InvalidJobState(String),
+    InvalidJobState,
 
     #[error("Job not found: {0}")]
     JobNotFound(JobID),
@@ -256,7 +256,7 @@ impl From<proto::run_metadata::BelongsTo> for BelongsTo {
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct RunMetadata {
-    pub id: RunId,
+    pub id: RunID,
     pub belongs_to: BelongsTo,
     pub stats: Stats,
 }
@@ -289,8 +289,8 @@ impl From<proto::RunMetadata> for RunMetadata {
 
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 pub struct RunsChangelogEntryV1 {
-    pub runs_added: Vec<RunId>,
-    pub runs_removed: Vec<RunId>,
+    pub runs_added: Vec<RunID>,
+    pub runs_removed: Vec<RunID>,
 }
 
 impl From<RunsChangelogEntryV1> for proto::RunsChangelogEntryV1 {
@@ -516,20 +516,20 @@ pub trait MetadataStoreTrait: Send + Sync + 'static {
     async fn get_changelog(&self, from_seq_no: SeqNo) -> Result<Vec<ChangelogEntryWithID>, MetadataError>;
 
     // WAL & COMPACTIONS
-    async fn append_wal(&self, run_ids: Vec<(RunId, Stats)>) -> Result<SeqNo, MetadataError>;
+    async fn append_wal(&self, run_ids: Vec<(RunID, Stats)>) -> Result<SeqNo, MetadataError>;
     async fn append_wal_compaction(
         &self,
-        job_id: JobID,
-        compacted: Vec<RunId>,
-        new_table_runs: Vec<(RunId, TableID, Stats)>,
+        job_id: Option<JobID>,
+        compacted: Vec<RunID>,
+        new_table_runs: Vec<(RunID, TableID, Stats)>,
     ) -> Result<SeqNo, MetadataError>;
     async fn append_table_compaction(
         &self,
         job_id: JobID,
-        compacted: Vec<RunId>,
+        compacted: Vec<RunID>,
         new_runs: Vec<RunMetadata>,
     ) -> Result<SeqNo, MetadataError>;
-    async fn get_run_metadata_batch(&self, run_ids: Vec<RunId>) -> Result<HashMap<RunId, RunMetadata>, MetadataError>;
+    async fn get_run_metadata_batch(&self, run_ids: Vec<RunID>) -> Result<HashMap<RunID, RunMetadata>, MetadataError>;
 
     // JOBS
     async fn schedule_job(&self, job_params: JobParams) -> Result<JobID, MetadataError>;
@@ -570,7 +570,7 @@ impl PostgresMetadataStore {
 
     /// Attempts to perform the append_wal operation within a single
     /// transaction.
-    async fn append_wal_attempt(&self, run_ids_with_stats: &[(RunId, Stats)]) -> Result<SeqNo, MetadataError> {
+    async fn append_wal_attempt(&self, run_ids_with_stats: &[(RunID, Stats)]) -> Result<SeqNo, MetadataError> {
         let mut transaction = self.pg_pool.begin().await?;
 
         let first_seq_no: i64 = sqlx::query_scalar("SELECT nextval('changelog_id_seq')")
@@ -667,9 +667,9 @@ impl PostgresMetadataStore {
     /// transaction.
     async fn append_wal_compaction_attempt(
         &self,
-        job_id: JobID,
-        compacted: &[RunId],
-        new_table_runs: &[(RunId, TableID, Stats)],
+        job_id: Option<JobID>,
+        compacted: &[RunID],
+        new_table_runs: &[(RunID, TableID, Stats)],
     ) -> Result<SeqNo, MetadataError> {
         let mut transaction = self.pg_pool.begin().await?;
 
@@ -684,7 +684,7 @@ impl PostgresMetadataStore {
             )
             SELECT COUNT(*) FROM updated_runs
             "#,
-            compacted as &[RunId]
+            compacted as &[RunID]
         )
         .fetch_one(&mut *transaction) // Deref
         .await?;
@@ -733,20 +733,21 @@ impl PostgresMetadataStore {
         .execute(&mut *transaction) // Deref
         .await?;
 
-        PostgresMetadataStore::mark_job_completed(
-            &mut transaction,
-            job_id,
-            serde_json::to_value(first_seq_no).map_err(MetadataError::JsonSerdeError)?,
-        )
-        .await
-        .map_err(|e| {
-            if matches!(e, sqlx::Error::RowNotFound) {
-                // Directly return the specific MetadataError
-                MetadataError::InvalidJobState(format!("Job {job_id} update failed or not in pending state."))
-            } else {
-                MetadataError::DatabaseError(e) // Propagate other DB errors
-            }
-        })?;
+        if let Some(job_id) = job_id {
+            PostgresMetadataStore::mark_job_completed(
+                &mut transaction,
+                job_id,
+                serde_json::to_value(first_seq_no).map_err(MetadataError::JsonSerdeError)?,
+            )
+            .await
+            .map_err(|e| {
+                if matches!(e, sqlx::Error::RowNotFound) {
+                    MetadataError::InvalidJobState
+                } else {
+                    MetadataError::DatabaseError(e)
+                }
+            })?;
+        }
 
         // --- Insert New Runs (if any) ---
         if n_new_runs > 0 {
@@ -794,7 +795,7 @@ impl PostgresMetadataStore {
         &self,
         transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         job_id: JobID,
-        compacted: &[RunId],
+        compacted: &[RunID],
         new_runs: &[RunMetadata],
     ) -> Result<SeqNo, MetadataError> {
         let result = sqlx::query!(
@@ -808,7 +809,7 @@ impl PostgresMetadataStore {
             )
             SELECT COUNT(*) FROM updated_runs
             "#,
-            compacted as &[RunId]
+            compacted as &[RunID]
         )
         .fetch_one(&mut **transaction)
         .await?;
@@ -842,7 +843,7 @@ impl PostgresMetadataStore {
             .await
             .map_err(|e| {
                 if matches!(e, sqlx::Error::RowNotFound) {
-                    MetadataError::InvalidJobState(format!("Job {job_id} is not in pending state"))
+                    MetadataError::InvalidJobState
                 } else {
                     MetadataError::DatabaseError(e)
                 }
@@ -903,7 +904,7 @@ impl InstrumentedMetadataStore {
                 MetadataError::DatabaseMigrationError(_) => "migration_error".to_string(),
                 MetadataError::JsonSerdeError(_) => "json_error".to_string(),
                 MetadataError::AlreadyDeleted(_) => "already_deleted".to_string(),
-                MetadataError::InvalidJobState(_) => "invalid_job_state".to_string(),
+                MetadataError::InvalidJobState => "invalid_job_state".to_string(),
                 MetadataError::JobNotFound(_) => "job_not_found".to_string(),
                 MetadataError::TableAlreadyExists(_) => "table_exists".to_string(),
                 MetadataError::TableNotFound(_) => "table_not_found".to_string(),
@@ -964,16 +965,16 @@ impl MetadataStoreTrait for InstrumentedMetadataStore {
     }
 
     #[tracing::instrument(skip(self))]
-    async fn append_wal(&self, run_ids: Vec<(RunId, Stats)>) -> Result<SeqNo, MetadataError> {
+    async fn append_wal(&self, run_ids: Vec<(RunID, Stats)>) -> Result<SeqNo, MetadataError> {
         Self::record_metrics("append_wal", || self.inner.append_wal(run_ids)).await
     }
 
     #[tracing::instrument(skip(self))]
     async fn append_wal_compaction(
         &self,
-        job_id: JobID,
-        compacted: Vec<RunId>,
-        new_table_runs: Vec<(RunId, TableID, Stats)>,
+        job_id: Option<JobID>,
+        compacted: Vec<RunID>,
+        new_table_runs: Vec<(RunID, TableID, Stats)>,
     ) -> Result<SeqNo, MetadataError> {
         Self::record_metrics("append_wal_compaction", || {
             self.inner.append_wal_compaction(job_id, compacted, new_table_runs)
@@ -985,7 +986,7 @@ impl MetadataStoreTrait for InstrumentedMetadataStore {
     async fn append_table_compaction(
         &self,
         job_id: JobID,
-        compacted: Vec<RunId>,
+        compacted: Vec<RunID>,
         new_runs: Vec<RunMetadata>,
     ) -> Result<SeqNo, MetadataError> {
         Self::record_metrics("append_table_compaction", || {
@@ -995,7 +996,7 @@ impl MetadataStoreTrait for InstrumentedMetadataStore {
     }
 
     #[tracing::instrument(skip(self))]
-    async fn get_run_metadata_batch(&self, run_ids: Vec<RunId>) -> Result<HashMap<RunId, RunMetadata>, MetadataError> {
+    async fn get_run_metadata_batch(&self, run_ids: Vec<RunID>) -> Result<HashMap<RunID, RunMetadata>, MetadataError> {
         Self::record_metrics("get_run_metadata_batch", || self.inner.get_run_metadata_batch(run_ids)).await
     }
 
@@ -1136,7 +1137,7 @@ impl MetadataStoreTrait for PostgresMetadataStore {
         Ok(entries)
     }
 
-    async fn append_wal(&self, run_ids_with_stats: Vec<(RunId, Stats)>) -> Result<SeqNo, MetadataError> {
+    async fn append_wal(&self, run_ids_with_stats: Vec<(RunID, Stats)>) -> Result<SeqNo, MetadataError> {
         loop {
             match self.append_wal_attempt(&run_ids_with_stats).await {
                 Ok(seq_no) => return Ok(seq_no), // Success! Exit function.
@@ -1151,9 +1152,9 @@ impl MetadataStoreTrait for PostgresMetadataStore {
 
     async fn append_wal_compaction(
         &self,
-        job_id: JobID,
-        compacted: Vec<RunId>,
-        new_table_runs: Vec<(RunId, TableID, Stats)>,
+        job_id: Option<JobID>,
+        compacted: Vec<RunID>,
+        new_table_runs: Vec<(RunID, TableID, Stats)>,
     ) -> Result<SeqNo, MetadataError> {
         loop {
             return match self
@@ -1173,7 +1174,7 @@ impl MetadataStoreTrait for PostgresMetadataStore {
     async fn append_table_compaction(
         &self,
         job_id: JobID,
-        compacted: Vec<RunId>,
+        compacted: Vec<RunID>,
         new_runs: Vec<RunMetadata>,
     ) -> Result<SeqNo, MetadataError> {
         loop {
@@ -1211,7 +1212,7 @@ impl MetadataStoreTrait for PostgresMetadataStore {
         }
     }
 
-    async fn get_run_metadata_batch(&self, run_ids: Vec<RunId>) -> Result<HashMap<RunId, RunMetadata>, MetadataError> {
+    async fn get_run_metadata_batch(&self, run_ids: Vec<RunID>) -> Result<HashMap<RunID, RunMetadata>, MetadataError> {
         let mut result = HashMap::new();
         for chunk in run_ids.chunks(1000) {
             let rows = sqlx::query!(
@@ -1219,7 +1220,7 @@ impl MetadataStoreTrait for PostgresMetadataStore {
                 SELECT id, belongs_to, stats
                 FROM runs WHERE id = ANY($1)
                 "#,
-                &chunk as &[RunId]
+                &chunk as &[RunID]
             )
             .fetch_all(&self.pg_pool)
             .await?;
@@ -1232,7 +1233,7 @@ impl MetadataStoreTrait for PostgresMetadataStore {
                     let stats: Stats = serde_json::from_value(row.stats).map_err(MetadataError::JsonSerdeError)?;
 
                     Ok(RunMetadata {
-                        id: RunId(row.id),
+                        id: RunID(row.id),
                         belongs_to,
                         stats,
                     })
@@ -1535,8 +1536,7 @@ impl MetadataStoreTrait for PostgresMetadataStore {
 mod tests {
     use super::*;
     use crate::{
-        requires_docker,
-        test_utils::setup_test_db,
+        requires_docker, runs::StatsV1, test_utils::setup_test_db
     };
 
     #[tokio::test]
@@ -1610,5 +1610,70 @@ mod tests {
         // Verify we still have only one job
         let pending_jobs_after_second_schedule = metadata_store.get_pending_jobs().await.unwrap();
         assert_eq!(pending_jobs_after_second_schedule.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_wal_compaction_job_without_job_id() {
+        requires_docker!();
+        
+        let metadata_store = setup_test_db().await.unwrap();
+
+        // Create some test runs to compact
+        let compacted_run_ids = vec![RunID::from("1"), RunID::from("2")];
+        let new_run_id = RunID::from("3");
+        let table_id = TableID::from(1);
+        let stats = Stats::StatsV1(StatsV1 {
+            min_key: "min".to_string(),
+            max_key: "max".to_string(),
+            size_bytes: 100,
+            put_count: 100,
+            delete_count: 100,
+        });
+
+        // Add the runs to WAL first
+        metadata_store.append_wal(vec![(compacted_run_ids[0].clone(), stats.clone())]).await.unwrap();
+        metadata_store.append_wal(vec![(compacted_run_ids[1].clone(), stats.clone())]).await.unwrap();
+
+        let new_runs = vec![(new_run_id.clone(), table_id, stats.clone())];
+
+        // Append WAL compaction without job ID - only compact the runs that exist
+        metadata_store
+            .append_wal_compaction(None, compacted_run_ids.clone(), new_runs.clone())
+            .await
+            .unwrap();
+
+        // Verify the compacted runs still exist in metadata (they get marked as deleted, not removed)
+        for run_id in &compacted_run_ids {
+            let run = metadata_store.get_run_metadata_batch(vec![run_id.clone()]).await.unwrap();
+            assert!(run.contains_key(run_id));
+        }
+
+        // Verify new run was created
+        let new_run_metadata = metadata_store.get_run_metadata_batch(vec![new_run_id.clone()]).await.unwrap();
+        assert!(new_run_metadata.contains_key(&new_run_id));
+        
+        // Verify the new run has the correct belongs_to (should be TableBuffer)
+        let new_run = &new_run_metadata[&new_run_id];
+        match &new_run.belongs_to {
+            BelongsTo::TableBuffer(tid, _) => assert_eq!(*tid, table_id),
+            _ => panic!("Expected new run to belong to TableBuffer"),
+        }
+
+        // Verify changelog entries were created (2 from initial WAL appends + 1 from compaction)
+        let changelog = metadata_store.get_changelog(SeqNo::zero()).await.unwrap();
+        assert_eq!(changelog.len(), 3);
+        
+        // The last changelog entry should be the compaction
+        let last_entry = &changelog[2];
+        match &last_entry.changes {
+            ChangelogEntry::RunsV1(runs_entry) => {
+                assert_eq!(runs_entry.runs_added.len(), 1);
+                assert_eq!(runs_entry.runs_removed.len(), 2);
+                assert_eq!(runs_entry.runs_added[0], new_run_id);
+                assert!(runs_entry.runs_removed.contains(&compacted_run_ids[0]));
+                assert!(runs_entry.runs_removed.contains(&compacted_run_ids[1]));
+            },
+            _ => panic!("Expected RunsV1 changelog entry"),
+        }
     }
 }

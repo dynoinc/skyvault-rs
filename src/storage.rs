@@ -40,7 +40,7 @@ use crate::{
         DiskCache,
     },
     metadata::SnapshotID,
-    runs::RunId,
+    runs::RunID,
 };
 
 #[derive(Error, Debug)]
@@ -85,8 +85,8 @@ impl From<SdkError<GetObjectError, HttpResponse>> for StorageError {
 #[async_trait]
 #[cfg_attr(test, mockall::automock)]
 pub trait ObjectStoreTrait: Send + Sync + 'static {
-    async fn put_run(&self, run_id: RunId, data: Bytes) -> Result<(), StorageError>;
-    async fn get_run(&self, run_id: RunId) -> Result<ByteStream, StorageError>;
+    async fn put_run(&self, run_id: RunID, data: Bytes) -> Result<(), StorageError>;
+    async fn get_run(&self, run_id: RunID) -> Result<ByteStream, StorageError>;
 
     async fn put_snapshot(&self, snapshot_id: SnapshotID, data: Bytes) -> Result<(), StorageError>;
     async fn get_snapshot(&self, snapshot_id: SnapshotID) -> Result<Bytes, StorageError>;
@@ -199,7 +199,7 @@ impl ObjectStoreTrait for S3ObjectStore {
     }
 
     #[tracing::instrument(skip(self), fields(run_id = %run_id, data_len = data.len()))]
-    async fn put_run(&self, run_id: RunId, data: Bytes) -> Result<(), StorageError> {
+    async fn put_run(&self, run_id: RunID, data: Bytes) -> Result<(), StorageError> {
         let byte_stream = ByteStream::from(data);
 
         S3ObjectStore::record_s3_metrics("put_object", || async {
@@ -244,7 +244,7 @@ impl ObjectStoreTrait for S3ObjectStore {
     }
 
     #[tracing::instrument(skip(self), fields(run_id = %run_id))]
-    async fn get_run(&self, run_id: RunId) -> Result<ByteStream, StorageError> {
+    async fn get_run(&self, run_id: RunID) -> Result<ByteStream, StorageError> {
         let key = format!("runs/{run_id}");
 
         let response = S3ObjectStore::record_s3_metrics("get_object", || async {
@@ -298,7 +298,7 @@ pub struct StorageCache {
     /// Map of inflight requests to prevent duplicate fetches
     /// Each entry contains a broadcast sender that will notify all waiters when
     /// the request completes (either success or failure)
-    inflight: Arc<RwLock<HashMap<RunId, InflightSender>>>,
+    inflight: Arc<RwLock<HashMap<RunID, InflightSender>>>,
 }
 
 impl StorageCache {
@@ -321,7 +321,7 @@ impl StorageCache {
 
     /// Get run data from cache or storage if not cached
     #[tracing::instrument(skip(self), fields(run_id = %run_id))]
-    pub async fn get_run(&self, run_id: RunId) -> Result<CacheData, StorageCacheError> {
+    pub async fn get_run(&self, run_id: RunID) -> Result<CacheData, StorageCacheError> {
         // First check if the run is in the cache
         {
             let cache = self.cache.get_mmap(run_id.as_ref()).await;

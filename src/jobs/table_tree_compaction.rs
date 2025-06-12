@@ -21,7 +21,7 @@ use crate::{
     runs,
     runs::{
         RunError,
-        RunId,
+        RunID,
         Stats,
         StatsV1,
         WriteOperation,
@@ -37,7 +37,7 @@ pub async fn execute(
     object_store: ObjectStore,
     table_id: metadata::TableID,
     level: metadata::Level,
-) -> Result<(Vec<RunId>, Vec<RunMetadata>), JobError> {
+) -> Result<(Vec<RunID>, Vec<RunMetadata>), JobError> {
     if level == metadata::Level::max() {
         // Cannot compact the max level
         return Ok((vec![], vec![]));
@@ -166,7 +166,7 @@ pub async fn execute(
     tokio::pin!(run_builder_stream);
     while let Some(result) = run_builder_stream.try_next().await? {
         let (run_data, stats) = result;
-        let new_run_id = RunId(ulid::Ulid::new().to_string());
+        let new_run_id = RunID(ulid::Ulid::new().to_string());
 
         // Store the run immediately
         object_store.put_run(new_run_id.clone(), run_data).await?;

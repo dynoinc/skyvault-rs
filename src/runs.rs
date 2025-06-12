@@ -24,21 +24,21 @@ pub type Value = Vec<u8>;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, sqlx::Type)]
 #[sqlx(transparent)]
-pub struct RunId(pub String);
+pub struct RunID(pub String);
 
-impl<T: Into<String>> From<T> for RunId {
+impl<T: Into<String>> From<T> for RunID {
     fn from(value: T) -> Self {
-        RunId(value.into())
+        RunID(value.into())
     }
 }
 
-impl AsRef<str> for RunId {
+impl AsRef<str> for RunID {
     fn as_ref(&self) -> &str {
         &self.0
     }
 }
 
-impl Display for RunId {
+impl Display for RunID {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
     }

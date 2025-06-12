@@ -626,7 +626,7 @@ mod tests {
                 RunsChangelogEntryV1,
                 SeqNo,
             },
-            runs::RunId,
+            runs::RunID,
         };
 
         // Create a mock metadata store
@@ -641,8 +641,8 @@ mod tests {
 
         let metadata_store = Arc::new(mock_metadata_store);
 
-        let cancelled_run_1 = RunId::from("cancelled_run_1");
-        let cancelled_run_2 = RunId::from("cancelled_run_2");
+        let cancelled_run_1 = RunID::from("cancelled_run_1");
+        let cancelled_run_2 = RunID::from("cancelled_run_2");
 
         // Create entries where runs are added and then removed (cancelled out)
         let entries_with_cancellations = vec![
@@ -695,13 +695,13 @@ mod tests {
                 RunsChangelogEntryV1,
                 SeqNo,
             },
-            runs::RunId,
+            runs::RunID,
         };
 
         // Create a mock metadata store
         let mut mock_metadata_store = MockMetadataStoreTrait::new();
 
-        let persistent_run = RunId::from("persistent_run");
+        let persistent_run = RunID::from("persistent_run");
 
         // Set expectation that get_run_metadata_batch SHOULD be called exactly once
         // for the non-cancelled run
@@ -713,8 +713,8 @@ mod tests {
 
         let metadata_store = Arc::new(mock_metadata_store);
 
-        let cancelled_run = RunId::from("cancelled_run");
-        let persistent_run = RunId::from("persistent_run");
+        let cancelled_run = RunID::from("cancelled_run");
+        let persistent_run = RunID::from("persistent_run");
 
         // Create entries where one run is cancelled but another persists
         let entries_with_partial_cancellation = vec![
@@ -768,7 +768,7 @@ mod tests {
                 RunsChangelogEntryV1,
                 SeqNo,
             },
-            runs::RunId,
+            runs::RunID,
         };
 
         // Create mock metadata store
@@ -784,8 +784,8 @@ mod tests {
         let metadata_store = Arc::new(mock_metadata_store);
 
         // Create changelog entries where all runs are cancelled out
-        let cancelled_run_1 = RunId::from("cancelled_run_1");
-        let cancelled_run_2 = RunId::from("cancelled_run_2");
+        let cancelled_run_1 = RunID::from("cancelled_run_1");
+        let cancelled_run_2 = RunID::from("cancelled_run_2");
 
         let entries = vec![
             // First entry adds runs

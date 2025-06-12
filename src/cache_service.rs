@@ -26,7 +26,7 @@ use crate::{
     runs::{
         self,
         RunError,
-        RunId,
+        RunID,
         SearchResult,
         WriteOperation,
     },
@@ -87,7 +87,7 @@ impl proto::cache_service_server::CacheService for MyCache {
                 break;
             }
 
-            let run = match self.storage_cache.get_run(RunId(run_id.clone())).await {
+            let run = match self.storage_cache.get_run(RunID(run_id.clone())).await {
                 Ok(run) => run,
                 Err(e) => {
                     return Err(Status::internal(format!("Error getting run {run_id}: {e}")));
@@ -136,7 +136,7 @@ impl proto::cache_service_server::CacheService for MyCache {
         let mut streams_to_merge: Vec<(metadata::SeqNo, BoxedRunStream)> = Vec::new();
 
         for (index, run_id_str) in request.run_ids.into_iter().enumerate() {
-            let run_id = RunId(run_id_str.clone());
+            let run_id = RunID(run_id_str.clone());
             let seq_no = metadata::SeqNo::from(i64::MAX - index as i64);
             let run_data = match self.storage_cache.get_run(run_id).await {
                 Ok(run_data) => run_data,
@@ -181,7 +181,7 @@ impl proto::cache_service_server::CacheService for MyCache {
         request: Request<proto::PrefetchRequest>,
     ) -> Result<Response<proto::PrefetchResponse>, Status> {
         let request = request.into_inner();
-        let run_id = RunId(request.run_id);
+        let run_id = RunID(request.run_id);
 
         match self.storage_cache.get_run(run_id.clone()).await {
             Ok(_) => {},
@@ -212,7 +212,7 @@ mod tests {
         runs,
         runs::{
             RunError,
-            RunId,
+            RunID,
             Stats,
             WriteOperation,
         },
@@ -222,7 +222,7 @@ mod tests {
 
     async fn create_and_store_run(
         object_store: &ObjectStore,
-        run_id: &RunId,
+        run_id: &RunID,
         operations: Vec<WriteOperation>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let ops_stream = stream::iter(operations.into_iter().map(Ok::<_, RunError>));
@@ -256,7 +256,7 @@ mod tests {
             .unwrap();
 
         let run_id_str = "test_get_run_1".to_string();
-        let run_id = RunId(run_id_str.clone());
+        let run_id = RunID(run_id_str.clone());
 
         let get_test_ops = vec![
             WriteOperation::Put("key1".to_string(), Bytes::from("value1").to_vec()),
@@ -313,7 +313,7 @@ mod tests {
             .unwrap();
 
         let run_id_str = "test_scan_run_1".to_string();
-        let run_id = RunId(run_id_str.clone());
+        let run_id = RunID(run_id_str.clone());
 
         let ops = vec![
             WriteOperation::Put("a_key1".to_string(), Bytes::from("value1").to_vec()),
@@ -388,7 +388,7 @@ mod tests {
             .unwrap();
 
         let run_id_1_str = "scan_multi_run_1".to_string();
-        let run_id_1 = RunId(run_id_1_str.clone());
+        let run_id_1 = RunID(run_id_1_str.clone());
         let ops1 = vec![
             WriteOperation::Put("apple".to_string(), Bytes::from("red_from_run1").to_vec()),
             WriteOperation::Put("banana".to_string(), Bytes::from("yellow_from_run1").to_vec()),
@@ -399,7 +399,7 @@ mod tests {
         let proto_items1: Vec<proto::GetFromRunItem> = ops1.iter().cloned().map(Into::into).collect();
 
         let run_id_2_str = "scan_multi_run_2".to_string();
-        let run_id_2 = RunId(run_id_2_str.clone());
+        let run_id_2 = RunID(run_id_2_str.clone());
         let ops2 = vec![
             WriteOperation::Put("banana".to_string(), Bytes::from("green_from_run2").to_vec()),
             WriteOperation::Delete("cherry".to_string()),

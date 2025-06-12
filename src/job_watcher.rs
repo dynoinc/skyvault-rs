@@ -36,7 +36,7 @@ pub enum JobWatcherError {
     JobMissingName,
 
     #[error("Could not extract JobID string from job name: {0}")]
-    JobIdExtractionError(String),
+    JobIDExtractionError(String),
 }
 
 /// Represents a change in the job status

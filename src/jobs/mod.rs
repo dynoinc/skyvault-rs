@@ -5,7 +5,6 @@ use crate::{
     },
     metadata::{
         self,
-        JobID,
         JobParams,
         JobStatus,
         MetadataError,
@@ -81,7 +80,7 @@ pub async fn execute(
                 let state = ForestImpl::latest(metadata_store.clone(), object_store.clone()).await?;
                 let (compacted, table_runs) = wal_compaction::execute(object_store, &state).await?;
                 metadata_store
-                    .append_wal_compaction(job_id, compacted, table_runs)
+                    .append_wal_compaction(Some(job_id), compacted, table_runs)
                     .await?;
                 Ok(())
             },
@@ -147,7 +146,6 @@ pub async fn run_wal_compactor(metadata_store: MetadataStore, storage: ObjectSto
 
         // Set transaction as current span and add metadata
         sentry::configure_scope(|scope| scope.set_span(Some(transaction.clone().into())));
-        transaction.set_data("job_id", sentry::protocol::Value::String("0".to_string()));
         transaction.set_data(
             "job_type",
             sentry::protocol::Value::String("wal-compaction".to_string()),
@@ -156,7 +154,7 @@ pub async fn run_wal_compactor(metadata_store: MetadataStore, storage: ObjectSto
         let result = async {
             let (compacted, table_runs) = wal_compaction::execute(storage.clone(), &state).await?;
             metadata_store
-                .append_wal_compaction(JobID::from(0), compacted, table_runs)
+                .append_wal_compaction(None, compacted, table_runs)
                 .await?;
             Ok::<(), anyhow::Error>(())
         }

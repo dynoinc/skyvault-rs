@@ -26,7 +26,7 @@ use crate::{
     runs,
     runs::{
         RunError as RunsError,
-        RunId,
+        RunID,
         WriteOperation,
     },
     storage,
@@ -180,7 +180,7 @@ impl MyWriter {
 
         let mut wal_run_ids = Vec::new();
         for (run_data, stats) in wal_runs {
-            let run_id = RunId(ulid::Ulid::new().to_string());
+            let run_id = RunID(ulid::Ulid::new().to_string());
             storage.put_run(run_id.clone(), run_data).await?;
             wal_run_ids.push((run_id, stats));
         }

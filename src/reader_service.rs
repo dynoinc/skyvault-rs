@@ -686,7 +686,7 @@ mod tests {
         proto,
         proto::reader_service_server::ReaderService,
         runs::{
-            RunId,
+            RunID,
             Stats,
             StatsV1,
         },
@@ -727,8 +727,8 @@ mod tests {
     async fn test_get_batch() {
         let table_id = TableID::from(1);
         let table_name = "test_table";
-        let wal_run_id = RunId::from("wal_run_1");
-        let buf_run_id = RunId::from("buf_run_1");
+        let wal_run_id = RunID::from("wal_run_1");
+        let buf_run_id = RunID::from("buf_run_1");
         let key = "the_key";
 
         let forest = create_test_forest(
@@ -816,8 +816,8 @@ mod tests {
     async fn test_scan() {
         let table_id = TableID::from(1);
         let table_name = "test_table";
-        let wal_run_id = RunId::from("wal_run_1");
-        let buf_run_id = RunId::from("buf_run_1");
+        let wal_run_id = RunID::from("wal_run_1");
+        let buf_run_id = RunID::from("buf_run_1");
         let exclusive_start_key = "key1";
 
         let forest = create_test_forest(

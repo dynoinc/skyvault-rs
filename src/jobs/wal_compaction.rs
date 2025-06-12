@@ -13,7 +13,7 @@ use crate::{
     runs::{
         self,
         RunError,
-        RunId,
+        RunID,
         Stats,
         WriteOperation,
     },
@@ -23,7 +23,7 @@ use crate::{
 pub async fn execute(
     object_store: ObjectStore,
     state: &Snapshot,
-) -> Result<(Vec<RunId>, Vec<(RunId, TableID, Stats)>), JobError> {
+) -> Result<(Vec<RunID>, Vec<(RunID, TableID, Stats)>), JobError> {
     let count = std::cmp::min(16, state.wal.len());
     let run_data = stream::iter(state.wal.clone().into_iter().take(count))
         .map(|(seq_no, metadata)| {
@@ -66,7 +66,7 @@ pub async fn execute(
     type TableState = (
         TableID,
         mpsc::Sender<Result<WriteOperation, RunError>>,
-        tokio::task::JoinHandle<Result<(RunId, Stats), JobError>>,
+        tokio::task::JoinHandle<Result<(RunID, Stats), JobError>>,
     );
     let mut current_state: Option<TableState> = None;
 
@@ -147,7 +147,7 @@ pub async fn execute(
                 // Panic if the stream was empty, which shouldn't happen after the check above.
                 let (run_data, stats) = results.into_iter().next().unwrap();
 
-                let run_id = RunId(ulid::Ulid::new().to_string());
+                let run_id = RunID(ulid::Ulid::new().to_string());
 
                 // Persist run
                 object_store_clone

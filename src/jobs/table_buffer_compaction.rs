@@ -20,7 +20,7 @@ use crate::{
     runs,
     runs::{
         RunError,
-        RunId,
+        RunID,
         WriteOperation,
     },
     storage::ObjectStore,
@@ -33,7 +33,7 @@ pub async fn execute(
     metadata_store: MetadataStore,
     object_store: ObjectStore,
     table_id: metadata::TableID,
-) -> Result<(Vec<RunId>, Vec<RunMetadata>), JobError> {
+) -> Result<(Vec<RunID>, Vec<RunMetadata>), JobError> {
     let state = ForestImpl::latest(metadata_store.clone(), object_store.clone()).await?;
 
     let table = match state.trees.get(&table_id) {
@@ -120,7 +120,7 @@ pub async fn execute(
     tokio::pin!(run_stream);
     while let Some(result) = run_stream.try_next().await? {
         let (run_data, stats) = result;
-        let run_id = RunId(ulid::Ulid::new().to_string());
+        let run_id = RunID(ulid::Ulid::new().to_string());
 
         // Store the run immediately
         object_store.put_run(run_id.clone(), run_data).await?;
