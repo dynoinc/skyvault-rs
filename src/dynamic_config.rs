@@ -27,6 +27,7 @@ use tokio::sync::{
     Semaphore,
 };
 use tracing::{
+    debug,
     error,
     info,
     warn,
@@ -242,7 +243,7 @@ async fn watch_config_changes_task(
                         }
                     },
                     _ => {
-                        info!("Received other event type from ConfigMap watcher");
+                        debug!("Received other event type from ConfigMap watcher");
                     },
                 },
                 Err(e) => {

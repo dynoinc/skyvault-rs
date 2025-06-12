@@ -84,6 +84,13 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Log in to GitHub Container Registry (early)
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Build Docker Image for scanning
         uses: docker/build-push-action@v6
         with:
@@ -160,13 +167,6 @@ jobs:
           echo "✅ Pushed commit and tag to ${{ github.ref_name }}."
           echo "COMMIT_HASH=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
 
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Push Docker image (reusing already built image)
         run: |
           echo "Pushing already built Docker images..."
@@ -229,7 +229,7 @@ jobs:
     steps:
       - uses: actions/delete-package-versions@v5
         with:
-          package-name: ratchet
+          package-name: skyvault-rs
           package-type: container
           num-old-versions-to-delete: 1
           min-versions-to-keep: 14
