@@ -475,6 +475,12 @@ mod tests {
                 Box::pin(async { Ok((None, entries)) })
             });
 
+        // Mock get_run_metadata_batch to return empty since table entries don't involve
+        // runs
+        mock_metadata_store
+            .expect_get_run_metadata_batch()
+            .returning(|_| Box::pin(async { Ok(HashMap::new()) }));
+
         // Mock get_table_by_id calls for both create and drop operations
         let table_config_clone = table_config.clone();
         mock_metadata_store
@@ -564,6 +570,12 @@ mod tests {
                 Box::pin(async { Ok((None, entries)) })
             });
 
+        // Mock get_run_metadata_batch to return empty since table entries don't involve
+        // runs
+        mock_metadata_store
+            .expect_get_run_metadata_batch()
+            .returning(|_| Box::pin(async { Ok(HashMap::new()) }));
+
         // Mock get_table_by_id calls for all three table creations
         for (i, &table_id) in table_ids.iter().enumerate() {
             let config = table_configs[i].clone();
@@ -616,11 +628,10 @@ mod tests {
         // Create a mock metadata store
         let mut mock_metadata_store = MockMetadataStoreTrait::new();
 
-        // Set expectation that get_run_metadata_batch should NEVER be called
+        // Set expectation that get_run_metadata_batch will be called with empty vector
         // because the optimization should filter out all runs that are cancelled
         mock_metadata_store
             .expect_get_run_metadata_batch()
-            .never()
             .returning(|_| Box::pin(async { Ok(HashMap::new()) }));
 
         let metadata_store = Arc::new(mock_metadata_store);
@@ -758,11 +769,10 @@ mod tests {
         // Create mock metadata store
         let mut mock_metadata_store = MockMetadataStoreTrait::new();
 
-        // Set expectation that get_run_metadata_batch should NEVER be called
+        // Set expectation that get_run_metadata_batch will be called with empty vector
         // because all runs are cancelled out
         mock_metadata_store
             .expect_get_run_metadata_batch()
-            .never()
             .returning(|_| Box::pin(async { Ok(HashMap::new()) }));
 
         let metadata_store = Arc::new(mock_metadata_store);

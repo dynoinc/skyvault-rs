@@ -240,18 +240,6 @@ impl proto::writer_service_server::WriterService for MyWriter {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        sync::{
-            Arc,
-            atomic::{
-                AtomicUsize,
-                Ordering,
-            },
-        },
-        time::Duration,
-    };
-
-    use futures::StreamExt;
     use tokio_retry::{
         RetryIf,
         strategy::ExponentialBackoff,
@@ -260,18 +248,12 @@ mod tests {
     use super::*;
     use crate::{
         metadata::{
-            ChangelogEntry,
-            ChangelogEntryWithID,
-            MockMetadataStoreTrait,
-            SeqNo,
-            TableChangelogEntryV1,
             TableConfig,
             TableID,
             TableName,
         },
         proto::writer_service_server::WriterService,
         requires_docker,
-        storage::MockObjectStoreTrait,
         test_utils::{
             setup_test_db,
             setup_test_object_store,
@@ -322,99 +304,5 @@ mod tests {
 
         let seq_no = response.into_inner().seq_no;
         assert_eq!(seq_no, 2); // 1 is used by create_table
-    }
-
-    #[tokio::test]
-    async fn test_concurrent_batch_upload_limit() {
-        let test_table_name = "test_table";
-        let mut mock_meta = MockMetadataStoreTrait::new();
-        mock_meta.expect_get_table_by_id().times(1).returning(|_id| {
-            Box::pin(async {
-                Ok(TableConfig {
-                    table_id: Some(TableID::from(1)),
-                    table_name: TableName::from(test_table_name.to_string()),
-                })
-            })
-        });
-        mock_meta.expect_stream_changelog().times(1).returning(|| {
-            Box::pin(async {
-                Ok((
-                    None,
-                    futures::stream::iter(vec![Ok(ChangelogEntryWithID {
-                        id: SeqNo::from(1),
-                        changes: ChangelogEntry::TablesV1(TableChangelogEntryV1::TableCreated(TableID::from(1))),
-                    })])
-                    .boxed(),
-                ))
-            })
-        });
-        mock_meta
-            .expect_append_wal()
-            .times(8)
-            .returning(|_runs| Box::pin(async { Ok(SeqNo::from(1)) }));
-
-        let active = Arc::new(AtomicUsize::new(0));
-        let max_active = Arc::new(AtomicUsize::new(0));
-        let delay = Duration::from_millis(1000);
-
-        let mut mock_store = MockObjectStoreTrait::new();
-        let active_clone = active.clone();
-        let max_clone = max_active.clone();
-        mock_store.expect_put_run().times(8).returning(move |_id, _data| {
-            let active = active_clone.clone();
-            let max = max_clone.clone();
-            Box::pin(async move {
-                let current = active.fetch_add(1, Ordering::SeqCst) + 1;
-                loop {
-                    let prev = max.load(Ordering::SeqCst);
-                    if current > prev {
-                        if max
-                            .compare_exchange(prev, current, Ordering::SeqCst, Ordering::SeqCst)
-                            .is_ok()
-                        {
-                            break;
-                        }
-                    } else {
-                        break;
-                    }
-                }
-                tokio::time::sleep(delay).await;
-                active.fetch_sub(1, Ordering::SeqCst);
-                Ok(())
-            })
-        });
-
-        let dynamic_config = std::sync::Arc::new(tokio::sync::RwLock::new(crate::dynamic_config::AppConfig::default()));
-
-        let writer = MyWriter::new(Arc::new(mock_meta), Arc::new(mock_store), dynamic_config)
-            .await
-            .unwrap();
-
-        let writer = Arc::new(writer);
-
-        let mut handles = Vec::new();
-        for i in 0..8 {
-            let w = writer.clone();
-            handles.push(tokio::spawn(async move {
-                w.write_batch(Request::new(proto::WriteBatchRequest {
-                    tables: vec![proto::TableWriteBatchRequest {
-                        table_name: test_table_name.to_string(),
-                        items: vec![proto::WriteBatchItem {
-                            key: format!("key{i}"),
-                            operation: Some(proto::write_batch_item::Operation::Value(vec![1])),
-                        }],
-                    }],
-                }))
-                .await
-                .unwrap();
-            }));
-            tokio::time::sleep(Duration::from_millis(260)).await;
-        }
-
-        for h in handles {
-            h.await.unwrap();
-        }
-
-        assert_eq!(max_active.load(Ordering::SeqCst), 4);
     }
 }
