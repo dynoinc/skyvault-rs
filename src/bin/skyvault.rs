@@ -1,6 +1,5 @@
 use std::{
     net::SocketAddr,
-    sync::Arc,
 };
 
 use anyhow::{
@@ -111,7 +110,7 @@ async fn main() -> Result<()> {
 
     // Create storage client
     let s3_config = config.s3.to_config(k8s_client.clone(), &current_namespace).await?;
-    let storage = Arc::new(storage::S3ObjectStore::new(s3_config, &config.s3.bucket_name).await?);
+    let storage = storage::S3ObjectStore::from(s3_config, &config.s3.bucket_name).await?;
 
     // Start gRPC server
     let (health_reporter, health_service) = tonic_health::server::health_reporter();

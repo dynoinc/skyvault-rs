@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use anyhow::{
     Context,
     Result,
@@ -84,7 +82,7 @@ async fn main() -> Result<()> {
 
     // Create storage client
     let s3_config = config.s3.to_config(k8s_client.clone(), &current_namespace).await?;
-    let storage = Arc::new(storage::S3ObjectStore::new(s3_config, &config.s3.bucket_name).await?);
+    let storage = storage::S3ObjectStore::from(s3_config, &config.s3.bucket_name).await?;
 
     match config.mode {
         WorkerMode::Job => {

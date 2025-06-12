@@ -4305,7 +4305,6 @@ dependencies = [
  "kube",
  "memmap2",
  "mockall",
- "once_cell",
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry_sdk",

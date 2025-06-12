@@ -101,7 +101,7 @@ pub struct S3ObjectStore {
 }
 
 impl S3ObjectStore {
-    pub async fn new(s3_config: aws_sdk_s3::config::Config, bucket_name: &str) -> Result<Self, StorageError> {
+    pub async fn from(s3_config: aws_sdk_s3::config::Config, bucket_name: &str) -> Result<ObjectStore, StorageError> {
         let client = S3Client::from_conf(s3_config);
 
         match Self::create_bucket(&client, bucket_name).await {
@@ -114,10 +114,10 @@ impl S3ObjectStore {
             Err(err) => return Err(StorageError::CreateBucketError(Box::new(err))),
         }
 
-        Ok(Self {
+        Ok(Arc::new(Self {
             client,
             bucket_name: bucket_name.to_string(),
-        })
+        }))
     }
 
     async fn create_bucket(
