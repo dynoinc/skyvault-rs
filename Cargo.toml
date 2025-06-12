@@ -28,6 +28,9 @@ path = "src/bin/reset-cluster.rs"
 anyhow = "1.0"
 thiserror = "2.0"
 
+# Memory allocator
+jemallocator = "0.5"
+
 # Async and futures
 async-stream = "0.3"
 async-trait = "0.1"

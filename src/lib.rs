@@ -1,3 +1,5 @@
+mod allocator;
+
 pub mod proto {
     tonic::include_proto!("skyvault.v1");
 
