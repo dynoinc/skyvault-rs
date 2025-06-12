@@ -97,7 +97,6 @@ jobs:
           context: .
           file: Dockerfile.release
           platforms: linux/amd64
-          provenance: true
           push: false
           load: true
           tags: |
