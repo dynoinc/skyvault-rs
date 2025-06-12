@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [test]
     if: success()
-    name: Bump Version, Scan, and Push
+    name: Bump Version, Build, Scan, and Push
     permissions:
       contents: write
       packages: write
@@ -79,7 +79,30 @@ jobs:
           sed -i "3s/version = \".*\"/version = \"$VERSION_NO_V\"/" Cargo.toml
           sed -i '/name = "skyvault"/,/version = ".*"/ s/version = ".*"/version = "'$VERSION_NO_V'"/' Cargo.lock
 
-          echo "Files updated locally, will commit after successful scan"
+          echo "Files updated locally, will build binary with correct version"
+
+      - uses: Swatinem/rust-cache@v2
+        
+      - name: Install Protoc
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler libprotobuf-dev pkg-config libssl-dev --no-install-recommends
+          sudo apt-get clean
+          sudo rm -rf /var/lib/apt/lists/*
+          protoc --version
+
+      - name: Build release binary with new version
+        run: |
+          export SQLX_OFFLINE=true
+          echo "Building binaries with version ${{ steps.generate_version.outputs.VERSION_NO_V }}"
+          cargo build --release
+          
+          # Create binaries directory for Docker
+          mkdir -p ./binaries
+          cp target/release/skyvault ./binaries/
+          cp target/release/worker ./binaries/
+          cp target/release/reset-cluster ./binaries/
+          chmod +x ./binaries/*
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -91,7 +114,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build Docker Image for scanning
+      - name: Build Docker Image for scanning (using pre-built binaries)
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -103,12 +126,6 @@ jobs:
             skyvault:latest
             ghcr.io/${{ github.repository }}:latest
             ghcr.io/${{ github.repository }}:${{ steps.generate_version.outputs.VERSION }}
-          cache-from: |
-            type=gha
-            type=registry,ref=ghcr.io/${{ github.repository }}:buildcache
-          cache-to: |
-            type=gha,mode=max
-            type=registry,ref=ghcr.io/${{ github.repository }}:buildcache,mode=max
 
       - name: Scan Docker Image with Trivy
         id: trivy_scan
@@ -221,7 +238,7 @@ jobs:
           
   purge_old_versions:
     runs-on: ubuntu-latest
-    needs: bump_scan_push
+    needs: [bump_scan_push]
     if: success()
     name: Purge Old Versions
     permissions:
