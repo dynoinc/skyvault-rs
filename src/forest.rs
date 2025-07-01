@@ -275,8 +275,8 @@ impl ForestImpl {
         stream_transformer: F,
     ) -> Result<Forest, ForestError>
     where
-        F: FnOnce(Box<dyn Stream<Item = Result<ChangelogEntryWithID, MetadataError>> + Send + Unpin>) -> S,
-        S: Stream<Item = Result<ChangelogEntryWithID, MetadataError>> + Send + 'static,
+        F: FnOnce(Box<dyn Stream<Item = Result<Vec<ChangelogEntryWithID>, MetadataError>> + Send + Unpin>) -> S,
+        S: Stream<Item = Result<Vec<ChangelogEntryWithID>, MetadataError>> + Send + 'static,
     {
         let (snapshot_id, stream) = metadata_store.stream_changelog().await?;
         let state = match snapshot_id {
@@ -315,14 +315,14 @@ impl ForestImpl {
     /// map.
     async fn process_changelog_stream(
         &self,
-        stream: impl Stream<Item = Result<ChangelogEntryWithID, MetadataError>> + '_,
+        stream: impl Stream<Item = Result<Vec<ChangelogEntryWithID>, MetadataError>> + '_,
     ) -> Result<(), ForestError> {
         // Pin the stream to the stack
         pin_mut!(stream);
 
         while let Some(result) = stream.next().await {
             debug!("Received changelog entry: {:?}", result);
-            self.apply_changelog_entries(vec![result?]).await?;
+            self.apply_changelog_entries(result?).await?;
         }
 
         Err(ForestError::Internal("Changelog stream ended unexpectedly".to_string()))

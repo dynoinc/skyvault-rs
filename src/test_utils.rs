@@ -107,7 +107,7 @@ impl MetadataStoreTrait for TestMetadataStore {
             Option<crate::metadata::SnapshotID>,
             std::pin::Pin<
                 std::boxed::Box<
-                    dyn futures::Stream<Item = Result<crate::metadata::ChangelogEntryWithID, MetadataError>>
+                    dyn futures::Stream<Item = Result<Vec<crate::metadata::ChangelogEntryWithID>, MetadataError>>
                         + Send
                         + 'static,
                 >,

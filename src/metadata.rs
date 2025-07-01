@@ -132,13 +132,13 @@ pub struct Level(u64);
 
 impl Level {
     pub fn max() -> Self {
-        // 0 - 100MB
-        // 1 - 1GB
-        // 2 - 10GB
-        // 3 - 100GB
-        // 4 - 1TB
-        // 5 - 10TB
-        // 6 - infinite (100TB or more)
+        // 0 - 1GB
+        // 1 - 10GB
+        // 2 - 100GB
+        // 3 - 1TB
+        // 4 - 10TB
+        // 5 - 100TB
+        // 6 - infinite (1PB or more)
         Level(6)
     }
 
@@ -501,7 +501,7 @@ impl From<&TableConfig> for proto::TableConfig {
     }
 }
 
-type ChangelogStream = Pin<Box<dyn Stream<Item = Result<ChangelogEntryWithID, MetadataError>> + Send + 'static>>;
+type ChangelogStream = Pin<Box<dyn Stream<Item = Result<Vec<ChangelogEntryWithID>, MetadataError>> + Send + 'static>>;
 
 #[async_trait::async_trait]
 #[cfg_attr(test, mockall::automock)]
@@ -558,8 +558,8 @@ static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 impl PostgresMetadataStore {
     pub async fn from_url(metadata_url: String) -> Result<MetadataStore, MetadataError> {
         let pg_pool = PgPoolOptions::new()
-            .max_connections(2)  // Reduce connections for tests to avoid exhaustion
-            .acquire_timeout(std::time::Duration::from_secs(30))
+            .max_connections(20)
+            .acquire_timeout(std::time::Duration::from_secs(5))
             .connect(&metadata_url)
             .await?;
 
@@ -1118,19 +1118,16 @@ impl MetadataStoreTrait for PostgresMetadataStore {
             loop {
                 let new_entries = sqlx::query_as!(
                     ChangelogEntryWithID,
-                    "SELECT * FROM changelog WHERE id > $1 ORDER BY id ASC",
+                    "SELECT * FROM changelog WHERE id > $1 ORDER BY id ASC LIMIT 1000",
                     last_id.0
                 )
                 .fetch_all(&pg_pool)
                 .await?;
 
-                let found_new_entries = !new_entries.is_empty();
-                for entry in new_entries {
-                    last_id = entry.id;
-                    yield Ok(entry);
-                }
-
-                if !found_new_entries {
+                if !new_entries.is_empty() {
+                    last_id = new_entries.last().map(|e| e.id).unwrap_or(last_id);
+                    yield Ok(new_entries);
+                } else {
                     match tokio::time::timeout(Duration::from_secs(1), listener.recv()).await {
                         Ok(Ok(_notification)) => {
                             // Received notification, loop back to check for new entries

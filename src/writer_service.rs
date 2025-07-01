@@ -68,11 +68,9 @@ impl MyWriter {
     ) -> Result<Self, WriterServiceError> {
         let (tx, rx) = tokio::sync::mpsc::channel(100);
         let forest = ForestImpl::watch(metadata.clone(), storage.clone(), |stream| {
-            stream.try_filter_map(|entry| async move {
-                match entry.changes {
-                    ChangelogEntry::TablesV1(_) => Ok(Some(entry)),
-                    _ => Ok(None),
-                }
+            stream.try_filter_map(|mut entry| async move {
+                entry.retain(|e| matches!(e.changes, ChangelogEntry::TablesV1(_)));
+                if !entry.is_empty() { Ok(Some(entry)) } else { Ok(None) }
             })
         })
         .await?;

@@ -149,15 +149,13 @@ pub async fn run_wal_compactor(metadata_store: MetadataStore, storage: ObjectSto
             })
             .sum::<u64>();
 
-        // Compact only if total size exceeds 100MB or number of runs exceeds 16
-        if total_wal_size < 100_000_000 && state.wal.len() < 16 {
+        if total_wal_size < 100_000_000 && state.wal.len() < 25 {
             continue;
         }
 
         let tx_ctx = sentry::TransactionContext::new("wal-compactor", "job.execute");
         let transaction = sentry::start_transaction(tx_ctx);
 
-        // Set transaction as current span and add metadata
         sentry::configure_scope(|scope| scope.set_span(Some(transaction.clone().into())));
         transaction.set_data(
             "job_type",
