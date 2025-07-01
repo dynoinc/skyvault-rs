@@ -98,6 +98,25 @@ Used to track background jobs for observability.
 2. Run `just deploy` to start everything in k8s.
 3. Run `just smoke` to run some simple smoke tests against this.
 
+## Other systems with similar design
+
+- [Alki](https://dropbox.tech/infrastructure/alki--or-how-we-learned-to-stop-worrying-and-love-cold-metadata) - Cost-efficient petabyte-scale metadata store using LSM-tree architecture
+- [Procella](https://research.google/pubs/procella-unifying-serving-and-analytical-data-at-youtube/) - YouTube's analytical data warehouse unifying serving and analytical data
+- [Napa](https://research.google/pubs/pub50617/) - Scalable data warehousing system with robust query performance
+- [Snowflake](https://docs.snowflake.com/en/user-guide/intro-key-concepts.html) - Cloud data platform with separated storage and compute
+- [Quickwit](https://quickwit.io/) - Cloud-native search engine built on object storage
+- [SingleStore](https://docs.singlestore.com/db/v8.0/en/introduction/what-is-singlestore.html) - Distributed SQL database with columnstore and rowstore engines  
+- [Rockset](https://rockset.com/docs/introduction/) - Real-time analytics database with converged indexing
+- [InfluxDB IOx](https://github.com/influxdata/influxdb_iox) - Time series database built on Apache Arrow and DataFusion
+- [Firebolt](https://docs.firebolt.io/concepts/engine-fundamentals.html) - Cloud data warehouse with columnar storage
+- [Datadog Husky](https://www.datadoghq.com/blog/engineering/husky-deep-dive/) - Time series database for metrics storage
+- [Elastic Stateless](https://www.elastic.co/blog/stateless-autoscaling-elasticsearch-deployments) - Stateless Elasticsearch architecture
+- [GreptimeDB](https://docs.greptime.com/user-guide/concepts/architecture/) - Cloud-native time series database
+- [Grafana Mimir](https://grafana.com/docs/mimir/latest/get-started/about-grafana-mimir-architecture/) - Scalable long-term storage for Prometheus
+- [Slack Astra](https://slackhq.github.io/astra/architecture.html) - Structured log search and analytics engine
+- [Milvus](https://milvus.io/docs/four_layers.md) - The High-Performance Vector Database Built for Scale
+- [OpenSearch RFC](https://github.com/opensearch-project/OpenSearch/issues/17957) - Cloud-native OpenSearch architecture
+
 ## Security
 
 See our [Security Policy](SECURITY.md) for reporting security vulnerabilities.
