@@ -116,6 +116,9 @@ Used to track background jobs for observability.
 - [Slack Astra](https://slackhq.github.io/astra/architecture.html) - Structured log search and analytics engine
 - [Milvus](https://milvus.io/docs/four_layers.md) - The High-Performance Vector Database Built for Scale
 - [OpenSearch RFC](https://github.com/opensearch-project/OpenSearch/issues/17957) - Cloud-native OpenSearch architecture
+- [Pinecone](https://www.pinecone.io/learn/slab-architecture/) - The vector database for scale in production
+- [Chroma](https://docs.trychroma.com/docs/overview/architecture) - Retrieval database for AI applications
+- [Turbopuffer](https://turbopuffer.com/docs/architecture) - Serverless vector and full-text search
 
 ## Security
 
