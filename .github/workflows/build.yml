@@ -22,9 +22,9 @@ jobs:
     - uses: actions/checkout@v4
       with:
         fetch-depth: 1
-    
+
     - uses: Swatinem/rust-cache@v2
-        
+
     - name: Install Protoc
       run: |
         sudo apt-get update
@@ -33,30 +33,41 @@ jobs:
         sudo rm -rf /var/lib/apt/lists/*
         protoc --version
 
+    - name: Install just
+      uses: extractions/setup-just@v3
+
     - name: Run tests
+      env:
+        SQLX_OFFLINE: "true"
+      run: just ci
+
+    - name: Check for uncommitted changes
       run: |
-        export SQLX_OFFLINE=true
-        RUST_BACKTRACE=1 cargo test -- --nocapture
+        if [ -n "$(git status --porcelain)" ]; then
+          git status
+          git diff
+          exit 1
+        fi
 
   lint-helm:
     name: Lint Helm Charts
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    
+
     steps:
     - uses: actions/checkout@v4
       with:
         fetch-depth: 1
-    
+
     - name: Set up Helm
       uses: azure/setup-helm@v4
-    
+
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.10'
-    
+
     - name: Run helm lint
       run: |
         helm lint charts/skyvault
