@@ -39,7 +39,7 @@ jobs:
     - name: Run tests
       env:
         SQLX_OFFLINE: "true"
-      run: just check
+      run: just ci
 
     - name: Check for uncommitted changes
       run: |
