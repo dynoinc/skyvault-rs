@@ -53,7 +53,7 @@ tonic-reflection = "0.13"
 tower = "0.5"
 
 # Data handling and serialization
-bytes = "1.10"
+bytes = "1.11"
 byteorder = "1.5"
 prost = "0.13"
 serde = { version = "1.0", features = ["derive"] }
