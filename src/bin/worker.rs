@@ -1,25 +1,11 @@
-use anyhow::{
-    Context,
-    Result,
-};
+use anyhow::{Context, Result};
 use clap::Parser;
 use rustls::crypto::aws_lc_rs;
 use skyvault::{
-    config::{
-        OtelConfig,
-        PostgresConfig,
-        S3Config,
-        SentryConfig,
-    },
-    dynamic_config,
-    jobs,
-    k8s,
-    metadata::{
-        self,
-        JobID,
-    },
-    observability,
-    storage,
+    config::{OtelConfig, PostgresConfig, S3Config, SentryConfig},
+    dynamic_config, jobs, k8s,
+    metadata::{self, JobID},
+    observability, storage,
 };
 
 #[derive(Debug, Clone, clap::ValueEnum)]

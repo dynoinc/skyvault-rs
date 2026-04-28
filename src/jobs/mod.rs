@@ -1,23 +1,8 @@
 use crate::{
-    forest::{
-        ForestError,
-        ForestImpl,
-    },
-    metadata::{
-        self,
-        JobParams,
-        JobStatus,
-        MetadataError,
-        MetadataStore,
-    },
-    runs::{
-        RunError,
-        Stats,
-    },
-    storage::{
-        ObjectStore,
-        StorageError,
-    },
+    forest::{ForestError, ForestImpl},
+    metadata::{self, JobParams, JobStatus, MetadataError, MetadataStore},
+    runs::{RunError, Stats},
+    storage::{ObjectStore, StorageError},
 };
 
 mod table_buffer_compaction;

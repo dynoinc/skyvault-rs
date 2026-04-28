@@ -1,14 +1,7 @@
-use anyhow::{
-    Context,
-    Result as AnyhowResult,
-    anyhow,
-};
+use anyhow::{Context, Result as AnyhowResult, anyhow};
 use http::Request;
 use k8s_openapi::api::core::v1::Secret;
-use kube::{
-    Api,
-    Client,
-};
+use kube::{Api, Client};
 use tokio::fs;
 
 pub async fn get_namespace() -> std::result::Result<String, std::io::Error> {

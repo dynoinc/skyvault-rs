@@ -1,21 +1,11 @@
 use std::net::IpAddr;
 
 use async_stream::stream;
-use futures::{
-    Stream,
-    StreamExt,
-    pin_mut,
-};
+use futures::{Stream, StreamExt, pin_mut};
 use k8s_openapi::api::core::v1::Pod;
-use kube::{
-    api::Api,
-    runtime::watcher,
-};
+use kube::{api::Api, runtime::watcher};
 use thiserror::Error;
-use tracing::{
-    debug,
-    warn,
-};
+use tracing::{debug, warn};
 
 /// Represents a change in the pod list
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,14 +42,12 @@ pub async fn watch(
                 Ok(event) => {
                     match event {
                         watcher::Event::Apply(pod) | watcher::Event::InitApply(pod) => {
-                            if let Some(name) = pod.metadata.name {
-                                if let Some(status) = pod.status {
-                                    if let Some(pod_ip) = status.pod_ip {
-                                        if let Ok(ip_addr) = pod_ip.parse::<IpAddr>() {
-                                            yield Ok(PodChange::Added(name, ip_addr));
-                                        }
-                                    }
-                                }
+                            if let Some(name) = pod.metadata.name
+                                && let Some(status) = pod.status
+                                && let Some(pod_ip) = status.pod_ip
+                                && let Ok(ip_addr) = pod_ip.parse::<IpAddr>()
+                            {
+                                yield Ok(PodChange::Added(name, ip_addr));
                             }
                         }
                         watcher::Event::Delete(pod) => {

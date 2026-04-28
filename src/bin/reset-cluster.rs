@@ -1,20 +1,10 @@
-use anyhow::{
-    Context,
-    Result,
-};
+use anyhow::{Context, Result};
 use clap::Parser;
 use skyvault::{
-    config::{
-        PostgresConfig,
-        SentryConfig,
-    },
-    k8s,
-    observability,
+    config::{PostgresConfig, SentryConfig},
+    k8s, observability,
 };
-use tracing::{
-    error,
-    info,
-};
+use tracing::{error, info};
 
 #[derive(Debug, Parser, Clone)]
 #[command(name = "reset-cluster", about = "Reset Skyvault database by truncating all tables.")]

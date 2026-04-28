@@ -1,40 +1,15 @@
 use std::net::SocketAddr;
 
-use anyhow::{
-    Context,
-    Result,
-};
-use clap::{
-    Parser,
-    ValueEnum,
-};
+use anyhow::{Context, Result};
+use clap::{Parser, ValueEnum};
 use rustls::crypto::aws_lc_rs;
-use sentry_tower::{
-    NewSentryLayer,
-    SentryHttpLayer,
-};
+use sentry_tower::{NewSentryLayer, SentryHttpLayer};
 use skyvault::{
     cache_service,
-    config::{
-        OtelConfig,
-        PostgresConfig,
-        S3Config,
-        SentryConfig,
-    },
-    dynamic_config,
-    k8s,
-    metadata,
-    observability,
-    orchestrator_service,
-    proto,
-    reader_service,
-    storage,
-    writer_service,
+    config::{OtelConfig, PostgresConfig, S3Config, SentryConfig},
+    dynamic_config, k8s, metadata, observability, orchestrator_service, proto, reader_service, storage, writer_service,
 };
-use tonic::{
-    service::LayerExt,
-    transport::Server,
-};
+use tonic::{service::LayerExt, transport::Server};
 use tonic_health::ServingStatus;
 use tracing::info;
 

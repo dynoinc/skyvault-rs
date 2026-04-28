@@ -1,36 +1,16 @@
 use std::{
-    fs::{
-        File,
-        OpenOptions,
-    },
+    fs::{File, OpenOptions},
     io::Write,
     path::PathBuf,
     sync::Arc,
 };
 
-use anyhow::{
-    Context,
-    Result,
-};
+use anyhow::{Context, Result};
 use bytes::Bytes;
-use memmap2::{
-    Mmap,
-    MmapOptions,
-};
-use schnellru::{
-    Limiter,
-    LruMap,
-};
-use tokio::{
-    fs,
-    sync::RwLock,
-    task::JoinHandle,
-};
-use tracing::{
-    debug,
-    info,
-    warn,
-};
+use memmap2::{Mmap, MmapOptions};
+use schnellru::{Limiter, LruMap};
+use tokio::{fs, sync::RwLock, task::JoinHandle};
+use tracing::{debug, info, warn};
 
 /// On Unix-like systems, deleting a file only removes its directory entry; the
 /// file's data remains accessible via open file handles or memory maps (mmap)
@@ -300,17 +280,17 @@ impl DiskCache {
         state.insert(key.clone(), entry);
 
         while state.limiter().is_over_the_limit(state.len()) {
-            if let Some((_key, value)) = state.pop_oldest() {
-                if let CacheData::OnDisk(data) = value.data {
-                    let path = data.path.clone();
-                    tokio::spawn(async move {
-                        if let Err(e) = fs::remove_file(&path).await {
-                            warn!("Failed to delete evicted cache file {:?}: {}", path, e);
-                        } else {
-                            debug!("Deleted evicted cache file: {:?}", path);
-                        }
-                    });
-                }
+            if let Some((_key, value)) = state.pop_oldest()
+                && let CacheData::OnDisk(data) = value.data
+            {
+                let path = data.path.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = fs::remove_file(&path).await {
+                        warn!("Failed to delete evicted cache file {:?}: {}", path, e);
+                    } else {
+                        debug!("Deleted evicted cache file: {:?}", path);
+                    }
+                });
             }
         }
 

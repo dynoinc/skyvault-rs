@@ -2,33 +2,16 @@ use std::collections::BTreeMap;
 
 use futures::TryStreamExt;
 use thiserror::Error;
-use tonic::{
-    Request,
-    Response,
-    Status,
-};
+use tonic::{Request, Response, Status};
 
 use crate::{
     dynamic_config::SharedAppConfig,
-    forest::{
-        self,
-        Forest,
-        ForestImpl,
-    },
+    forest::{self, Forest, ForestImpl},
     metadata,
-    metadata::{
-        ChangelogEntry,
-        TableName,
-    },
-    proto::{
-        self,
-    },
+    metadata::{ChangelogEntry, TableName},
+    proto::{self},
     runs,
-    runs::{
-        RunError as RunsError,
-        RunID,
-        WriteOperation,
-    },
+    runs::{RunError as RunsError, RunID, WriteOperation},
     storage,
 };
 
@@ -238,24 +221,14 @@ impl proto::writer_service_server::WriterService for MyWriter {
 
 #[cfg(test)]
 mod tests {
-    use tokio_retry::{
-        RetryIf,
-        strategy::ExponentialBackoff,
-    };
+    use tokio_retry::{RetryIf, strategy::ExponentialBackoff};
 
     use super::*;
     use crate::{
-        metadata::{
-            TableConfig,
-            TableID,
-            TableName,
-        },
+        metadata::{TableConfig, TableID, TableName},
         proto::writer_service_server::WriterService,
         requires_docker,
-        test_utils::{
-            setup_test_db,
-            setup_test_object_store,
-        },
+        test_utils::{setup_test_db, setup_test_object_store},
     };
 
     #[tokio::test]

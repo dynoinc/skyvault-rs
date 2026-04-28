@@ -1,28 +1,15 @@
 use futures::{
     future,
-    stream::{
-        self,
-        BoxStream,
-        StreamExt,
-        TryStreamExt,
-    },
+    stream::{self, BoxStream, StreamExt, TryStreamExt},
 };
 
 use super::JobError;
 use crate::{
     forest::ForestImpl,
     k_way,
-    metadata::{
-        self,
-        MetadataStore,
-        RunMetadata,
-    },
+    metadata::{self, MetadataStore, RunMetadata},
     runs,
-    runs::{
-        RunError,
-        RunID,
-        WriteOperation,
-    },
+    runs::{RunError, RunID, WriteOperation},
     storage::ObjectStore,
 };
 

@@ -1,20 +1,8 @@
-use std::{
-    process::Stdio,
-    time::Duration,
-};
+use std::{process::Stdio, time::Duration};
 
-use anyhow::{
-    Result,
-    anyhow,
-};
-use tokio::process::{
-    Child,
-    Command,
-};
-use tokio_retry::{
-    Retry,
-    strategy::FixedInterval,
-};
+use anyhow::{Result, anyhow};
+use tokio::process::{Child, Command};
+use tokio_retry::{Retry, strategy::FixedInterval};
 use tonic::transport::Channel;
 
 /// Set up a gRPC connection to a service using kubectl port-forward.

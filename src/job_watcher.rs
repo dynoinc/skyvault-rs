@@ -1,23 +1,12 @@
 use async_stream::stream;
-use futures::{
-    Stream,
-    StreamExt,
-    pin_mut,
-};
+use futures::{Stream, StreamExt, pin_mut};
 use k8s_openapi::api::batch::v1::Job;
 use kube::{
     api::Api,
-    runtime::watcher::{
-        self,
-    },
+    runtime::watcher::{self},
 };
 use thiserror::Error;
-use tracing::{
-    debug,
-    error,
-    info,
-    warn,
-};
+use tracing::{debug, error, info, warn};
 
 use crate::metadata::JobID;
 

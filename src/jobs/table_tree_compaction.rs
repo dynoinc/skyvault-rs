@@ -1,11 +1,6 @@
 use futures::{
     future,
-    stream::{
-        self,
-        BoxStream,
-        StreamExt,
-        TryStreamExt,
-    },
+    stream::{self, BoxStream, StreamExt, TryStreamExt},
 };
 use rand::seq::IteratorRandom;
 
@@ -13,19 +8,9 @@ use super::JobError;
 use crate::{
     forest::ForestImpl,
     k_way,
-    metadata::{
-        self,
-        MetadataStore,
-        RunMetadata,
-    },
+    metadata::{self, MetadataStore, RunMetadata},
     runs,
-    runs::{
-        RunError,
-        RunID,
-        Stats,
-        StatsV1,
-        WriteOperation,
-    },
+    runs::{RunError, RunID, Stats, StatsV1, WriteOperation},
     storage::ObjectStore,
 };
 
