@@ -1,49 +1,23 @@
 use std::{
-    collections::{
-        BTreeMap,
-        HashMap,
-    },
-    sync::{
-        Arc,
-        Mutex,
-    },
+    collections::{BTreeMap, HashMap},
+    sync::{Arc, Mutex},
 };
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use futures::{
-    Stream,
-    StreamExt,
-    pin_mut,
-};
+use futures::{Stream, StreamExt, pin_mut};
 use prost::Message;
 use thiserror::Error;
 use tokio::sync::watch;
-use tracing::{
-    debug,
-    error,
-};
+use tracing::debug;
 
 use crate::{
     metadata::{
-        self,
-        ChangelogEntry,
-        ChangelogEntryWithID,
-        Level,
-        MetadataError,
-        MetadataStore,
-        SeqNo,
-        TableChangelogEntryV1,
-        TableConfig,
-        TableID,
-        TableName,
+        self, ChangelogEntry, ChangelogEntryWithID, Level, MetadataError, MetadataStore, SeqNo, TableChangelogEntryV1,
+        TableConfig, TableID, TableName,
     },
-    proto,
-    runs,
-    storage::{
-        ObjectStore,
-        StorageError,
-    },
+    proto, runs,
+    storage::{ObjectStore, StorageError},
 };
 
 #[derive(Error, Debug)]
@@ -468,12 +442,7 @@ mod tests {
 
         use crate::{
             metadata::{
-                ChangelogEntry,
-                ChangelogEntryWithID,
-                MockMetadataStoreTrait,
-                SeqNo,
-                TableChangelogEntryV1,
-                TableID,
+                ChangelogEntry, ChangelogEntryWithID, MockMetadataStoreTrait, SeqNo, TableChangelogEntryV1, TableID,
             },
             storage::MockObjectStoreTrait,
         };
@@ -549,12 +518,7 @@ mod tests {
 
         use crate::{
             metadata::{
-                ChangelogEntry,
-                ChangelogEntryWithID,
-                MockMetadataStoreTrait,
-                SeqNo,
-                TableChangelogEntryV1,
-                TableID,
+                ChangelogEntry, ChangelogEntryWithID, MockMetadataStoreTrait, SeqNo, TableChangelogEntryV1, TableID,
             },
             storage::MockObjectStoreTrait,
         };
@@ -645,13 +609,7 @@ mod tests {
         use std::sync::Arc;
 
         use crate::{
-            metadata::{
-                ChangelogEntry,
-                ChangelogEntryWithID,
-                MockMetadataStoreTrait,
-                RunsChangelogEntryV1,
-                SeqNo,
-            },
+            metadata::{ChangelogEntry, ChangelogEntryWithID, MockMetadataStoreTrait, RunsChangelogEntryV1, SeqNo},
             runs::RunID,
         };
 
@@ -715,13 +673,7 @@ mod tests {
         use std::sync::Arc;
 
         use crate::{
-            metadata::{
-                ChangelogEntry,
-                ChangelogEntryWithID,
-                MockMetadataStoreTrait,
-                RunsChangelogEntryV1,
-                SeqNo,
-            },
+            metadata::{ChangelogEntry, ChangelogEntryWithID, MockMetadataStoreTrait, RunsChangelogEntryV1, SeqNo},
             runs::RunID,
         };
 
@@ -790,13 +742,7 @@ mod tests {
         use std::sync::Arc;
 
         use crate::{
-            metadata::{
-                ChangelogEntry,
-                ChangelogEntryWithID,
-                MockMetadataStoreTrait,
-                RunsChangelogEntryV1,
-                SeqNo,
-            },
+            metadata::{ChangelogEntry, ChangelogEntryWithID, MockMetadataStoreTrait, RunsChangelogEntryV1, SeqNo},
             runs::RunID,
         };
 

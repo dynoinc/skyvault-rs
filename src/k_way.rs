@@ -1,25 +1,14 @@
 use std::{
-    collections::{
-        BinaryHeap,
-        HashMap,
-        hash_map::Entry,
-    },
+    collections::{BinaryHeap, HashMap, hash_map::Entry},
     pin::Pin,
 };
 
-use futures::{
-    Stream,
-    StreamExt,
-    stream,
-};
+use futures::{Stream, StreamExt, stream};
 use tokio::sync::mpsc;
 
 use crate::{
     metadata,
-    runs::{
-        RunError,
-        WriteOperation,
-    },
+    runs::{RunError, WriteOperation},
 };
 
 #[derive(Eq, PartialEq)]

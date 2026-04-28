@@ -118,12 +118,12 @@ async fn perform_read_with_retry(
         match reader.get_batch(request.clone()).await {
             Ok(response) => {
                 let response_inner = response.into_inner();
-                if let Some(table_response) = response_inner.tables.first() {
-                    if table_response.table_name == table_name {
-                        for item in &table_response.items {
-                            if item.key == key && item.value == expected_value_bytes {
-                                return Ok(true);
-                            }
+                if let Some(table_response) = response_inner.tables.first()
+                    && table_response.table_name == table_name
+                {
+                    for item in &table_response.items {
+                        if item.key == key && item.value == expected_value_bytes {
+                            return Ok(true);
                         }
                     }
                 }

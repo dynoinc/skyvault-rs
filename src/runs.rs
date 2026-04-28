@@ -1,20 +1,11 @@
 use std::{
-    fmt::{
-        self,
-        Display,
-    },
+    fmt::{self, Display},
     io::Cursor,
 };
 
-use byteorder::{
-    BigEndian,
-    ReadBytesExt,
-};
+use byteorder::{BigEndian, ReadBytesExt};
 use bytes::Bytes;
-use futures::{
-    Stream,
-    StreamExt,
-};
+use futures::{Stream, StreamExt};
 
 use crate::proto;
 
@@ -197,13 +188,13 @@ where
             let current_key = op.key().to_string();
 
             // Check if keys are sorted across the entire input stream
-            if let Some(ref last) = last_key {
-                if current_key <= *last {
-                    yield Err(RunError::Format(
-                        "Operations must be sorted by key".to_string(),
-                    ));
-                    return;
-                }
+            if let Some(ref last) = last_key
+                && current_key <= *last
+            {
+                yield Err(RunError::Format(
+                    "Operations must be sorted by key".to_string(),
+                ));
+                return;
             }
             last_key = Some(current_key.clone());
 
@@ -639,10 +630,7 @@ where
 #[cfg(test)]
 mod tests {
     use futures::stream;
-    use proptest::{
-        collection::btree_map,
-        prelude::*,
-    };
+    use proptest::{collection::btree_map, prelude::*};
 
     use super::*;
 

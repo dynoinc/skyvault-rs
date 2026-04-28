@@ -1,43 +1,24 @@
 use std::{
     future::Future,
     pin::Pin,
-    task::{
-        Context,
-        Poll,
-    },
+    task::{Context, Poll},
     time::Instant,
 };
 
 use opentelemetry::{
-    KeyValue,
-    global,
-    metrics::{
-        Counter,
-        Histogram,
-    },
+    KeyValue, global,
+    metrics::{Counter, Histogram},
 };
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::Resource;
 use sentry::ClientInitGuard;
 use sentry_tracing::EventFilter;
 use tonic::Code;
-use tower::{
-    Layer,
-    Service,
-};
-use tracing::{
-    debug,
-    error,
-};
-use tracing_subscriber::{
-    layer::SubscriberExt,
-    util::SubscriberInitExt,
-};
+use tower::{Layer, Service};
+use tracing::{debug, error};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use crate::config::{
-    OtelConfig,
-    SentryConfig,
-};
+use crate::config::{OtelConfig, SentryConfig};
 
 pub fn init_tracing_and_sentry(sentry_config: SentryConfig) -> Option<ClientInitGuard> {
     let guard = if sentry_config.dsn.is_empty() {

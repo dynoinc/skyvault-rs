@@ -1,40 +1,23 @@
 use std::{
     collections::HashMap,
-    fmt::{
-        self,
-        Display,
-    },
+    fmt::{self, Display},
     ops::Deref,
     pin::Pin,
     str::FromStr,
     sync::Arc,
-    time::{
-        Duration,
-        Instant,
-    },
+    time::{Duration, Instant},
 };
 
 use async_stream::stream;
 use futures::Stream;
-use opentelemetry::{
-    KeyValue,
-    global,
-};
-use sqlx::{
-    PgPool,
-    migrate::Migrator,
-    postgres::PgPoolOptions,
-    types::JsonValue,
-};
+use opentelemetry::{KeyValue, global};
+use sqlx::{PgPool, migrate::Migrator, postgres::PgPoolOptions, types::JsonValue};
 use thiserror::Error;
 use tracing::debug;
 
 use crate::{
     proto,
-    runs::{
-        RunID,
-        Stats,
-    },
+    runs::{RunID, Stats},
 };
 
 #[derive(Error, Debug)]
@@ -1218,22 +1201,22 @@ impl MetadataStoreTrait for PostgresMetadataStore {
                 Ok(seq_no) => match transaction.commit().await {
                     Ok(_) => return Ok(seq_no),
                     Err(commit_err) => {
-                        if let sqlx::Error::Database(db_err) = &commit_err {
-                            if db_err.code().is_some_and(|code| code == "40001") {
-                                tokio::time::sleep(Duration::from_millis(10)).await;
-                                continue;
-                            }
+                        if let sqlx::Error::Database(db_err) = &commit_err
+                            && db_err.code().is_some_and(|code| code == "40001")
+                        {
+                            tokio::time::sleep(Duration::from_millis(10)).await;
+                            continue;
                         }
                         return Err(MetadataError::DatabaseError(commit_err));
                     },
                 },
                 Err(attempt_meta_err) => match attempt_meta_err {
                     MetadataError::DatabaseError(sqlx_err) => {
-                        if let sqlx::Error::Database(db_err) = &sqlx_err {
-                            if db_err.code().is_some_and(|code| code == "40001") {
-                                tokio::time::sleep(Duration::from_millis(10)).await;
-                                continue;
-                            }
+                        if let sqlx::Error::Database(db_err) = &sqlx_err
+                            && db_err.code().is_some_and(|code| code == "40001")
+                        {
+                            tokio::time::sleep(Duration::from_millis(10)).await;
+                            continue;
                         }
                         return Err(MetadataError::DatabaseError(sqlx_err));
                     },
@@ -1566,11 +1549,7 @@ impl MetadataStoreTrait for PostgresMetadataStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        requires_docker,
-        runs::StatsV1,
-        test_utils::setup_test_db,
-    };
+    use crate::{requires_docker, runs::StatsV1, test_utils::setup_test_db};
 
     #[tokio::test]
     async fn test_tables() {

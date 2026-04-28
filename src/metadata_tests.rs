@@ -1,16 +1,9 @@
 use std::{
     sync::{
         Arc,
-        atomic::{
-            AtomicBool,
-            AtomicU64,
-            Ordering,
-        },
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
-    time::{
-        Duration,
-        Instant,
-    },
+    time::{Duration, Instant},
 };
 
 use tokio::time::sleep;
@@ -18,19 +11,9 @@ use uuid::Uuid;
 
 use crate::{
     forest::ForestImpl,
-    metadata::{
-        JobParams,
-        JobStatus,
-        SeqNo,
-        TableConfig,
-        TableName,
-    },
+    metadata::{JobParams, JobStatus, SeqNo, TableConfig, TableName},
     requires_docker,
-    runs::{
-        RunID,
-        Stats,
-        StatsV1,
-    },
+    runs::{RunID, Stats, StatsV1},
     storage::MockObjectStoreTrait,
     test_utils::setup_test_db,
 };
@@ -150,14 +133,14 @@ async fn test_high_load_wal_and_compaction() {
 
                 let state = state_rx.borrow().clone();
 
-                if let Some(last_seq_no) = last_seq_no {
-                    if last_seq_no >= state.seq_no {
-                        println!(
-                            "Compactor {compactor_id}: waiting for state change from seq_no {}",
-                            state.seq_no
-                        );
-                        continue;
-                    }
+                if let Some(last_seq_no) = last_seq_no
+                    && last_seq_no >= state.seq_no
+                {
+                    println!(
+                        "Compactor {compactor_id}: waiting for state change from seq_no {}",
+                        state.seq_no
+                    );
+                    continue;
                 }
 
                 // Use same logic as wal_compaction.rs: take up to 16 WAL runs

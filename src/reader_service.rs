@@ -1,61 +1,23 @@
 use std::{
     collections::HashMap,
     net::IpAddr,
-    sync::{
-        Arc,
-        Mutex,
-    },
+    sync::{Arc, Mutex},
 };
 
-use clap::{
-    Parser,
-    arg,
-};
-use futures::{
-    FutureExt,
-    StreamExt,
-    TryStreamExt,
-    pin_mut,
-    stream,
-};
+use clap::Parser;
+use futures::{FutureExt, StreamExt, TryStreamExt, pin_mut, stream};
 use thiserror::Error;
-use tonic::{
-    Request,
-    Response,
-    Status,
-    service::Interceptor,
-    transport::Channel,
-};
-use tracing::{
-    error,
-    info,
-};
+use tonic::{Request, Response, Status, service::Interceptor, transport::Channel};
+use tracing::{error, info};
 
 use crate::{
     consistent_hashring::ConsistentHashRing,
-    forest::{
-        Forest,
-        ForestError,
-        ForestImpl,
-        Snapshot as ForestState,
-    },
+    forest::{Forest, ForestError, ForestImpl, Snapshot as ForestState},
     k_way,
-    metadata::{
-        self,
-        MetadataStore,
-        SeqNo,
-    },
-    pod_watcher::{
-        self,
-        PodChange,
-        PodWatcherError,
-    },
+    metadata::{self, MetadataStore, SeqNo},
+    pod_watcher::{self, PodChange, PodWatcherError},
     proto,
-    runs::{
-        RunError,
-        Stats,
-        WriteOperation,
-    },
+    runs::{RunError, Stats, WriteOperation},
     storage::ObjectStore,
 };
 
@@ -300,6 +262,7 @@ impl MyReader {
         }
     }
 
+    #[allow(clippy::result_large_err)]
     async fn table_get_batch(
         &self,
         forest_state: Arc<ForestState>,
@@ -663,33 +626,15 @@ mod tests {
 
     use mockall::predicate::*;
     use tokio; // For async test runtime
-    use tonic::{
-        Request,
-        Response,
-        Status,
-    };
+    use tonic::{Request, Response, Status};
 
     use super::*;
     use crate::{
-        forest::{
-            Forest,
-            MockForestTrait,
-        },
-        metadata::{
-            BelongsTo,
-            RunMetadata,
-            SeqNo,
-            TableConfig,
-            TableID,
-            TableName,
-        },
+        forest::{Forest, MockForestTrait},
+        metadata::{BelongsTo, RunMetadata, SeqNo, TableConfig, TableID, TableName},
         proto,
         proto::reader_service_server::ReaderService,
-        runs::{
-            RunID,
-            Stats,
-            StatsV1,
-        },
+        runs::{RunID, Stats, StatsV1},
     };
 
     async fn create_test_forest(seq_no: SeqNo, tables: Vec<TableConfig>, runs: Vec<RunMetadata>) -> Forest {

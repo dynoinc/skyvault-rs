@@ -1,8 +1,4 @@
-use futures::stream::{
-    self,
-    StreamExt,
-    TryStreamExt,
-};
+use futures::stream::{self, StreamExt, TryStreamExt};
 use tokio::sync::mpsc;
 
 use super::JobError;
@@ -10,16 +6,11 @@ use crate::{
     forest::Snapshot,
     k_way,
     metadata::TableID,
-    runs::{
-        self,
-        RunError,
-        RunID,
-        Stats,
-        WriteOperation,
-    },
+    runs::{self, RunError, RunID, Stats, WriteOperation},
     storage::ObjectStore,
 };
 
+#[allow(clippy::result_large_err)]
 pub async fn execute(
     object_store: ObjectStore,
     state: &Snapshot,
@@ -163,10 +154,10 @@ pub async fn execute(
         }
 
         // Send operation to current table's channel
-        if let Some((_, sender, _)) = &current_state {
-            if sender.send(Ok(op)).await.is_err() {
-                return Err(JobError::Internal("Failed to send operation to table channel".into()));
-            }
+        if let Some((_, sender, _)) = &current_state
+            && sender.send(Ok(op)).await.is_err()
+        {
+            return Err(JobError::Internal("Failed to send operation to table channel".into()));
         }
     }
 

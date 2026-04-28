@@ -1,39 +1,14 @@
-use std::{
-    future,
-    path::PathBuf,
-    pin::Pin,
-};
+use std::{future, path::PathBuf, pin::Pin};
 
 use clap::Parser;
-use futures::{
-    Stream,
-    StreamExt,
-    TryStreamExt,
-    pin_mut,
-    stream,
-};
+use futures::{Stream, StreamExt, TryStreamExt, pin_mut, stream};
 use thiserror::Error;
-use tonic::{
-    Request,
-    Response,
-    Status,
-};
+use tonic::{Request, Response, Status};
 
 use crate::{
-    k_way,
-    metadata,
-    proto,
-    runs::{
-        self,
-        RunError,
-        RunID,
-        SearchResult,
-        WriteOperation,
-    },
-    storage::{
-        self,
-        StorageCache,
-    },
+    k_way, metadata, proto,
+    runs::{self, RunError, RunID, SearchResult, WriteOperation},
+    storage::{self, StorageCache},
 };
 
 #[derive(Debug, Parser, Clone)]
@@ -199,23 +174,14 @@ mod tests {
     use std::collections::HashMap;
 
     use bytes::Bytes;
-    use futures::{
-        TryStreamExt,
-        stream,
-    };
+    use futures::{TryStreamExt, stream};
 
     use super::*;
     use crate::{
         proto,
         proto::cache_service_server::CacheService,
-        requires_docker,
-        runs,
-        runs::{
-            RunError,
-            RunID,
-            Stats,
-            WriteOperation,
-        },
+        requires_docker, runs,
+        runs::{RunError, RunID, Stats, WriteOperation},
         storage::ObjectStore,
         test_utils::setup_test_object_store,
     };

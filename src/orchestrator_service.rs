@@ -1,54 +1,23 @@
 use std::sync::Arc;
 
-use futures::{
-    StreamExt,
-    pin_mut,
-};
+use futures::{StreamExt, pin_mut};
 use kube::Error as KubeError;
 use prost::Message;
 use thiserror::Error;
-use tokio_retry::{
-    Retry,
-    strategy::ExponentialBackoff,
-};
-use tonic::{
-    Request,
-    Response,
-    Status,
-};
+use tokio_retry::{Retry, strategy::ExponentialBackoff};
+use tonic::{Request, Response, Status};
 
 use crate::{
     dynamic_config,
-    forest::{
-        Forest,
-        ForestError,
-        ForestImpl,
-        Snapshot,
-    },
-    job_watcher::{
-        self,
-        JobChange,
-        JobWatcherError,
-    },
+    forest::{Forest, ForestError, ForestImpl, Snapshot},
+    job_watcher::{self, JobChange, JobWatcherError},
     metadata,
     metadata::{
-        JobID,
-        JobParams,
-        Level,
-        MetadataError,
-        MetadataStore,
-        SeqNo,
-        SnapshotID,
-        TableConfig,
-        TableID,
-        TableName,
+        JobID, JobParams, Level, MetadataError, MetadataStore, SeqNo, SnapshotID, TableConfig, TableID, TableName,
     },
     proto,
     runs::Stats,
-    storage::{
-        self,
-        ObjectStore,
-    },
+    storage::{self, ObjectStore},
 };
 
 #[derive(Clone)]
@@ -329,14 +298,8 @@ impl MyOrchestrator {
     }
 
     async fn create_k8s_job(&self, job_id: JobID, job_type: &str) -> Result<(), kube::Error> {
-        use k8s_openapi::{
-            api::batch::v1::Job,
-            apimachinery::pkg::apis::meta::v1::ObjectMeta,
-        };
-        use kube::api::{
-            Api,
-            PostParams,
-        };
+        use k8s_openapi::{api::batch::v1::Job, apimachinery::pkg::apis::meta::v1::ObjectMeta};
+        use kube::api::{Api, PostParams};
 
         let jobs: Api<Job> = Api::default_namespaced(self.k8s_client.clone());
 

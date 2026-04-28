@@ -1,37 +1,15 @@
 // src/dynamic_config.rs
-use std::{
-    collections::BTreeMap,
-    env,
-    sync::Arc,
-    time::Duration,
-};
+use std::{collections::BTreeMap, env, sync::Arc, time::Duration};
 
 use futures_util::StreamExt;
-use k8s_openapi::api::core::v1::{
-    ConfigMap,
-    Pod,
-};
+use k8s_openapi::api::core::v1::{ConfigMap, Pod};
 use kube::{
-    Api,
-    Client,
-    ResourceExt,
-    runtime::watcher::{
-        self,
-        Event,
-        watcher,
-    },
+    Api, Client, ResourceExt,
+    runtime::watcher::{self, Event, watcher},
 };
 use thiserror::Error;
-use tokio::sync::{
-    RwLock,
-    Semaphore,
-};
-use tracing::{
-    debug,
-    error,
-    info,
-    warn,
-};
+use tokio::sync::{RwLock, Semaphore};
+use tracing::{debug, error, info, warn};
 
 #[derive(Error, Debug)]
 pub enum ConfigError {
@@ -89,16 +67,16 @@ impl ParsedConfigMap {
     fn from_k8s_data(data: &BTreeMap<String, String>) -> Result<Self, ConfigError> {
         let mut config = Self::default();
 
-        if let Some(uploads_str) = data.get("writer_concurrent_uploads") {
-            if let Ok(uploads) = uploads_str.parse::<u32>() {
-                config.writer_concurrent_uploads = uploads;
-            }
+        if let Some(uploads_str) = data.get("writer_concurrent_uploads")
+            && let Ok(uploads) = uploads_str.parse::<u32>()
+        {
+            config.writer_concurrent_uploads = uploads;
         }
 
-        if let Some(retry_str) = data.get("orchestrator_job_retry_limit") {
-            if let Ok(retries) = retry_str.parse::<i32>() {
-                config.orchestrator_job_retry_limit = retries;
-            }
+        if let Some(retry_str) = data.get("orchestrator_job_retry_limit")
+            && let Ok(retries) = retry_str.parse::<i32>()
+        {
+            config.orchestrator_job_retry_limit = retries;
         }
 
         Ok(config)

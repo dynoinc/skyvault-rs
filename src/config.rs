@@ -1,7 +1,4 @@
-use aws_sdk_s3::config::{
-    Credentials,
-    SharedCredentialsProvider,
-};
+use aws_sdk_s3::config::{Credentials, SharedCredentialsProvider};
 use clap::Parser;
 use kube::Client;
 

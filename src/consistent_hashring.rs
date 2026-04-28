@@ -1,12 +1,6 @@
 use std::{
-    collections::{
-        BTreeMap,
-        hash_map::DefaultHasher,
-    },
-    hash::{
-        Hash,
-        Hasher,
-    },
+    collections::{BTreeMap, hash_map::DefaultHasher},
+    hash::{Hash, Hasher},
 };
 
 /// A consistent hash ring implementation.

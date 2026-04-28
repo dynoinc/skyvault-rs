@@ -1,52 +1,22 @@
 use std::{
-    process::{
-        Command,
-        Stdio,
-    },
-    sync::{
-        Arc,
-        OnceLock,
-        Weak,
-    },
+    process::{Command, Stdio},
+    sync::{Arc, OnceLock, Weak},
 };
 
-use aws_config::{
-    BehaviorVersion,
-    Region,
-    SdkConfig,
-};
-use aws_sdk_s3::config::{
-    Credentials,
-    SharedCredentialsProvider,
-};
+use aws_config::{BehaviorVersion, Region, SdkConfig};
+use aws_sdk_s3::config::{Credentials, SharedCredentialsProvider};
 use testcontainers_modules::{
     minio,
     postgres::Postgres,
-    testcontainers::{
-        ContainerAsync,
-        runners::AsyncRunner,
-    },
+    testcontainers::{ContainerAsync, runners::AsyncRunner},
 };
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
 use crate::{
-    metadata::{
-        MetadataError,
-        MetadataStore,
-        MetadataStoreTrait,
-        PostgresMetadataStore,
-    },
-    runs::{
-        RunID,
-        Stats,
-    },
-    storage::{
-        ObjectStore,
-        ObjectStoreTrait,
-        S3ObjectStore,
-        StorageError,
-    },
+    metadata::{MetadataError, MetadataStore, MetadataStoreTrait, PostgresMetadataStore},
+    runs::{RunID, Stats},
+    storage::{ObjectStore, ObjectStoreTrait, S3ObjectStore, StorageError},
 };
 
 // Global shared PostgreSQL container using weak references for automatic

@@ -1,44 +1,25 @@
 use std::{
     collections::HashMap,
     path::PathBuf,
-    sync::{
-        Arc,
-        RwLock,
-    },
+    sync::{Arc, RwLock},
     time::Instant,
 };
 
 use async_trait::async_trait;
 use aws_sdk_s3::{
     Client as S3Client,
-    operation::{
-        create_bucket::CreateBucketError,
-        get_object::GetObjectError,
-        put_object::PutObjectError,
-    },
-    primitives::{
-        ByteStream,
-        ByteStreamError,
-    },
+    operation::{create_bucket::CreateBucketError, get_object::GetObjectError, put_object::PutObjectError},
+    primitives::{ByteStream, ByteStreamError},
 };
-use aws_smithy_runtime_api::client::{
-    orchestrator::HttpResponse,
-    result::SdkError,
-};
+use aws_smithy_runtime_api::client::{orchestrator::HttpResponse, result::SdkError};
 use bytes::Bytes;
-use opentelemetry::{
-    KeyValue,
-    global,
-};
+use opentelemetry::{KeyValue, global};
 use thiserror::Error;
 use tokio::sync::broadcast;
 use tracing::debug;
 
 use crate::{
-    cache::{
-        CacheData,
-        DiskCache,
-    },
+    cache::{CacheData, DiskCache},
     metadata::SnapshotID,
     runs::RunID,
 };
@@ -231,10 +212,10 @@ impl ObjectStoreTrait for S3ObjectStore {
         })
         .await
         .map_err(|err| {
-            if let SdkError::ServiceError(ref inner) = err {
-                if let GetObjectError::NoSuchKey(_) = inner.err() {
-                    return StorageError::NotFound(key.clone());
-                }
+            if let SdkError::ServiceError(ref inner) = err
+                && let GetObjectError::NoSuchKey(_) = inner.err()
+            {
+                return StorageError::NotFound(key.clone());
             }
             StorageError::GetObjectError(Box::new(err))
         })?;
@@ -257,10 +238,10 @@ impl ObjectStoreTrait for S3ObjectStore {
         })
         .await
         .map_err(|err| {
-            if let SdkError::ServiceError(ref inner) = err {
-                if let GetObjectError::NoSuchKey(_) = inner.err() {
-                    return StorageError::NotFound(key.clone());
-                }
+            if let SdkError::ServiceError(ref inner) = err
+                && let GetObjectError::NoSuchKey(_) = inner.err()
+            {
+                return StorageError::NotFound(key.clone());
             }
             StorageError::GetObjectError(Box::new(err))
         })?;
